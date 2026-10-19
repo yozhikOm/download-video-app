@@ -1,8 +1,8 @@
 [package]
 name = "download-video-app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Download Video — загрузчик видео на базе yt-dlp"
+authors = ["Матрехина Татьяна"]
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -22,6 +22,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
