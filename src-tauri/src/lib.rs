@@ -1,14 +1,31 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use serde::Serialize;
+use tauri::{AppHandle, Builder, Runtime};
+
+#[derive(Serialize)]
+struct AppInfo {
+    name: String,
+    version: String,
+}
+
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn app_info<R: Runtime>(app: AppHandle<R>) -> AppInfo {
+    let package = app.package_info();
+    AppInfo {
+        name: package.name.clone(),
+        version: package.version.to_string(),
+    }
+}
+
+/// Plugins and commands shared by the real app and tests on the mock runtime.
+fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
+    builder
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![app_info])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+    app_builder(tauri::Builder::default())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
