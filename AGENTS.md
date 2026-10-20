@@ -7,7 +7,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<ty
 - **Types**: `feat`, `fix`, `refactor`, `perf`, `style`, `test`, `docs`, `build`, `ci`, `chore`, `revert`.
 - **Scopes** (optional): `ui` (React frontend in `src/`), `backend` (Rust in `src-tauri/src/`), `ytdlp`, `transcript`, `settings`, `deps`.
 - **Description**: English, imperative mood, lowercase, no trailing period, ≤72 chars. Example: `feat(ui): add format picker tabs`.
-- **Body** (optional): explain *why*, wrapped at 72 chars.
+- **Body** (optional): explain _why_, wrapped at 72 chars.
 - **Breaking changes**: `!` after the type/scope and a `BREAKING CHANGE:` footer.
 - One logical change per commit.
 
