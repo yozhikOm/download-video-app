@@ -17,7 +17,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 /
 ├── GLOSSARY.md
 ├── docs/adr/
-│   ├── 0001-ytdlp-as-sidecar.md
+│   ├── 0001-ytdlp-downloaded-at-runtime.md
 │   └── 0002-...md
 ├── src/          (React frontend)
 └── src-tauri/    (Rust backend)
@@ -33,4 +33,4 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0001 (yt-dlp as sidecar), but worth reopening because…_
+> _Contradicts ADR-0001 (yt-dlp downloaded at runtime), but worth reopening because…_
