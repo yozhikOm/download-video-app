@@ -32,6 +32,10 @@ _Avoid_: Profile, option, mode
 One raw stream variant that the site reports for a Video (codec, resolution, bitrate). Users only see Formats in the advanced view; Presets are built on top of them.
 _Avoid_: Stream, itag, quality
 
+**Partial**:
+The already-received data of an unfinished Download, kept so that a later Download of the same Video with the same Preset resumes instead of starting over. Partials untouched for 7 days are discarded.
+_Avoid_: .part file, temp file, cache, недокачанное
+
 **Transcript**:
 The text of what is spoken in a Video, saved as a file alongside the media or on its own. Each Transcript has a source; today the only source is the subtitles or auto-generated captions the site provides.
 _Avoid_: Subtitles, captions, расшифровка
@@ -55,9 +59,9 @@ The final file is on disk.
 _Avoid_: Completed, finished
 
 **Failed**:
-Stopped because of an error; the user can retry it.
+Stopped because of an error; its Partial is kept, so retrying resumes where it stopped.
 _Avoid_: Error, broken
 
 **Cancelled**:
-Stopped by the user; partial files are removed and the user can retry it.
+Stopped by the user; its Partial is removed, so retrying starts from scratch.
 _Avoid_: Aborted, stopped
