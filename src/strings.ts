@@ -8,11 +8,11 @@ export const strings = {
     ffprobe: "ffprobe",
   } satisfies Record<Tool | Package, string>,
   setup: {
-    title: "Скачиваю yt-dlp и ffmpeg…",
+    title: "Идёт загрузка необходимых для работы файлов…",
     progress: (downloadedMb: string, totalMb: string) =>
       `${downloadedMb} из ${totalMb} МБ`,
     broken: (tool: string) => `${tool} повреждён — восстанавливаю`,
-    failedTitle: "Не удалось подготовить yt-dlp и ffmpeg",
+    failedTitle: "Не удалось загрузить необходимые для работы файлы",
     offline: "Нет подключения к интернету. Проверьте сеть и повторите.",
     checksumMismatch: (tool: string) =>
       `Скачанный ${tool} не прошёл проверку контрольной суммы и удалён.`,

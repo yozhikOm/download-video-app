@@ -52,7 +52,9 @@ test("first run shows the setup screen with download progress", async () => {
   });
 
   expect(
-    screen.getByRole("heading", { name: "Скачиваю yt-dlp и ffmpeg…" }),
+    screen.getByRole("heading", {
+      name: "Идёт загрузка необходимых для работы файлов…",
+    }),
   ).toBeInTheDocument();
   expect(screen.getByRole("progressbar")).toHaveAttribute(
     "aria-valuenow",
@@ -73,7 +75,9 @@ test("setup shows the download screen before the download size is known", async 
   });
 
   expect(
-    screen.getByRole("heading", { name: "Скачиваю yt-dlp и ffmpeg…" }),
+    screen.getByRole("heading", {
+      name: "Идёт загрузка необходимых для работы файлов…",
+    }),
   ).toBeInTheDocument();
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   expect(screen.queryByText(/МБ/)).not.toBeInTheDocument();
@@ -96,7 +100,9 @@ test("the main screen with name and version follows a finished setup", async () 
   ).toBeInTheDocument();
   expect(screen.getByText("Версия 1.2.3")).toBeInTheDocument();
   expect(
-    screen.queryByRole("heading", { name: "Скачиваю yt-dlp и ffmpeg…" }),
+    screen.queryByRole("heading", {
+      name: "Идёт загрузка необходимых для работы файлов…",
+    }),
   ).not.toBeInTheDocument();
 });
 
@@ -110,6 +116,11 @@ test("setup without internet shows an error and retries on request", async () =>
     broken: null,
   });
 
+  expect(
+    screen.getByRole("heading", {
+      name: "Не удалось загрузить необходимые для работы файлы",
+    }),
+  ).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Нет подключения к интернету",
   );
