@@ -14,7 +14,7 @@ import {
   type AppInfo,
   type ProbeError,
   type ProbeState,
-  type VideoCard as Video,
+  type VideoCard,
 } from "@/backend";
 import { strings } from "@/strings";
 
@@ -49,7 +49,8 @@ function errorText(error: ProbeError) {
   }
 }
 
-function VideoCard({ video }: { video: Video }) {
+/** The probed Video, for the user to confirm it's the right one. */
+function VideoPreview({ video }: { video: VideoCard }) {
   return (
     <Card className="pt-0">
       {video.thumbnail && (
@@ -134,7 +135,7 @@ export function MainScreen({ probe }: Props) {
           </CardContent>
         </Card>
       )}
-      {probe.status === "probed" && <VideoCard video={probe.video} />}
+      {probe.status === "probed" && <VideoPreview video={probe.video} />}
       {probe.status === "failed" && (
         <p role="alert" className="text-sm text-destructive">
           {errorText(probe.error)}
