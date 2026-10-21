@@ -83,7 +83,7 @@ fn setup_reports_download_progress_up_to_the_total_before_ready() {
         .filter_map(|state| match state {
             SetupState::Installing {
                 downloaded, total, ..
-            } => Some((downloaded, total)),
+            } if total > 0 => Some((downloaded, total)),
             _ => None,
         })
         .collect();
@@ -99,6 +99,30 @@ fn setup_reports_download_progress_up_to_the_total_before_ready() {
 }
 
 #[test]
+fn first_run_shows_the_setup_screen_before_asking_github_for_releases() {
+    let app = App::start();
+    app.tools.set_online(false);
+
+    app.toolbox.prepare();
+
+    assert_eq!(
+        app.states(),
+        [
+            SetupState::Checking,
+            SetupState::Installing {
+                downloaded: 0,
+                total: 0,
+                broken: None,
+            },
+            SetupState::Failed {
+                error: SetupError::Offline,
+                broken: None,
+            },
+        ]
+    );
+}
+
+#[test]
 fn relaunch_with_tools_in_place_is_ready_without_the_network() {
     let app = App::start();
     app.toolbox.prepare();
@@ -109,6 +133,8 @@ fn relaunch_with_tools_in_place_is_ready_without_the_network() {
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
     assert_eq!(app.tools.fetches().len(), 2);
+    // Nothing to download, so the setup screen doesn't flash.
+    assert_eq!(app.states(), [SetupState::Checking, SetupState::Ready]);
 }
 
 #[test]

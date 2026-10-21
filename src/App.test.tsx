@@ -61,6 +61,24 @@ test("first run shows the setup screen with download progress", async () => {
   expect(screen.getByText("50 из 200 МБ")).toBeInTheDocument();
 });
 
+test("setup shows the download screen before the download size is known", async () => {
+  const backend = mockBackend();
+  render(<App />);
+
+  await backend.setup({
+    status: "installing",
+    downloaded: 0,
+    total: 0,
+    broken: null,
+  });
+
+  expect(
+    screen.getByRole("heading", { name: "Скачиваю yt-dlp и ffmpeg…" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  expect(screen.queryByText(/МБ/)).not.toBeInTheDocument();
+});
+
 test("the main screen with name and version follows a finished setup", async () => {
   const backend = mockBackend();
   render(<App />);

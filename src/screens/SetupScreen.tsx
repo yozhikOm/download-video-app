@@ -54,7 +54,7 @@ export function SetupScreen({ state }: Props) {
               value={
                 state.total > 0
                   ? Math.round((state.downloaded / state.total) * 100)
-                  : 0
+                  : null
               }
             />
             {state.total > 0 && (

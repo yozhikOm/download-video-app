@@ -14,6 +14,7 @@ export type SetupState =
   | {
       status: "installing";
       downloaded: number;
+      /** Zero while the download size isn't known yet. */
       total: number;
       /** The tool that failed to start and is being restored. */
       broken: Tool | null;

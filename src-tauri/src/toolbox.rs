@@ -60,6 +60,7 @@ pub enum SetupState {
     #[serde(rename_all = "camelCase")]
     Installing {
         downloaded: u64,
+        /// Zero while the download size isn't known yet.
         total: u64,
         /// The tool that failed to start and is being restored.
         broken: Option<Tool>,
@@ -216,6 +217,8 @@ impl Toolbox {
             return Ok(());
         }
 
+        // Show the setup screen while asking GitHub for the releases.
+        self.report_progress(0, 0);
         let mut releases = Vec::new();
         for package in missing {
             let release = self.tools.latest_release(package)?;
