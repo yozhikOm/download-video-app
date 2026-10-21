@@ -1,5 +1,18 @@
+pub mod clock;
+pub mod events;
+pub mod toolbox;
+pub mod tools;
+
+use std::sync::{Arc, Mutex};
+
 use serde::Serialize;
-use tauri::{AppHandle, Builder, Runtime};
+use tauri::ipc::Channel;
+use tauri::{AppHandle, Builder, Manager, Runtime, State};
+
+use crate::clock::SystemClock;
+use crate::events::{AppEvent, EventSink};
+use crate::toolbox::Toolbox;
+use crate::tools::github::GithubTools;
 
 #[derive(Serialize)]
 struct AppInfo {
@@ -16,16 +29,71 @@ fn app_info<R: Runtime>(app: AppHandle<R>) -> AppInfo {
     }
 }
 
+/// The UI channels that receive backend events.
+#[derive(Default)]
+struct Subscribers(Mutex<Vec<Channel<AppEvent>>>);
+
+impl Subscribers {
+    /// Starts the channel with the current state, read under the same lock
+    /// that orders later events, so the UI misses no change.
+    fn add(&self, channel: Channel<AppEvent>, current: impl FnOnce() -> AppEvent) {
+        let mut channels = self.0.lock().unwrap();
+        if channel.send(current()).is_ok() {
+            channels.push(channel);
+        }
+    }
+}
+
+impl EventSink for Subscribers {
+    fn send(&self, event: AppEvent) {
+        let mut channels = self.0.lock().unwrap();
+        // A channel fails once its page is gone.
+        channels.retain(|channel| channel.send(event.clone()).is_ok());
+    }
+}
+
+#[tauri::command]
+fn subscribe(
+    events: Channel<AppEvent>,
+    toolbox: State<'_, Arc<Toolbox>>,
+    subscribers: State<'_, Arc<Subscribers>>,
+) {
+    subscribers.add(events, || AppEvent::Setup(toolbox.state()));
+}
+
+#[tauri::command]
+fn retry_setup(toolbox: State<'_, Arc<Toolbox>>) {
+    spawn_prepare(toolbox.inner().clone());
+}
+
+/// Prepares the tools in the background; the UI follows along through events.
+fn spawn_prepare(toolbox: Arc<Toolbox>) {
+    std::thread::spawn(move || toolbox.prepare());
+}
+
 /// Plugins and commands shared by the real app and tests on the mock runtime.
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![app_info])
+        .invoke_handler(tauri::generate_handler![app_info, subscribe, retry_setup])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     app_builder(tauri::Builder::default())
+        .setup(|app| {
+            let subscribers = Arc::new(Subscribers::default());
+            let toolbox = Arc::new(Toolbox::new(
+                app.path().app_local_data_dir()?.join("tools"),
+                Arc::new(GithubTools::new()),
+                Arc::new(SystemClock),
+                subscribers.clone(),
+            ));
+            app.manage(subscribers);
+            app.manage(toolbox.clone());
+            spawn_prepare(toolbox);
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
