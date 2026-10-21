@@ -65,3 +65,20 @@ _Avoid_: Error, broken
 **Cancelled**:
 Stopped by the user; its Partial is removed, so retrying starts from scratch.
 _Avoid_: Aborted, stopped
+
+### Tools
+
+**Tool**:
+One of the programs the app runs from its own folder: yt-dlp, ffmpeg or ffprobe. Copies the user has installed elsewhere are never used.
+_Avoid_: Binary, dependency, utility
+
+**Package**:
+One official release download that provides Tools: the yt-dlp program, or the FFmpeg-Builds archive with ffmpeg and ffprobe. A version and a published checksum belong to a Package, not to a Tool.
+_Avoid_: Bundle, archive
+
+**Setup**:
+Getting every Tool in place before the app can be used: checking what is installed, then downloading and verifying the missing Packages. The setup screen shows it.
+_Avoid_: First run, bootstrap, installation
+
+**Broken Tool**:
+A Tool that failed to start; the app runs Setup again to restore it. Unlike a Failed Download, it blocks the whole app until Setup ends.
