@@ -1,0 +1,2 @@
+# LF everywhere (also on Windows checkouts) so Prettier and rustfmt agree with CI.
+* text=auto eol=lf
