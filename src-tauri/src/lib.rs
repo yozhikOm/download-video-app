@@ -1,7 +1,8 @@
 pub mod clock;
 pub mod events;
+pub mod processes;
+pub mod releases;
 pub mod toolbox;
-pub mod tools;
 
 use std::sync::{Arc, Mutex};
 
@@ -11,8 +12,9 @@ use tauri::{AppHandle, Builder, Manager, Runtime, State};
 
 use crate::clock::SystemClock;
 use crate::events::{AppEvent, EventSink};
+use crate::processes::SystemProcesses;
+use crate::releases::github::GithubReleases;
 use crate::toolbox::Toolbox;
-use crate::tools::github::GithubTools;
 
 #[derive(Serialize)]
 struct AppInfo {
@@ -85,7 +87,8 @@ pub fn run() {
             let subscribers = Arc::new(Subscribers::default());
             let toolbox = Arc::new(Toolbox::new(
                 app.path().app_local_data_dir()?.join("tools"),
-                Arc::new(GithubTools::new()),
+                Arc::new(GithubReleases::new()),
+                Arc::new(SystemProcesses),
                 Arc::new(SystemClock),
                 subscribers.clone(),
             ));

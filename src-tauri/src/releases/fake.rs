@@ -1,18 +1,15 @@
-//! Scripted [`Tools`] for tests: publishes small fake releases and lets a test
-//! take the network down, tamper with a checksum or break a tool.
+//! Scripted [`Releases`] for tests: publishes small fake releases and lets a
+//! test take the network down or tamper with a checksum.
 
-use std::collections::{HashMap, HashSet};
-use std::ffi::{OsStr, OsString};
-use std::io::{self, Cursor, Write};
-use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Output};
+use std::collections::HashMap;
+use std::io::{Cursor, Write};
 use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use super::{Package, Release, Tools, ToolsError};
+use super::{Package, Release, Releases, ReleasesError};
 
 pub const YTDLP_URL: &str =
     "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe";
@@ -24,17 +21,15 @@ pub const FFPROBE_BYTES: &[u8] = b"fake ffprobe";
 /// Bytes per progress report, so even tiny fake downloads report progress.
 const CHUNK: usize = 4;
 
-pub struct FakeTools(Mutex<Scenario>);
+pub struct FakeReleases(Mutex<Scenario>);
 
 struct Scenario {
     online: bool,
     releases: HashMap<Package, (Release, Vec<u8>)>,
-    broken: HashSet<OsString>,
     fetches: Vec<String>,
-    runs: Vec<(PathBuf, Vec<OsString>)>,
 }
 
-impl FakeTools {
+impl FakeReleases {
     /// Online, with a yt-dlp release and an FFmpeg-Builds zip published.
     pub fn new() -> Self {
         let releases = HashMap::from([
@@ -50,9 +45,7 @@ impl FakeTools {
         Self(Mutex::new(Scenario {
             online: true,
             releases,
-            broken: HashSet::new(),
             fetches: Vec::new(),
-            runs: Vec::new(),
         }))
     }
 
@@ -79,19 +72,9 @@ impl FakeTools {
         scenario.releases.insert(package, moved);
     }
 
-    /// Makes any program with this file name fail to start.
-    pub fn break_tool(&self, file_name: &str) {
-        self.scenario().broken.insert(file_name.into());
-    }
-
     /// Asset URLs fetched so far, in order.
     pub fn fetches(&self) -> Vec<String> {
         self.scenario().fetches.clone()
-    }
-
-    /// Programs started so far with their arguments, in order.
-    pub fn runs(&self) -> Vec<(PathBuf, Vec<OsString>)> {
-        self.scenario().runs.clone()
     }
 
     fn scenario(&self) -> std::sync::MutexGuard<'_, Scenario> {
@@ -99,17 +82,17 @@ impl FakeTools {
     }
 }
 
-impl Default for FakeTools {
+impl Default for FakeReleases {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Tools for FakeTools {
-    fn latest_release(&self, package: Package) -> Result<Release, ToolsError> {
+impl Releases for FakeReleases {
+    fn latest_release(&self, package: Package) -> Result<Release, ReleasesError> {
         let scenario = self.scenario();
         if !scenario.online {
-            return Err(ToolsError::Offline);
+            return Err(ReleasesError::Offline);
         }
         Ok(scenario.releases[&package].0.clone())
     }
@@ -119,17 +102,17 @@ impl Tools for FakeTools {
         url: &str,
         out: &mut dyn Write,
         progress: &mut dyn FnMut(u64),
-    ) -> Result<(), ToolsError> {
+    ) -> Result<(), ReleasesError> {
         let bytes = {
             let mut scenario = self.scenario();
             if !scenario.online {
-                return Err(ToolsError::Offline);
+                return Err(ReleasesError::Offline);
             }
             scenario.fetches.push(url.to_string());
             let found = scenario.releases.values().find(|(r, _)| r.url == url);
             found.map(|(_, bytes)| bytes.clone())
         };
-        let bytes = bytes.ok_or_else(|| ToolsError::Other(format!("404 {url}")))?;
+        let bytes = bytes.ok_or_else(|| ReleasesError::Other(format!("404 {url}")))?;
         let mut received = 0;
         for chunk in bytes.chunks(CHUNK) {
             out.write_all(chunk).unwrap();
@@ -137,20 +120,6 @@ impl Tools for FakeTools {
             progress(received);
         }
         Ok(())
-    }
-
-    fn run(&self, program: &Path, args: &[OsString]) -> io::Result<Output> {
-        let mut scenario = self.scenario();
-        scenario.runs.push((program.to_path_buf(), args.to_vec()));
-        let name = program.file_name().unwrap_or(OsStr::new(""));
-        if scenario.broken.contains(name) || !program.is_file() {
-            return Err(io::Error::other("the program can't be started"));
-        }
-        Ok(Output {
-            status: ExitStatus::default(),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        })
     }
 }
 

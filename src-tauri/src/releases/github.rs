@@ -1,16 +1,13 @@
-//! [`Tools`](super::Tools) backed by the official GitHub releases.
+//! [`Releases`](super::Releases) backed by the official GitHub releases.
 
-use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::path::Path;
-use std::process::{Command, Output};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{Package, Release, Tools, ToolsError};
+use super::{Package, Release, Releases, ReleasesError};
 
 const USER_AGENT: &str = concat!("download-video-app/", env!("CARGO_PKG_VERSION"));
 /// A fetch that receives nothing for this long counts as a lost connection.
@@ -19,7 +16,7 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// info or a checksums list.
 const SMALL_BODY_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub struct GithubTools {
+pub struct GithubReleases {
     agent: ureq::Agent,
 }
 
@@ -44,7 +41,7 @@ struct Source {
     checksums: &'static str,
 }
 
-impl GithubTools {
+impl GithubReleases {
     pub fn new() -> Self {
         let config = ureq::Agent::config_builder()
             .https_only(true)
@@ -57,45 +54,45 @@ impl GithubTools {
         }
     }
 
-    fn get(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, ToolsError> {
-        self.agent.get(url).call().map_err(tools_error)
+    fn get(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, ReleasesError> {
+        self.agent.get(url).call().map_err(releases_error)
     }
 
     /// Like [`Self::get`], but a body that doesn't arrive in time is a lost
     /// connection instead of a setup that hangs.
-    fn get_small(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, ToolsError> {
+    fn get_small(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, ReleasesError> {
         self.agent
             .get(url)
             .config()
             .timeout_recv_body(Some(SMALL_BODY_TIMEOUT))
             .build()
             .call()
-            .map_err(tools_error)
+            .map_err(releases_error)
     }
 }
 
-impl Default for GithubTools {
+impl Default for GithubReleases {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Tools for GithubTools {
-    fn latest_release(&self, package: Package) -> Result<Release, ToolsError> {
+impl Releases for GithubReleases {
+    fn latest_release(&self, package: Package) -> Result<Release, ReleasesError> {
         let source = source(package);
         let release: GithubRelease = self
             .get_small(source.api_url)?
             .body_mut()
             .read_json()
-            .map_err(tools_error)?;
+            .map_err(releases_error)?;
         let find = |name: &str| {
             let asset = release.assets.iter().find(|asset| asset.name == name);
-            asset.ok_or_else(|| ToolsError::Other(format!("the release has no {name}")))
+            asset.ok_or_else(|| ReleasesError::Other(format!("the release has no {name}")))
         };
         let asset = find(source.asset)?;
         let checksums_url = &find(source.checksums)?.browser_download_url;
         if !package.is_official(checksums_url) {
-            return Err(ToolsError::Other(format!(
+            return Err(ReleasesError::Other(format!(
                 "unofficial checksums {checksums_url}"
             )));
         }
@@ -103,9 +100,9 @@ impl Tools for GithubTools {
             .get_small(checksums_url)?
             .body_mut()
             .read_to_string()
-            .map_err(tools_error)?;
+            .map_err(releases_error)?;
         let sha256 = checksum_for(&sums, source.asset).ok_or_else(|| {
-            ToolsError::Other(format!(
+            ReleasesError::Other(format!(
                 "{} has no checksum for {}",
                 source.checksums, source.asset
             ))
@@ -128,7 +125,7 @@ impl Tools for GithubTools {
         url: &str,
         out: &mut dyn Write,
         progress: &mut dyn FnMut(u64),
-    ) -> Result<(), ToolsError> {
+    ) -> Result<(), ReleasesError> {
         let response = self.get(url)?;
         let mut body = response
             .into_body()
@@ -152,28 +149,16 @@ impl Tools for GithubTools {
         loop {
             let chunk = chunks
                 .recv_timeout(STALL_TIMEOUT)
-                .map_err(|_| ToolsError::Offline)?
+                .map_err(|_| ReleasesError::Offline)?
                 .map_err(connection_lost)?;
             if chunk.is_empty() {
                 return Ok(());
             }
             out.write_all(&chunk)
-                .map_err(|e| ToolsError::Other(e.to_string()))?;
+                .map_err(|e| ReleasesError::Other(e.to_string()))?;
             received += chunk.len() as u64;
             progress(received);
         }
-    }
-
-    fn run(&self, program: &Path, args: &[OsString]) -> io::Result<Output> {
-        let mut command = Command::new(program);
-        command.args(args);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-        command.output()
     }
 }
 
@@ -192,19 +177,19 @@ fn source(package: Package) -> Source {
     }
 }
 
-fn tools_error(error: ureq::Error) -> ToolsError {
+fn releases_error(error: ureq::Error) -> ReleasesError {
     match error {
         ureq::Error::Io(error) => connection_lost(error),
         ureq::Error::HostNotFound | ureq::Error::ConnectionFailed | ureq::Error::Timeout(_) => {
-            ToolsError::Offline
+            ReleasesError::Offline
         }
-        error => ToolsError::Other(error.to_string()),
+        error => ReleasesError::Other(error.to_string()),
     }
 }
 
 /// A network read that fails means the connection dropped.
-fn connection_lost(_: io::Error) -> ToolsError {
-    ToolsError::Offline
+fn connection_lost(_: io::Error) -> ReleasesError {
+    ReleasesError::Offline
 }
 
 /// Finds a file's hex SHA-256 in a `sha256sum`-style list, as published by
@@ -263,12 +248,14 @@ mod tests {
 
         use crate::clock::SystemClock;
         use crate::events::RecordingSink;
+        use crate::processes::SystemProcesses;
         use crate::toolbox::{SetupState, Tool, Toolbox};
 
         let dir = tempfile::TempDir::new().unwrap();
         let toolbox = Toolbox::new(
             dir.path().to_path_buf(),
-            Arc::new(GithubTools::new()),
+            Arc::new(GithubReleases::new()),
+            Arc::new(SystemProcesses),
             Arc::new(SystemClock),
             Arc::new(RecordingSink::default()),
         );

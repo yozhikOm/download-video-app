@@ -19,7 +19,8 @@ use zip::ZipArchive;
 
 use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
-use crate::tools::{Package, Release, Tools, ToolsError};
+use crate::processes::Processes;
+use crate::releases::{Package, Release, Releases, ReleasesError};
 
 const MANIFEST: &str = "manifest.json";
 /// Suffix of files that are still downloading or unverified.
@@ -105,9 +106,11 @@ struct InstalledFile {
     sha256: String,
 }
 
+/// The app's own installed tools: setting them up and running them.
 pub struct Toolbox {
     dir: PathBuf,
-    tools: Arc<dyn Tools>,
+    releases: Arc<dyn Releases>,
+    processes: Arc<dyn Processes>,
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     state: Mutex<SetupState>,
@@ -120,13 +123,15 @@ pub struct Toolbox {
 impl Toolbox {
     pub fn new(
         dir: PathBuf,
-        tools: Arc<dyn Tools>,
+        releases: Arc<dyn Releases>,
+        processes: Arc<dyn Processes>,
         clock: Arc<dyn Clock>,
         events: Arc<dyn EventSink>,
     ) -> Self {
         Self {
             dir,
-            tools,
+            releases,
+            processes,
             clock,
             events,
             state: Mutex::new(SetupState::Checking),
@@ -173,10 +178,12 @@ impl Toolbox {
             full_args.push(self.path(Tool::Ffmpeg).into_os_string());
         }
         full_args.extend_from_slice(args);
-        self.tools.run(&self.path(tool), &full_args).map_err(|_| {
-            self.forget(tool);
-            ToolBroken(tool)
-        })
+        self.processes
+            .run(&self.path(tool), &full_args)
+            .map_err(|_| {
+                self.forget(tool);
+                ToolBroken(tool)
+            })
     }
 
     /// When yt-dlp was last installed or checked for updates.
@@ -221,7 +228,7 @@ impl Toolbox {
         self.report_progress(0, 0);
         let mut releases = Vec::new();
         for package in missing {
-            let release = self.tools.latest_release(package)?;
+            let release = self.releases.latest_release(package)?;
             if !package.is_official(&release.url) {
                 return Err(other(format!("unofficial asset {}", release.url)));
             }
@@ -288,7 +295,8 @@ impl Toolbox {
             .map_err(SetupError::from)
             .and_then(|mut file| {
                 let mut progress = |received: u64| self.report_progress(done + received, total);
-                self.tools.fetch(&release.url, &mut file, &mut progress)?;
+                self.releases
+                    .fetch(&release.url, &mut file, &mut progress)?;
                 Ok(file.finish(path.clone())?)
             })
             .and_then(|file| {
@@ -419,11 +427,11 @@ impl From<io::Error> for SetupError {
     }
 }
 
-impl From<ToolsError> for SetupError {
-    fn from(error: ToolsError) -> Self {
+impl From<ReleasesError> for SetupError {
+    fn from(error: ReleasesError) -> Self {
         match error {
-            ToolsError::Offline => SetupError::Offline,
-            ToolsError::Other(message) => SetupError::Other { message },
+            ReleasesError::Offline => SetupError::Offline,
+            ReleasesError::Other(message) => SetupError::Other { message },
         }
     }
 }

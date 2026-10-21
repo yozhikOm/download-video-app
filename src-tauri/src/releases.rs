@@ -1,14 +1,11 @@
-//! The only seam to yt-dlp, ffmpeg and their releases: everything that reaches
-//! the network or starts a tool process goes through [`Tools`].
+//! The only seam to the official releases of the tools: everything that
+//! reaches the network goes through [`Releases`].
 
 #[cfg(test)]
 pub mod fake;
 pub mod github;
 
-use std::ffi::OsString;
-use std::io::{self, Write};
-use std::path::Path;
-use std::process::Output;
+use std::io::Write;
 
 use serde::Serialize;
 
@@ -50,14 +47,14 @@ pub struct Release {
 }
 
 #[derive(Debug)]
-pub enum ToolsError {
+pub enum ReleasesError {
     /// The release server can't be reached.
     Offline,
     Other(String),
 }
 
-pub trait Tools: Send + Sync {
-    fn latest_release(&self, package: Package) -> Result<Release, ToolsError>;
+pub trait Releases: Send + Sync {
+    fn latest_release(&self, package: Package) -> Result<Release, ReleasesError>;
 
     /// Streams the asset at `url` into `out`, reporting the bytes received so far.
     fn fetch(
@@ -65,8 +62,5 @@ pub trait Tools: Send + Sync {
         url: &str,
         out: &mut dyn Write,
         progress: &mut dyn FnMut(u64),
-    ) -> Result<(), ToolsError>;
-
-    /// Runs `program` and waits for it to exit; errs only when it can't be started.
-    fn run(&self, program: &Path, args: &[OsString]) -> io::Result<Output>;
+    ) -> Result<(), ReleasesError>;
 }

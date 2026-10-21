@@ -6,38 +6,50 @@ use tempfile::TempDir;
 use super::*;
 use crate::clock::FixedClock;
 use crate::events::{AppEvent, RecordingSink};
-use crate::tools::fake::{FFMPEG_BYTES, FFPROBE_BYTES, FakeTools, YTDLP_BYTES};
+use crate::processes::fake::FakeProcesses;
+use crate::releases::fake::{FFMPEG_BYTES, FFPROBE_BYTES, FakeReleases, YTDLP_BYTES};
 
 const NOW: Duration = Duration::from_secs(1_790_000_000);
 
 struct App {
     dir: TempDir,
-    tools: Arc<FakeTools>,
+    releases: Arc<FakeReleases>,
+    processes: Arc<FakeProcesses>,
     events: Arc<RecordingSink>,
     toolbox: Toolbox,
 }
 
 impl App {
     fn start() -> Self {
-        Self::start_with(Arc::new(FakeTools::new()), TempDir::new().unwrap())
+        Self::start_with(
+            Arc::new(FakeReleases::new()),
+            Arc::new(FakeProcesses::new()),
+            TempDir::new().unwrap(),
+        )
     }
 
     /// Starts the app again on the same data folder, like a relaunch.
     fn restart(self) -> Self {
-        Self::start_with(self.tools, self.dir)
+        Self::start_with(self.releases, self.processes, self.dir)
     }
 
-    fn start_with(tools: Arc<FakeTools>, dir: TempDir) -> Self {
+    fn start_with(
+        releases: Arc<FakeReleases>,
+        processes: Arc<FakeProcesses>,
+        dir: TempDir,
+    ) -> Self {
         let events = Arc::new(RecordingSink::default());
         let toolbox = Toolbox::new(
             dir.path().join("tools"),
-            tools.clone(),
+            releases.clone(),
+            processes.clone(),
             Arc::new(FixedClock(SystemTime::UNIX_EPOCH + NOW)),
             events.clone(),
         );
         Self {
             dir,
-            tools,
+            releases,
+            processes,
             events,
             toolbox,
         }
@@ -101,7 +113,7 @@ fn setup_reports_download_progress_up_to_the_total_before_ready() {
 #[test]
 fn first_run_shows_the_setup_screen_before_asking_github_for_releases() {
     let app = App::start();
-    app.tools.set_online(false);
+    app.releases.set_online(false);
 
     app.toolbox.prepare();
 
@@ -126,13 +138,13 @@ fn first_run_shows_the_setup_screen_before_asking_github_for_releases() {
 fn relaunch_with_tools_in_place_is_ready_without_the_network() {
     let app = App::start();
     app.toolbox.prepare();
-    app.tools.set_online(false);
+    app.releases.set_online(false);
     let app = app.restart();
 
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    assert_eq!(app.tools.fetches().len(), 2);
+    assert_eq!(app.releases.fetches().len(), 2);
     // Nothing to download, so the setup screen doesn't flash.
     assert_eq!(app.states(), [SetupState::Checking, SetupState::Ready]);
 }
@@ -140,7 +152,7 @@ fn relaunch_with_tools_in_place_is_ready_without_the_network() {
 #[test]
 fn first_run_offline_fails_and_retry_online_succeeds() {
     let app = App::start();
-    app.tools.set_online(false);
+    app.releases.set_online(false);
 
     app.toolbox.prepare();
 
@@ -152,7 +164,7 @@ fn first_run_offline_fails_and_retry_online_succeeds() {
         }
     );
 
-    app.tools.set_online(true);
+    app.releases.set_online(true);
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
@@ -172,9 +184,9 @@ fn relaunch_restores_a_deleted_tool_downloading_only_its_package() {
         std::fs::read(app.file("ffprobe.exe")).unwrap(),
         FFPROBE_BYTES
     );
-    let fetches = app.tools.fetches();
+    let fetches = app.releases.fetches();
     assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::tools::fake::FFMPEG_URL);
+    assert_eq!(fetches[2], crate::releases::fake::FFMPEG_URL);
 }
 
 #[test]
@@ -187,9 +199,9 @@ fn relaunch_restores_a_tool_whose_size_changed() {
     app.toolbox.prepare();
 
     assert_eq!(std::fs::read(app.file("yt-dlp.exe")).unwrap(), YTDLP_BYTES);
-    let fetches = app.tools.fetches();
+    let fetches = app.releases.fetches();
     assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::tools::fake::YTDLP_URL);
+    assert_eq!(fetches[2], crate::releases::fake::YTDLP_URL);
 }
 
 #[test]
@@ -202,7 +214,7 @@ fn relaunch_without_the_manifest_installs_everything_again() {
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    assert_eq!(app.tools.fetches().len(), 4);
+    assert_eq!(app.releases.fetches().len(), 4);
 }
 
 #[test]
@@ -224,7 +236,7 @@ fn checksum_mismatch_fails_setup_and_leaves_no_unverified_file() {
         (Package::Ffmpeg, vec!["ffmpeg.exe", "ffprobe.exe"]),
     ] {
         let app = App::start();
-        app.tools.tamper_checksum(package);
+        app.releases.tamper_checksum(package);
 
         app.toolbox.prepare();
 
@@ -258,7 +270,7 @@ fn setup_refuses_assets_outside_the_official_github_releases() {
         "https://github.com/yt-dlp/yt-dlp/releases/download/%2e%2e/%2e%2e/someone/yt-dlp.exe",
     ] {
         let app = App::start();
-        app.tools.move_asset(Package::YtDlp, url);
+        app.releases.move_asset(Package::YtDlp, url);
 
         app.toolbox.prepare();
 
@@ -266,7 +278,7 @@ fn setup_refuses_assets_outside_the_official_github_releases() {
             matches!(app.toolbox.state(), SetupState::Failed { .. }),
             "{url}"
         );
-        assert!(!app.tools.fetches().iter().any(|f| f == url), "{url}");
+        assert!(!app.releases.fetches().iter().any(|f| f == url), "{url}");
     }
 }
 
@@ -284,7 +296,7 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg() {
 
     let ffmpeg = app.file("ffmpeg.exe").into_os_string();
     assert_eq!(
-        app.tools.runs(),
+        app.processes.runs(),
         vec![
             (
                 app.file("yt-dlp.exe"),
@@ -304,7 +316,7 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg() {
 fn a_tool_that_fails_to_start_is_broken_and_setup_restores_it() {
     let app = App::start();
     app.toolbox.prepare();
-    app.tools.break_tool("ffmpeg.exe");
+    app.processes.break_tool("ffmpeg.exe");
 
     let result = app.toolbox.run(Tool::Ffmpeg, &["-version".into()]);
 
@@ -335,23 +347,23 @@ fn a_tool_that_fails_to_start_is_broken_and_setup_restores_it() {
         }
     )));
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    let fetches = app.tools.fetches();
+    let fetches = app.releases.fetches();
     assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::tools::fake::FFMPEG_URL);
+    assert_eq!(fetches[2], crate::releases::fake::FFMPEG_URL);
 }
 
 #[test]
 fn a_broken_tool_is_restored_on_the_next_launch_too() {
     let app = App::start();
     app.toolbox.prepare();
-    app.tools.break_tool("yt-dlp.exe");
+    app.processes.break_tool("yt-dlp.exe");
     let _ = app.toolbox.run(Tool::YtDlp, &[]);
     let app = app.restart();
 
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    assert_eq!(app.tools.fetches().len(), 3);
+    assert_eq!(app.releases.fetches().len(), 3);
 }
 
 #[test]
