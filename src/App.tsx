@@ -14,13 +14,21 @@ type AppInfo = {
 
 function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    invoke<AppInfo>("app_info").then(setAppInfo);
+    invoke<AppInfo>("app_info")
+      .then(setAppInfo)
+      .catch(() => setFailed(true));
   }, []);
 
   return (
     <main className="flex min-h-svh items-center justify-center p-6">
+      {failed && (
+        <p role="alert" className="text-destructive">
+          Не удалось получить версию приложения
+        </p>
+      )}
       {appInfo && (
         <Card className="w-full max-w-sm">
           <CardHeader>
