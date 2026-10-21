@@ -17,3 +17,15 @@ test("main screen shows app name and version from the backend", async () => {
   ).toBeInTheDocument();
   expect(screen.getByText("Версия 1.2.3")).toBeInTheDocument();
 });
+
+test("main screen reports when the backend fails to answer", async () => {
+  mockIPC(() => {
+    throw new Error("backend is down");
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Не удалось получить версию приложения",
+  );
+});
