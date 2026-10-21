@@ -9,6 +9,7 @@ Real answers of `yt-dlp -J --no-playlist --flat-playlist -- <URL>`, captured on 
 | ------------------------------- | -------------------------------------------------------------------------- |
 | `youtube-video.json`            | `https://www.youtube.com/watch?v=-moW9jvvMr4`                              |
 | `youtube-finished-stream.json`  | `https://www.youtube.com/watch?v=pZMrdjuU-CY`                              |
+| `youtube-stream-with-chat.json` | `https://www.youtube.com/watch?v=fp_7X3VWIuA`                              |
 | `youtube-live.json`             | `https://www.youtube.com/watch?v=0sfDth4lMLc`                              |
 | `youtube-playlist.json`         | `https://www.youtube.com/playlist?list=PLbpi6ZahtOH6Blw3RGYpWkSByi_T7Rygb` |
 | `youtube-channel.json`          | `https://www.youtube.com/@YouTube`                                         |

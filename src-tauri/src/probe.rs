@@ -175,7 +175,12 @@ impl Prober {
                     },
                     Some(video),
                 ),
-                Err(error) => self.finish(generation, ProbeState::Failed { error }, None),
+                Err(error) => {
+                    if let ProbeError::Other { message } = &error {
+                        eprintln!("can't probe {url}: {message}");
+                    }
+                    self.finish(generation, ProbeState::Failed { error }, None);
+                }
             },
             // The setup screen is up now; once yt-dlp is restored, the user
             // pastes the URL again.
@@ -262,8 +267,13 @@ struct InfoChapter {
 
 impl Info {
     fn into_video(self, url: &str) -> Video {
+        // yt-dlp lists a stream's chat replay among the subtitles.
         let languages = |captions: Option<BTreeMap<String, IgnoredAny>>| {
-            captions.unwrap_or_default().into_keys().collect()
+            captions
+                .unwrap_or_default()
+                .into_keys()
+                .filter(|language| language != "live_chat")
+                .collect()
         };
         Video {
             url: self.webpage_url.unwrap_or_else(|| url.into()),

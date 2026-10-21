@@ -328,6 +328,19 @@ fn a_finished_stream_is_marked_as_one() {
 }
 
 #[test]
+fn the_chat_replay_of_a_finished_stream_is_not_a_transcript() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/youtube-stream-with-chat.json"));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=fp_7X3VWIuA");
+
+    let video = app.prober.video().unwrap();
+    assert_eq!(video.transcripts.manual, Vec::<String>::new());
+    assert_eq!(video.transcripts.automatic.len(), 157);
+}
+
+#[test]
 fn a_video_from_another_site_may_lack_a_channel_language_and_transcripts() {
     let app = App::start();
     app.ytdlp_prints(include_bytes!("fixtures/rutube-video.json"));
