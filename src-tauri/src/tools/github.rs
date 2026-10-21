@@ -15,6 +15,9 @@ use super::{Package, Release, Tools, ToolsError};
 const USER_AGENT: &str = concat!("download-video-app/", env!("CARGO_PKG_VERSION"));
 /// A fetch that receives nothing for this long counts as a lost connection.
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest wait for the whole body of a small response, such as release
+/// info or a checksums list.
+const SMALL_BODY_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct GithubTools {
     agent: ureq::Agent,
@@ -57,6 +60,18 @@ impl GithubTools {
     fn get(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, ToolsError> {
         self.agent.get(url).call().map_err(tools_error)
     }
+
+    /// Like [`Self::get`], but a body that doesn't arrive in time is a lost
+    /// connection instead of a setup that hangs.
+    fn get_small(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, ToolsError> {
+        self.agent
+            .get(url)
+            .config()
+            .timeout_recv_body(Some(SMALL_BODY_TIMEOUT))
+            .build()
+            .call()
+            .map_err(tools_error)
+    }
 }
 
 impl Default for GithubTools {
@@ -69,7 +84,7 @@ impl Tools for GithubTools {
     fn latest_release(&self, package: Package) -> Result<Release, ToolsError> {
         let source = source(package);
         let release: GithubRelease = self
-            .get(source.api_url)?
+            .get_small(source.api_url)?
             .body_mut()
             .read_json()
             .map_err(tools_error)?;
@@ -85,7 +100,7 @@ impl Tools for GithubTools {
             )));
         }
         let sums = self
-            .get(checksums_url)?
+            .get_small(checksums_url)?
             .body_mut()
             .read_to_string()
             .map_err(tools_error)?;
