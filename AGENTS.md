@@ -12,7 +12,7 @@ Run `npm run check` (ESLint, Prettier, `tsc`, Vitest, clippy, rustfmt, `cargo te
 
 ## Commits
 
-Every commit, including an agent's, follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)?: <description>`. release-please derives the next version and `CHANGELOG.md` from these messages (`feat` → minor, `fix`/`perf` → patch, `!` → breaking), and commitlint rejects non-conforming ones in the `commit-msg` hook and in CI.
+Every commit, including an agent's, follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)?: <description>`. release-please derives the next version and `CHANGELOG.md` from these messages (`feat` → minor, `fix`/`perf` → patch, `!` → major, or minor while the version is below 1.0), and commitlint rejects non-conforming ones in the `commit-msg` hook and in CI.
 
 - **Types**: `feat`, `fix`, `refactor`, `perf`, `style`, `test`, `docs`, `build`, `ci`, `chore`, `revert`.
 - **Scopes** (optional): `ui` (React frontend in `src/`), `backend` (Rust in `src-tauri/src/`), `ytdlp`, `transcript`, `settings`, `deps`.
