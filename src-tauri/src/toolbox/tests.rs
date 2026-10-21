@@ -63,7 +63,10 @@ impl App {
         let events = self.events.events();
         events
             .into_iter()
-            .map(|AppEvent::Setup(state)| state)
+            .filter_map(|event| match event {
+                AppEvent::Setup(state) => Some(state),
+                _ => None,
+            })
             .collect()
     }
 }

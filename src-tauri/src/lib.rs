@@ -1,5 +1,6 @@
 pub mod clock;
 pub mod events;
+pub mod probe;
 pub mod processes;
 pub mod releases;
 pub mod toolbox;
@@ -12,6 +13,7 @@ use tauri::{AppHandle, Builder, Manager, Runtime, State};
 
 use crate::clock::SystemClock;
 use crate::events::{AppEvent, EventSink};
+use crate::probe::Prober;
 use crate::processes::SystemProcesses;
 use crate::releases::github::GithubReleases;
 use crate::toolbox::Toolbox;
@@ -38,9 +40,12 @@ struct Subscribers(Mutex<Vec<Channel<AppEvent>>>);
 impl Subscribers {
     /// Starts the channel with the current state, read under the same lock
     /// that orders later events, so the UI misses no change.
-    fn add(&self, channel: Channel<AppEvent>, current: impl FnOnce() -> AppEvent) {
+    fn add(&self, channel: Channel<AppEvent>, current: impl FnOnce() -> Vec<AppEvent>) {
         let mut channels = self.0.lock().unwrap();
-        if channel.send(current()).is_ok() {
+        if current()
+            .into_iter()
+            .all(|event| channel.send(event).is_ok())
+        {
             channels.push(channel);
         }
     }
@@ -58,14 +63,27 @@ impl EventSink for Subscribers {
 fn subscribe(
     events: Channel<AppEvent>,
     toolbox: State<'_, Arc<Toolbox>>,
+    prober: State<'_, Arc<Prober>>,
     subscribers: State<'_, Arc<Subscribers>>,
 ) {
-    subscribers.add(events, || AppEvent::Setup(toolbox.state()));
+    subscribers.add(events, || {
+        vec![
+            AppEvent::Setup(toolbox.state()),
+            AppEvent::Probe(prober.state()),
+        ]
+    });
 }
 
 #[tauri::command]
 fn retry_setup(toolbox: State<'_, Arc<Toolbox>>) {
     spawn_prepare(toolbox.inner().clone());
+}
+
+/// Probes a URL in the background; the UI follows along through events.
+#[tauri::command]
+fn probe(url: String, prober: State<'_, Arc<Prober>>) {
+    let prober = prober.inner().clone();
+    std::thread::spawn(move || prober.probe(url.trim()));
 }
 
 /// Prepares the tools in the background; the UI follows along through events.
@@ -77,7 +95,12 @@ fn spawn_prepare(toolbox: Arc<Toolbox>) {
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![app_info, subscribe, retry_setup])
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            subscribe,
+            retry_setup,
+            probe
+        ])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -92,8 +115,10 @@ pub fn run() {
                 Arc::new(SystemClock),
                 subscribers.clone(),
             ));
+            let prober = Arc::new(Prober::new(toolbox.clone(), subscribers.clone()));
             app.manage(subscribers);
             app.manage(toolbox.clone());
+            app.manage(prober);
             spawn_prepare(toolbox);
             Ok(())
         })
