@@ -9,17 +9,21 @@ import {
 } from "@testing-library/react";
 import { expect, test } from "vitest";
 import App from "./App";
-import type { AppEvent, SetupState } from "./backend";
+import type { AppEvent, ProbeState, SetupState } from "./backend";
 
 const MB = 1024 * 1024;
 
-/** Mocks the backend; `setup` pushes a setup state to the UI's channel. */
+/** Mocks the backend; `setup` and `probe` push a state to the UI's channel. */
 function mockBackend({ appInfoFails = false } = {}) {
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
+  const probedUrls: string[] = [];
   mockIPC((cmd, args) => {
     commands.push(cmd);
     switch (cmd) {
+      case "probe":
+        probedUrls.push((args as { url: string }).url);
+        return null;
       case "subscribe":
         channel = (args as { events: Channel<AppEvent> }).events;
         return null;
@@ -31,12 +35,16 @@ function mockBackend({ appInfoFails = false } = {}) {
     }
   });
 
+  async function send(event: AppEvent) {
+    await waitFor(() => expect(channel).toBeDefined());
+    act(() => channel!.onmessage(event));
+  }
+
   return {
     commands,
-    async setup(state: SetupState) {
-      await waitFor(() => expect(channel).toBeDefined());
-      act(() => channel!.onmessage({ type: "setup", data: state }));
-    },
+    probedUrls,
+    setup: (state: SetupState) => send({ type: "setup", data: state }),
+    probe: (state: ProbeState) => send({ type: "probe", data: state }),
   };
 }
 
@@ -169,3 +177,109 @@ test("main screen reports when the app version fails to load", async () => {
     "Не удалось получить версию приложения",
   );
 });
+
+/** Renders the main screen after a finished setup. */
+async function startReady() {
+  const backend = mockBackend();
+  render(<App />);
+  await backend.setup({ status: "ready" });
+  return backend;
+}
+
+test("a pasted URL is probed on Enter while the screen says so", async () => {
+  const backend = await startReady();
+
+  const input = await screen.findByRole("textbox", { name: "Ссылка на видео" });
+  fireEvent.change(input, {
+    target: { value: "  https://www.youtube.com/watch?v=-moW9jvvMr4  " },
+  });
+  fireEvent.submit(input);
+  await waitFor(() =>
+    expect(backend.probedUrls).toEqual([
+      "https://www.youtube.com/watch?v=-moW9jvvMr4",
+    ]),
+  );
+  await backend.probe({ status: "probing" });
+
+  expect(screen.getByText("Получаю сведения о видео…")).toBeInTheDocument();
+});
+
+test("an empty URL isn't probed", async () => {
+  const backend = await startReady();
+
+  fireEvent.submit(
+    await screen.findByRole("textbox", { name: "Ссылка на видео" }),
+  );
+
+  expect(backend.probedUrls).toEqual([]);
+});
+
+test("a probed Video shows its thumbnail, title, channel and duration", async () => {
+  const backend = await startReady();
+
+  await backend.probe({
+    status: "probed",
+    video: {
+      title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
+      channel: "TED",
+      thumbnail: "https://i.ytimg.com/vi/-moW9jvvMr4/maxresdefault.jpg",
+      duration: 565,
+    },
+  });
+
+  expect(
+    screen.getByRole("heading", {
+      name: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
+    }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("TED")).toBeInTheDocument();
+  expect(screen.getByText("9:25")).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Превью" })).toHaveAttribute(
+    "src",
+    "https://i.ytimg.com/vi/-moW9jvvMr4/maxresdefault.jpg",
+  );
+});
+
+test("a duration over an hour shows hours", async () => {
+  const backend = await startReady();
+
+  await backend.probe({
+    status: "probed",
+    video: {
+      title: "Around the World with Peppa Pig",
+      channel: null,
+      thumbnail: null,
+      duration: 14339,
+    },
+  });
+
+  expect(screen.getByText("3:58:59")).toBeInTheDocument();
+  expect(screen.queryByRole("img")).not.toBeInTheDocument();
+});
+
+test.each([
+  [{ kind: "playlist" }, "Плейлисты пока не поддерживаются"],
+  [
+    { kind: "live" },
+    "Трансляция ещё идёт — скачать можно будет после окончания",
+  ],
+  [
+    { kind: "signInRequired" },
+    "Видео требует входа в аккаунт — пока не поддерживается",
+  ],
+  [{ kind: "unsupported" }, "Сайт не поддерживается или по ссылке нет видео"],
+  [
+    { kind: "other", message: "ERROR: something broke" },
+    "Не удалось получить сведения о видео",
+  ],
+] as const)(
+  "a URL that can't be downloaded (%o) shows why instead of a card",
+  async (error, text) => {
+    const backend = await startReady();
+
+    await backend.probe({ status: "failed", error });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(text);
+    expect(screen.queryAllByRole("heading")).toHaveLength(1);
+  },
+);

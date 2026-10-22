@@ -3,12 +3,14 @@
 
 use serde::Serialize;
 
+use crate::probe::ProbeState;
 use crate::toolbox::SetupState;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "camelCase")]
 pub enum AppEvent {
     Setup(SetupState),
+    Probe(ProbeState),
 }
 
 pub trait EventSink: Send + Sync {

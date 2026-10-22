@@ -22,8 +22,33 @@ export type SetupState =
   | { status: "failed"; error: SetupError; broken: Tool | null }
   | { status: "ready" };
 
+/** What the user sees of a probed Video to confirm it's the right one. */
+export type VideoCard = {
+  title: string;
+  channel: string | null;
+  thumbnail: string | null;
+  /** Seconds. */
+  duration: number | null;
+};
+
+/** Why a URL can't be downloaded. */
+export type ProbeError =
+  | { kind: "playlist" }
+  | { kind: "live" }
+  | { kind: "signInRequired" }
+  | { kind: "unsupported" }
+  /** `message` is for the log; the UI shows a generic text. */
+  | { kind: "other"; message: string };
+
+export type ProbeState =
+  | { status: "idle" }
+  | { status: "probing" }
+  | { status: "probed"; video: VideoCard }
+  | { status: "failed"; error: ProbeError };
+
 /** What the backend pushes to the UI; the backend owns the state. */
-export type AppEvent = { type: "setup"; data: SetupState };
+export type AppEvent =
+  { type: "setup"; data: SetupState } | { type: "probe"; data: ProbeState };
 
 export type AppInfo = {
   name: string;
@@ -46,6 +71,11 @@ export function subscribe(onEvent: (event: AppEvent) => void): () => void {
 
 export function retrySetup(): Promise<void> {
   return invoke("retry_setup");
+}
+
+/** Asks the backend to Probe a URL; the result arrives as a probe event. */
+export function probe(url: string): Promise<void> {
+  return invoke("probe", { url });
 }
 
 export function appInfo(): Promise<AppInfo> {
