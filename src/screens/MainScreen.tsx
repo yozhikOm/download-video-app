@@ -96,6 +96,14 @@ function VideoPreview({ video }: { video: VideoCard }) {
   );
 }
 
+/** Signing in is offered only once YouTube asks for it. */
+function asksToSignIn(probe: ProbeState) {
+  return (
+    probe.status === "failed" &&
+    (probe.error.kind === "botCheck" || probe.error.kind === "signInRequired")
+  );
+}
+
 const browsers = Object.keys(strings.browsers) as Browser[];
 
 /** Which browser's YouTube sign-in yt-dlp uses, if any. */
@@ -209,7 +217,10 @@ export function MainScreen({ probe, settings }: Props) {
           {errorText(probe.error, probe.signInBrowser)}
         </p>
       )}
-      <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
+      {/* A chosen browser stays on screen so that it can be turned off. */}
+      {(settings.signInBrowser || asksToSignIn(probe)) && (
+        <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
+      )}
     </div>
   );
 }

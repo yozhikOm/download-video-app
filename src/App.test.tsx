@@ -310,20 +310,72 @@ test.each([
   },
 );
 
-test("no sign-in browser is chosen by default", async () => {
-  await startReady();
+/** YouTube answers the Probe with its bot check; no sign-in browser was used. */
+function botCheck(backend: ReturnType<typeof mockBackend>) {
+  return backend.probe({
+    status: "failed",
+    error: { kind: "botCheck" },
+    signInBrowser: null,
+  });
+}
+
+test("signing in stays hidden until YouTube asks for it", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await backend.probe({
+    status: "failed",
+    error: { kind: "unsupported" },
+    signInBrowser: null,
+  });
 
   expect(
-    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
-  ).toHaveDisplayValue("Не использовать");
-  expect(
-    screen.queryByText(/от имени вашего аккаунта/),
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
   ).not.toBeInTheDocument();
+});
+
+test.each([{ kind: "botCheck" }, { kind: "signInRequired" }] as const)(
+  "%o offers signing in, with no browser chosen by default",
+  async (error) => {
+    const backend = await startReady();
+    await backend.settings({ signInBrowser: null });
+
+    await backend.probe({ status: "failed", error, signInBrowser: null });
+
+    expect(
+      screen.getByRole("combobox", { name: "Вход в YouTube" }),
+    ).toHaveDisplayValue("Не использовать");
+    expect(
+      screen.queryByText(/от имени вашего аккаунта/),
+    ).not.toBeInTheDocument();
+  },
+);
+
+test("signing in is hidden again when the next Probe needs no sign-in", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await botCheck(backend);
+
+  await backend.probe({ status: "probing" });
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a chosen sign-in browser stays visible so that it can be turned off", async () => {
+  const backend = await startReady();
+
+  await backend.settings({ signInBrowser: "firefox" });
+
+  expect(
+    screen.getByRole("combobox", { name: "Вход в YouTube" }),
+  ).toHaveDisplayValue("Firefox");
 });
 
 test("choosing a sign-in browser saves it and warns about the account", async () => {
   const backend = await startReady();
   await backend.settings({ signInBrowser: null });
+  await botCheck(backend);
 
   fireEvent.change(
     await screen.findByRole("combobox", { name: "Вход в YouTube" }),
@@ -355,16 +407,16 @@ test("choosing not to sign in saves no browser", async () => {
 });
 
 test("a sign-in browser that can't be saved says so", async () => {
-  await startReady({ savingFails: true });
+  const backend = await startReady({ savingFails: true });
+  await botCheck(backend);
 
-  fireEvent.change(
-    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
-    { target: { value: "firefox" } },
-  );
+  fireEvent.change(screen.getByRole("combobox", { name: "Вход в YouTube" }), {
+    target: { value: "firefox" },
+  });
 
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Не удалось сохранить выбор браузера",
-  );
+  expect(
+    await screen.findByText("Не удалось сохранить выбор браузера."),
+  ).toHaveRole("alert");
 });
 
 test.each([
