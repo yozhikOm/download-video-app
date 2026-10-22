@@ -36,6 +36,8 @@ export type ProbeError =
   | { kind: "playlist" }
   | { kind: "live" }
   | { kind: "signInRequired" }
+  /** YouTube asks to prove the user isn't a bot; it's about the network, not the Video. */
+  | { kind: "botCheck" }
   | { kind: "truncatedUrl" }
   | { kind: "unsupported" }
   /** `message` is for the log; the UI shows a generic text. */

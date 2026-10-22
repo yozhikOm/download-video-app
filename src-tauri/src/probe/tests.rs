@@ -258,7 +258,7 @@ fn a_url_with_a_truncated_id_is_rejected() {
 }
 
 #[test]
-fn a_bot_check_is_not_mistaken_for_a_sign_in() {
+fn a_bot_check_is_told_apart_from_a_sign_in() {
     let app = App::start();
     let stderr = include_bytes!("fixtures/youtube-bot-check.stderr");
     app.ytdlp_fails(stderr);
@@ -266,15 +266,11 @@ fn a_bot_check_is_not_mistaken_for_a_sign_in() {
     app.prober
         .probe("https://www.youtube.com/watch?v=jNQXAC9IVRw");
 
-    let ProbeState::Failed {
-        error: ProbeError::Other { message },
-    } = app.prober.state()
-    else {
-        panic!("{:?}", app.prober.state());
-    };
-    assert!(
-        message.starts_with("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you"),
-        "{message}"
+    assert_eq!(
+        app.prober.state(),
+        ProbeState::Failed {
+            error: ProbeError::BotCheck
+        }
     );
 }
 
