@@ -389,7 +389,7 @@ test("choosing a sign-in browser saves it and warns about the account", async ()
   ).toHaveDisplayValue("Firefox");
   expect(
     screen.getByText(
-      "yt-dlp будет обращаться к YouTube от имени вашего аккаунта в Firefox. Если скачивать очень много, YouTube может ограничить этот аккаунт.",
+      "Приложение будет обращаться к YouTube от имени вашего аккаунта в Firefox. Если скачивать очень много, YouTube может ограничить этот аккаунт.",
     ),
   ).toBeInTheDocument();
 });
