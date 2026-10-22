@@ -69,11 +69,11 @@ _Avoid_: Aborted, stopped
 ### Tools
 
 **Tool**:
-One of the programs the app runs from its own folder: yt-dlp, ffmpeg or ffprobe. Copies the user has installed elsewhere are never used.
+One of the programs the app runs from its own folder: yt-dlp, ffmpeg, ffprobe or deno (the JavaScript runtime yt-dlp needs for YouTube). Copies the user has installed elsewhere are never used.
 _Avoid_: Binary, dependency, utility
 
 **Package**:
-One official release download that provides Tools: the yt-dlp program, or the FFmpeg-Builds archive with ffmpeg and ffprobe. A version and a published checksum belong to a Package, not to a Tool.
+One official release download that provides Tools: the yt-dlp program, the FFmpeg-Builds archive with ffmpeg and ffprobe, or the deno archive. A version and a published checksum belong to a Package, not to a Tool.
 _Avoid_: Bundle, archive
 
 **Setup**:
