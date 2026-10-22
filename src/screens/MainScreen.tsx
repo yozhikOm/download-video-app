@@ -104,6 +104,27 @@ function asksToSignIn(probe: ProbeState) {
   );
 }
 
+const youtubeHosts = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
+
+/** The field holds a URL of a site other than YouTube. */
+function isOtherSite(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return false;
+  }
+  let host;
+  try {
+    // yt-dlp accepts a URL without "https://".
+    host = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
+      .hostname;
+  } catch {
+    return true;
+  }
+  return !youtubeHosts.some(
+    (site) => host === site || host.endsWith(`.${site}`),
+  );
+}
+
 const browsers = Object.keys(strings.browsers) as Browser[];
 
 /** Which browser's YouTube sign-in yt-dlp uses, if any. */
@@ -218,7 +239,7 @@ export function MainScreen({ probe, settings }: Props) {
         </p>
       )}
       {/* A chosen browser stays on screen so that it can be turned off. */}
-      {(settings.signInBrowser || asksToSignIn(probe)) && (
+      {(settings.signInBrowser || asksToSignIn(probe)) && !isOtherSite(url) && (
         <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
       )}
     </div>

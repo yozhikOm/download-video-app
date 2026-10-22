@@ -372,6 +372,53 @@ test("a chosen sign-in browser stays visible so that it can be turned off", asyn
   ).toHaveDisplayValue("Firefox");
 });
 
+/** Types a URL into the field without submitting it. */
+function enterUrl(url: string) {
+  fireEvent.change(screen.getByRole("textbox", { name: "Ссылка на видео" }), {
+    target: { value: url },
+  });
+}
+
+test("signing in is hidden for a URL of another site", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await botCheck(backend);
+
+  enterUrl("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a chosen sign-in browser is hidden for a URL of another site", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+
+  enterUrl("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test.each([
+  "https://www.youtube.com/watch?v=-moW9jvvMr4",
+  "youtube.com/watch?v=-moW9jvvMr4",
+  "https://m.youtube.com/watch?v=-moW9jvvMr4",
+  "https://youtu.be/-moW9jvvMr4",
+  "https://www.youtube-nocookie.com/embed/-moW9jvvMr4",
+])("a chosen sign-in browser stays visible for %s", async (url) => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+
+  enterUrl(url);
+
+  expect(
+    screen.getByRole("combobox", { name: "Вход в YouTube" }),
+  ).toBeInTheDocument();
+});
+
 test("choosing a sign-in browser saves it and warns about the account", async () => {
   const backend = await startReady();
   await backend.settings({ signInBrowser: null });
