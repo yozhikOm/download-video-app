@@ -82,3 +82,9 @@ _Avoid_: First run, bootstrap, installation
 
 **Broken Tool**:
 A Tool that failed to start; the app runs Setup again to restore it. Unlike a Failed Download, it blocks the whole app until Setup ends.
+
+### Signing in
+
+**Sign-in browser**:
+The browser, chosen by the user, in which they are signed in to YouTube; the app asks the site on behalf of that browser's account. Without one, the app asks the site without an account.
+_Avoid_: Cookies browser, login, account
