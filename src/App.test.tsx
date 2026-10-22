@@ -372,6 +372,25 @@ test("a chosen sign-in browser stays visible so that it can be turned off", asyn
   ).toHaveDisplayValue("Firefox");
 });
 
+test("a probed Video hides signing in, even with a chosen browser", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+
+  await backend.probe({
+    status: "probed",
+    video: {
+      title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
+      channel: "TED",
+      thumbnail: null,
+      duration: 565,
+    },
+  });
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
 /** Types a URL into the field without submitting it. */
 function enterUrl(url: string) {
   fireEvent.change(screen.getByRole("textbox", { name: "Ссылка на видео" }), {

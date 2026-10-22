@@ -238,10 +238,13 @@ export function MainScreen({ probe, settings }: Props) {
           {errorText(probe.error, probe.signInBrowser)}
         </p>
       )}
-      {/* A chosen browser stays on screen so that it can be turned off. */}
-      {(settings.signInBrowser || asksToSignIn(probe)) && !isOtherSite(url) && (
-        <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
-      )}
+      {/* A chosen browser stays on screen so that it can be turned off,
+          except while a found Video is shown. */}
+      {probe.status !== "probed" &&
+        (settings.signInBrowser || asksToSignIn(probe)) &&
+        !isOtherSite(url) && (
+          <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
+        )}
     </div>
   );
 }
