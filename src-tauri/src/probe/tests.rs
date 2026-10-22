@@ -39,7 +39,6 @@ impl App {
             releases.clone(),
             processes.clone(),
             Arc::new(FixedClock(SystemTime::UNIX_EPOCH)),
-            settings.clone(),
             events.clone(),
         ));
         toolbox.prepare();
@@ -314,6 +313,33 @@ fn a_failed_probe_names_the_sign_in_browser_it_ran_with() {
     // Choosing another browser doesn't change what the Probe ran with.
     app.settings.set_sign_in_browser(None).unwrap();
 
+    assert_eq!(
+        app.prober.state(),
+        ProbeState::Failed {
+            error: ProbeError::BotCheck,
+            sign_in_browser: Some(Browser::Firefox),
+        }
+    );
+}
+
+#[test]
+fn a_probe_runs_yt_dlp_with_the_sign_in_browser_it_names() {
+    let app = App::start();
+    app.settings
+        .set_sign_in_browser(Some(Browser::Firefox))
+        .unwrap();
+    app.ytdlp_fails(include_bytes!("fixtures/youtube-bot-check.stderr"));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=jNQXAC9IVRw");
+
+    let runs = app.processes.runs();
+    let (_, args) = runs.last().unwrap();
+    let cookies = args
+        .iter()
+        .position(|arg| arg == "--cookies-from-browser")
+        .expect("--cookies-from-browser");
+    assert_eq!(args[cookies + 1], "firefox");
     assert_eq!(
         app.prober.state(),
         ProbeState::Failed {

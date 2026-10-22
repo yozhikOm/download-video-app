@@ -7,16 +7,15 @@ lib.rs (Tauri commands, wiring)
   └─ Prober ──┬─ Toolbox ──┬─ Releases   ─ GithubReleases │ FakeReleases
               │            ├─ Processes  ─ SystemProcesses │ FakeProcesses
               │            ├─ Clock      ─ SystemClock │ FixedClock
-              │            ├─ Settings ── EventSink
               │            └─ EventSink
-              ├─ Settings
+              ├─ Settings ── EventSink
               └─ EventSink  ─ Subscribers (lib.rs) │ RecordingSink
 ```
 
 ## Modules
 
 **`toolbox.rs`: `Toolbox`**
-The app's own installed Tools in the app data folder (`tools/`), and the only code that knows which Tools exist and which Package provides each one. It runs Setup: it reads the manifest, checks which Tools are in place, downloads the missing Packages through `Releases`, verifies their SHA-256, and installs them. It also runs a Tool through `Processes`, pointing yt-dlp at the app's own ffmpeg and deno, and at the Sign-in browser's cookies when `Settings` has one (ADR-0002). When a Tool fails to start, `Toolbox` forgets it and shows the setup screen again. `SetupState` is what the setup screen shows, and every change to it is sent as an event.
+The app's own installed Tools in the app data folder (`tools/`), and the only code that knows which Tools exist and which Package provides each one. It runs Setup: it reads the manifest, checks which Tools are in place, downloads the missing Packages through `Releases`, verifies their SHA-256, and installs them. It also runs a Tool through `Processes`, pointing yt-dlp at the app's own ffmpeg and deno, and at the cookies of the Sign-in browser the caller passes (ADR-0002). When a Tool fails to start, `Toolbox` forgets it and shows the setup screen again. `SetupState` is what the setup screen shows, and every change to it is sent as an event.
 
 **`probe.rs`: `Prober`**
 Probes a URL by running `yt-dlp -J` through `Toolbox`, with the Sign-in browser from `Settings` when one is chosen, and keeps what it learned as a `Video` (Formats, Transcript languages, original language, chapters, whether it was a stream) for the Download. Only the latest Probe counts: a late answer to an older one is dropped. `ProbeState` is what the main screen shows: the Video's card, or a `ProbeError` for a playlist or channel, a stream that is live now, a Video that needs signing in, YouTube's bot check, a Sign-in browser whose cookies yt-dlp can't read (and why), a URL whose Video id was cut off, or an unsupported URL, along with the Sign-in browser the Probe ran with. When yt-dlp fails to start, `Prober` drops the Probe and runs Setup to restore it. Its tests (`probe/tests.rs`) feed real yt-dlp answers from `probe/fixtures/` through `FakeProcesses`.

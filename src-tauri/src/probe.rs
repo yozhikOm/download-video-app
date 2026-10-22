@@ -199,7 +199,7 @@ impl Prober {
             .into_iter()
             .map(Into::into)
             .collect();
-        match self.toolbox.run(Tool::YtDlp, &args) {
+        match self.toolbox.run(Tool::YtDlp, &args, sign_in_browser) {
             Ok(output) => match read_answer(&output, url) {
                 Ok(video) => self.finish(
                     generation,

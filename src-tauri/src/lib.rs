@@ -136,7 +136,6 @@ pub fn run() {
                 Arc::new(GithubReleases::new()),
                 Arc::new(SystemProcesses),
                 Arc::new(SystemClock),
-                settings.clone(),
                 subscribers.clone(),
             ));
             let prober = Arc::new(Prober::new(
