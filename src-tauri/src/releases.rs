@@ -17,6 +17,8 @@ pub enum Package {
     YtDlp,
     /// The zip with `ffmpeg.exe` and `ffprobe.exe` from yt-dlp/FFmpeg-Builds.
     Ffmpeg,
+    /// The zip with `deno.exe` from denoland/deno.
+    Deno,
 }
 
 impl Package {
@@ -25,6 +27,7 @@ impl Package {
         match self {
             Package::YtDlp => "https://github.com/yt-dlp/yt-dlp/releases/download/",
             Package::Ffmpeg => "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/",
+            Package::Deno => "https://github.com/denoland/deno/releases/download/",
         }
     }
 

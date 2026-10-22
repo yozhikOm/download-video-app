@@ -14,9 +14,12 @@ use super::{Package, Release, Releases, ReleasesError};
 pub const YTDLP_URL: &str =
     "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe";
 pub const FFMPEG_URL: &str = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
+pub const DENO_URL: &str =
+    "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip";
 pub const YTDLP_BYTES: &[u8] = b"fake yt-dlp 2026.08.19";
 pub const FFMPEG_BYTES: &[u8] = b"fake ffmpeg";
 pub const FFPROBE_BYTES: &[u8] = b"fake ffprobe";
+pub const DENO_BYTES: &[u8] = b"fake deno 2.9.8";
 
 /// Bytes per progress report, so even tiny fake downloads report progress.
 const CHUNK: usize = 4;
@@ -30,7 +33,8 @@ struct Scenario {
 }
 
 impl FakeReleases {
-    /// Online, with a yt-dlp release and an FFmpeg-Builds zip published.
+    /// Online, with a yt-dlp release, an FFmpeg-Builds zip and a deno zip
+    /// published.
     pub fn new() -> Self {
         let releases = HashMap::from([
             (
@@ -41,6 +45,7 @@ impl FakeReleases {
                 Package::Ffmpeg,
                 release("2026-10-20T18:32:17Z", FFMPEG_URL, ffmpeg_zip()),
             ),
+            (Package::Deno, release("v2.9.8", DENO_URL, deno_zip())),
         ]);
         Self(Mutex::new(Scenario {
             online: true,
@@ -151,5 +156,14 @@ fn ffmpeg_zip() -> Vec<u8> {
             .unwrap();
         zip.write_all(bytes).unwrap();
     }
+    zip.finish().unwrap().into_inner()
+}
+
+/// Laid out like the real deno zip: just `deno.exe`.
+fn deno_zip() -> Vec<u8> {
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    zip.start_file("deno.exe", SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(DENO_BYTES).unwrap();
     zip.finish().unwrap().into_inner()
 }

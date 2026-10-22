@@ -142,12 +142,12 @@ test("a checksum mismatch names the tool that failed verification", async () => 
 
   await backend.setup({
     status: "failed",
-    error: { kind: "checksumMismatch", package: "ffmpeg" },
+    error: { kind: "checksumMismatch", package: "deno" },
     broken: null,
   });
 
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "ffmpeg не прошёл проверку контрольной суммы",
+    "deno не прошёл проверку контрольной суммы",
   );
 });
 

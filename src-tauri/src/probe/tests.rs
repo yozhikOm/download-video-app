@@ -374,13 +374,15 @@ fn a_failed_probe_forgets_the_previous_video() {
 fn a_broken_yt_dlp_is_restored_and_the_probe_is_dropped() {
     let app = App::start();
     app.processes.break_tool("yt-dlp.exe");
+    let fetched_before = app.releases.fetches().len();
 
     app.prober
         .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
 
     assert_eq!(app.prober.state(), ProbeState::Idle);
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    let fetches = app.releases.fetches();
-    assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::releases::fake::YTDLP_URL);
+    assert_eq!(
+        app.releases.fetches()[fetched_before..],
+        [crate::releases::fake::YTDLP_URL]
+    );
 }

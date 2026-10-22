@@ -1,7 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-export type Tool = "ytDlp" | "ffmpeg" | "ffprobe";
-export type Package = "ytDlp" | "ffmpeg";
+export type Tool = "ytDlp" | "ffmpeg" | "ffprobe" | "deno";
+export type Package = "ytDlp" | "ffmpeg" | "deno";
 
 export type SetupError =
   | { kind: "offline" }
