@@ -36,6 +36,7 @@ export type ProbeError =
   | { kind: "playlist" }
   | { kind: "live" }
   | { kind: "signInRequired" }
+  | { kind: "truncatedUrl" }
   | { kind: "unsupported" }
   /** `message` is for the log; the UI shows a generic text. */
   | { kind: "other"; message: string };

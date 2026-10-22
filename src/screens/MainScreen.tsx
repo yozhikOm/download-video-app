@@ -42,6 +42,8 @@ function errorText(error: ProbeError) {
       return strings.probe.live;
     case "signInRequired":
       return strings.probe.signInRequired;
+    case "truncatedUrl":
+      return strings.probe.truncatedUrl;
     case "unsupported":
       return strings.probe.unsupported;
     case "other":
