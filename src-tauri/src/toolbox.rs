@@ -1,4 +1,4 @@
-//! The app's own copies of yt-dlp, ffmpeg and ffprobe: installing and
+//! The app's own copies of yt-dlp, ffmpeg, ffprobe and deno: installing and
 //! restoring them, and running them. Copies on PATH are never used.
 
 #[cfg(test)]
@@ -32,16 +32,19 @@ pub enum Tool {
     YtDlp,
     Ffmpeg,
     Ffprobe,
+    /// The JavaScript runtime that yt-dlp needs to extract YouTube.
+    Deno,
 }
 
 impl Tool {
-    const ALL: [Tool; 3] = [Tool::YtDlp, Tool::Ffmpeg, Tool::Ffprobe];
+    const ALL: [Tool; 4] = [Tool::YtDlp, Tool::Ffmpeg, Tool::Ffprobe, Tool::Deno];
 
     fn file_name(self) -> &'static str {
         match self {
             Tool::YtDlp => "yt-dlp.exe",
             Tool::Ffmpeg => "ffmpeg.exe",
             Tool::Ffprobe => "ffprobe.exe",
+            Tool::Deno => "deno.exe",
         }
     }
 
@@ -49,6 +52,16 @@ impl Tool {
         match self {
             Tool::YtDlp => Package::YtDlp,
             Tool::Ffmpeg | Tool::Ffprobe => Package::Ffmpeg,
+            Tool::Deno => Package::Deno,
+        }
+    }
+
+    /// Whether `entry` is this tool in its package's zip.
+    fn is_archived_as(self, entry: &str) -> bool {
+        match self {
+            Tool::YtDlp => false,
+            Tool::Ffmpeg | Tool::Ffprobe => entry.ends_with(&format!("/bin/{}", self.file_name())),
+            Tool::Deno => entry == self.file_name(),
         }
     }
 }
@@ -166,16 +179,24 @@ impl Toolbox {
     }
 
     /// Runs a tool from the app's own folder; yt-dlp ignores the user's
-    /// config files and is pointed at the app's own ffmpeg.
+    /// config files and is pointed at the app's own ffmpeg and deno, never
+    /// at a JavaScript runtime installed elsewhere.
     ///
     /// On [`ToolBroken`] the setup screen is already showing, and the caller
     /// starts [`Toolbox::prepare`] to restore the tool.
     pub fn run(&self, tool: Tool, args: &[OsString]) -> Result<Output, ToolBroken> {
         let mut full_args = Vec::new();
         if tool == Tool::YtDlp {
-            full_args.push("--ignore-config".into());
-            full_args.push("--ffmpeg-location".into());
-            full_args.push(self.path(Tool::Ffmpeg).into_os_string());
+            let mut deno = OsString::from("deno:");
+            deno.push(self.path(Tool::Deno));
+            full_args.extend([
+                "--ignore-config".into(),
+                "--ffmpeg-location".into(),
+                self.path(Tool::Ffmpeg).into_os_string(),
+                "--no-js-runtimes".into(),
+                "--js-runtimes".into(),
+                deno,
+            ]);
         }
         full_args.extend_from_slice(args);
         self.processes
@@ -247,8 +268,8 @@ impl Toolbox {
                         .insert(Tool::YtDlp.file_name().into(), installed);
                     manifest.ytdlp_checked_at = Some(self.unix_now());
                 }
-                Package::Ffmpeg => {
-                    let result = self.extract_ffmpeg(&asset.path, &release, &mut manifest);
+                Package::Ffmpeg | Package::Deno => {
+                    let result = self.extract(package, &asset.path, &release, &mut manifest);
                     remove_if_exists(&asset.path);
                     result?;
                 }
@@ -289,6 +310,7 @@ impl Toolbox {
         let name = match package {
             Package::YtDlp => Tool::YtDlp.file_name(),
             Package::Ffmpeg => "ffmpeg.zip",
+            Package::Deno => "deno.zip",
         };
         let path = self.dir.join(format!("{name}{TEMP_SUFFIX}"));
         let result = HashingWriter::create(&path)
@@ -330,19 +352,23 @@ impl Toolbox {
         })
     }
 
-    fn extract_ffmpeg(
+    /// Installs the package's tools from its verified zip.
+    fn extract(
         &self,
+        package: Package,
         archive: &Path,
         release: &Release,
         manifest: &mut Manifest,
     ) -> Result<(), SetupError> {
         let mut zip = ZipArchive::new(File::open(archive)?).map_err(other)?;
-        for tool in [Tool::Ffmpeg, Tool::Ffprobe] {
-            let suffix = format!("/bin/{}", tool.file_name());
+        for tool in Tool::ALL
+            .into_iter()
+            .filter(|tool| tool.package() == package)
+        {
             let entry = zip
                 .file_names()
                 .filter_map(Result::ok)
-                .find(|name| name.ends_with(&suffix))
+                .find(|name| tool.is_archived_as(name))
                 .map(|name| name.into_owned())
                 .ok_or_else(|| {
                     other(format!("{} is missing from the archive", tool.file_name()))

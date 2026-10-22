@@ -7,7 +7,10 @@ use super::*;
 use crate::clock::FixedClock;
 use crate::events::{AppEvent, RecordingSink};
 use crate::processes::fake::FakeProcesses;
-use crate::releases::fake::{FFMPEG_BYTES, FFPROBE_BYTES, FakeReleases, YTDLP_BYTES};
+use crate::releases::fake::{
+    DENO_BYTES, DENO_URL, FFMPEG_BYTES, FFMPEG_URL, FFPROBE_BYTES, FakeReleases, YTDLP_BYTES,
+    YTDLP_URL,
+};
 
 const NOW: Duration = Duration::from_secs(1_790_000_000);
 
@@ -59,6 +62,11 @@ impl App {
         self.dir.path().join("tools").join(name)
     }
 
+    /// Asset URLs fetched after the first `skip` fetches.
+    fn fetches_after(&self, skip: usize) -> Vec<String> {
+        self.releases.fetches().split_off(skip)
+    }
+
     fn states(&self) -> Vec<SetupState> {
         let events = self.events.events();
         events
@@ -72,7 +80,7 @@ impl App {
 }
 
 #[test]
-fn first_run_installs_all_three_tools_and_becomes_ready() {
+fn first_run_installs_all_four_tools_and_becomes_ready() {
     let app = App::start();
 
     app.toolbox.prepare();
@@ -84,6 +92,7 @@ fn first_run_installs_all_three_tools_and_becomes_ready() {
         std::fs::read(app.file("ffprobe.exe")).unwrap(),
         FFPROBE_BYTES
     );
+    assert_eq!(std::fs::read(app.file("deno.exe")).unwrap(), DENO_BYTES);
 }
 
 #[test]
@@ -108,6 +117,11 @@ fn setup_reports_download_progress_up_to_the_total_before_ready() {
             .windows(2)
             .all(|w| w[0].0 <= w[1].0 && w[1].1 == total)
     );
+    let published: u64 = [Package::YtDlp, Package::Ffmpeg, Package::Deno]
+        .into_iter()
+        .map(|package| app.releases.latest_release(package).unwrap().size)
+        .sum();
+    assert_eq!(total, published);
     assert_eq!(progress.first().unwrap().0, 0);
     assert_eq!(progress.last().unwrap().0, total);
     assert_eq!(app.states().last(), Some(&SetupState::Ready));
@@ -142,12 +156,13 @@ fn relaunch_with_tools_in_place_is_ready_without_the_network() {
     let app = App::start();
     app.toolbox.prepare();
     app.releases.set_online(false);
+    let fetched_before = app.releases.fetches().len();
     let app = app.restart();
 
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    assert_eq!(app.releases.fetches().len(), 2);
+    assert_eq!(app.fetches_after(fetched_before), Vec::<String>::new());
     // Nothing to download, so the setup screen doesn't flash.
     assert_eq!(app.states(), [SetupState::Checking, SetupState::Ready]);
 }
@@ -178,6 +193,7 @@ fn relaunch_restores_a_deleted_tool_downloading_only_its_package() {
     let app = App::start();
     app.toolbox.prepare();
     std::fs::remove_file(app.file("ffprobe.exe")).unwrap();
+    let fetched_before = app.releases.fetches().len();
     let app = app.restart();
 
     app.toolbox.prepare();
@@ -187,9 +203,7 @@ fn relaunch_restores_a_deleted_tool_downloading_only_its_package() {
         std::fs::read(app.file("ffprobe.exe")).unwrap(),
         FFPROBE_BYTES
     );
-    let fetches = app.releases.fetches();
-    assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::releases::fake::FFMPEG_URL);
+    assert_eq!(app.fetches_after(fetched_before), [FFMPEG_URL]);
 }
 
 #[test]
@@ -197,14 +211,33 @@ fn relaunch_restores_a_tool_whose_size_changed() {
     let app = App::start();
     app.toolbox.prepare();
     std::fs::write(app.file("yt-dlp.exe"), b"truncated").unwrap();
+    let fetched_before = app.releases.fetches().len();
     let app = app.restart();
 
     app.toolbox.prepare();
 
     assert_eq!(std::fs::read(app.file("yt-dlp.exe")).unwrap(), YTDLP_BYTES);
-    let fetches = app.releases.fetches();
-    assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::releases::fake::YTDLP_URL);
+    assert_eq!(app.fetches_after(fetched_before), [YTDLP_URL]);
+}
+
+#[test]
+fn relaunch_restores_a_deleted_or_resized_deno() {
+    for damage in [
+        |path: &Path| std::fs::remove_file(path).unwrap(),
+        |path: &Path| std::fs::write(path, b"truncated").unwrap(),
+    ] {
+        let app = App::start();
+        app.toolbox.prepare();
+        damage(&app.file("deno.exe"));
+        let fetched_before = app.releases.fetches().len();
+        let app = app.restart();
+
+        app.toolbox.prepare();
+
+        assert_eq!(app.toolbox.state(), SetupState::Ready);
+        assert_eq!(std::fs::read(app.file("deno.exe")).unwrap(), DENO_BYTES);
+        assert_eq!(app.fetches_after(fetched_before), [DENO_URL]);
+    }
 }
 
 #[test]
@@ -212,12 +245,16 @@ fn relaunch_without_the_manifest_installs_everything_again() {
     let app = App::start();
     app.toolbox.prepare();
     std::fs::remove_file(app.file("manifest.json")).unwrap();
+    let fetched_before = app.releases.fetches().len();
     let app = app.restart();
 
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    assert_eq!(app.releases.fetches().len(), 4);
+    assert_eq!(
+        app.fetches_after(fetched_before),
+        [YTDLP_URL, FFMPEG_URL, DENO_URL]
+    );
 }
 
 #[test]
@@ -237,6 +274,7 @@ fn checksum_mismatch_fails_setup_and_leaves_no_unverified_file() {
     for (package, files) in [
         (Package::YtDlp, vec!["yt-dlp.exe"]),
         (Package::Ffmpeg, vec!["ffmpeg.exe", "ffprobe.exe"]),
+        (Package::Deno, vec!["deno.exe"]),
     ] {
         let app = App::start();
         app.releases.tamper_checksum(package);
@@ -266,14 +304,27 @@ fn checksum_mismatch_fails_setup_and_leaves_no_unverified_file() {
 
 #[test]
 fn setup_refuses_assets_outside_the_official_github_releases() {
-    for url in [
-        "http://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
-        "https://example.com/yt-dlp.exe",
-        "https://github.com/someone/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
-        "https://github.com/yt-dlp/yt-dlp/releases/download/%2e%2e/%2e%2e/someone/yt-dlp.exe",
+    for (package, url) in [
+        (
+            Package::YtDlp,
+            "http://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+        ),
+        (Package::YtDlp, "https://example.com/yt-dlp.exe"),
+        (
+            Package::YtDlp,
+            "https://github.com/someone/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+        ),
+        (
+            Package::YtDlp,
+            "https://github.com/yt-dlp/yt-dlp/releases/download/%2e%2e/%2e%2e/someone/yt-dlp.exe",
+        ),
+        (
+            Package::Deno,
+            "https://github.com/someone/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+        ),
     ] {
         let app = App::start();
-        app.releases.move_asset(Package::YtDlp, url);
+        app.releases.move_asset(package, url);
 
         app.toolbox.prepare();
 
@@ -286,7 +337,7 @@ fn setup_refuses_assets_outside_the_official_github_releases() {
 }
 
 #[test]
-fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg() {
+fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg_and_deno() {
     let app = App::start();
     app.toolbox.prepare();
 
@@ -298,6 +349,8 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg() {
         .expect("ffprobe runs");
 
     let ffmpeg = app.file("ffmpeg.exe").into_os_string();
+    let mut deno = OsString::from("deno:");
+    deno.push(app.file("deno.exe"));
     assert_eq!(
         app.processes.runs(),
         vec![
@@ -307,6 +360,9 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg() {
                     "--ignore-config".into(),
                     "--ffmpeg-location".into(),
                     ffmpeg,
+                    "--no-js-runtimes".into(),
+                    "--js-runtimes".into(),
+                    deno,
                     "--version".into()
                 ]
             ),
@@ -320,6 +376,7 @@ fn a_tool_that_fails_to_start_is_broken_and_setup_restores_it() {
     let app = App::start();
     app.toolbox.prepare();
     app.processes.break_tool("ffmpeg.exe");
+    let fetched_before = app.releases.fetches().len();
 
     let result = app.toolbox.run(Tool::Ffmpeg, &["-version".into()]);
 
@@ -350,9 +407,7 @@ fn a_tool_that_fails_to_start_is_broken_and_setup_restores_it() {
         }
     )));
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    let fetches = app.releases.fetches();
-    assert_eq!(fetches.len(), 3);
-    assert_eq!(fetches[2], crate::releases::fake::FFMPEG_URL);
+    assert_eq!(app.fetches_after(fetched_before), [FFMPEG_URL]);
 }
 
 #[test]
@@ -361,19 +416,39 @@ fn a_broken_tool_is_restored_on_the_next_launch_too() {
     app.toolbox.prepare();
     app.processes.break_tool("yt-dlp.exe");
     let _ = app.toolbox.run(Tool::YtDlp, &[]);
+    let fetched_before = app.releases.fetches().len();
     let app = app.restart();
 
     app.toolbox.prepare();
 
     assert_eq!(app.toolbox.state(), SetupState::Ready);
-    assert_eq!(app.releases.fetches().len(), 3);
+    assert_eq!(app.fetches_after(fetched_before), [YTDLP_URL]);
+}
+
+#[test]
+fn a_deno_that_fails_to_start_is_broken_and_setup_restores_it() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.processes.break_tool("deno.exe");
+    let fetched_before = app.releases.fetches().len();
+
+    let result = app.toolbox.run(Tool::Deno, &["--version".into()]);
+
+    assert_eq!(result.unwrap_err(), ToolBroken(Tool::Deno));
+    app.toolbox.prepare();
+    assert_eq!(app.toolbox.state(), SetupState::Ready);
+    assert_eq!(app.fetches_after(fetched_before), [DENO_URL]);
 }
 
 #[test]
 fn unverified_files_left_by_an_interrupted_launch_are_removed() {
     let app = App::start();
     app.toolbox.prepare();
-    for name in ["yt-dlp.exe.download", "ffmpeg.zip.download"] {
+    for name in [
+        "yt-dlp.exe.download",
+        "ffmpeg.zip.download",
+        "deno.zip.download",
+    ] {
         std::fs::write(app.file(name), b"half a download").unwrap();
     }
     let app = app.restart();
@@ -383,4 +458,5 @@ fn unverified_files_left_by_an_interrupted_launch_are_removed() {
     assert_eq!(app.toolbox.state(), SetupState::Ready);
     assert!(!app.file("yt-dlp.exe.download").exists());
     assert!(!app.file("ffmpeg.zip.download").exists());
+    assert!(!app.file("deno.zip.download").exists());
 }

@@ -39,6 +39,8 @@ struct Source {
     api_url: &'static str,
     asset: &'static str,
     checksums: &'static str,
+    /// Finds the asset's hex SHA-256 in the checksums file.
+    checksum_for: fn(&str, &str) -> Option<String>,
 }
 
 impl GithubReleases {
@@ -101,14 +103,14 @@ impl Releases for GithubReleases {
             .body_mut()
             .read_to_string()
             .map_err(releases_error)?;
-        let sha256 = checksum_for(&sums, source.asset).ok_or_else(|| {
+        let sha256 = (source.checksum_for)(&sums, source.asset).ok_or_else(|| {
             ReleasesError::Other(format!(
                 "{} has no checksum for {}",
                 source.checksums, source.asset
             ))
         })?;
         let version = match package {
-            Package::YtDlp => release.tag_name,
+            Package::YtDlp | Package::Deno => release.tag_name,
             // FFmpeg-Builds rebuilds its rolling "latest" release in place.
             Package::Ffmpeg => asset.updated_at.clone(),
         };
@@ -168,11 +170,19 @@ fn source(package: Package) -> Source {
             api_url: "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest",
             asset: "yt-dlp.exe",
             checksums: "SHA2-256SUMS",
+            checksum_for: sha256sum_checksum,
         },
         Package::Ffmpeg => Source {
             api_url: "https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases/tags/latest",
             asset: "ffmpeg-master-latest-win64-gpl.zip",
             checksums: "checksums.sha256",
+            checksum_for: sha256sum_checksum,
+        },
+        Package::Deno => Source {
+            api_url: "https://api.github.com/repos/denoland/deno/releases/latest",
+            asset: "deno-x86_64-pc-windows-msvc.zip",
+            checksums: "deno-x86_64-pc-windows-msvc.zip.sha256sum",
+            checksum_for: get_file_hash_checksum,
         },
     }
 }
@@ -194,13 +204,32 @@ fn connection_lost(_: io::Error) -> ReleasesError {
 
 /// Finds a file's hex SHA-256 in a `sha256sum`-style list, as published by
 /// yt-dlp (`SHA2-256SUMS`) and FFmpeg-Builds (`checksums.sha256`).
-fn checksum_for(sums: &str, file_name: &str) -> Option<String> {
+fn sha256sum_checksum(sums: &str, file_name: &str) -> Option<String> {
     sums.lines().find_map(|line| {
         let (sum, name) = line.trim().split_once(char::is_whitespace)?;
         let name = name.trim_start().trim_start_matches('*');
-        let is_sha256 = sum.len() == 64 && sum.chars().all(|c| c.is_ascii_hexdigit());
-        (name == file_name && is_sha256).then(|| sum.to_ascii_lowercase())
+        (name == file_name && is_hex_sha256(sum)).then(|| sum.to_ascii_lowercase())
     })
+}
+
+/// Reads a file's hex SHA-256 from PowerShell `Get-FileHash` output, as
+/// published by deno: `Algorithm`, `Hash` and `Path` lines of `Name : Value`.
+fn get_file_hash_checksum(listing: &str, file_name: &str) -> Option<String> {
+    let field = |name: &str| {
+        listing.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            (key.trim() == name).then(|| value.trim())
+        })
+    };
+    let path = field("Path")?;
+    let path_names_file = path.rsplit(['\\', '/']).next() == Some(file_name);
+    let hash = field("Hash")?;
+    (field("Algorithm")? == "SHA256" && path_names_file && is_hex_sha256(hash))
+        .then(|| hash.to_ascii_lowercase())
+}
+
+fn is_hex_sha256(text: &str) -> bool {
+    text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -215,7 +244,7 @@ mod tests {
 05b438997bafc3affdfda9d041353c9d73e04dc842207254b655b0887c4445b0  yt-dlp_arm64.exe
 ";
         assert_eq!(
-            checksum_for(sums, "yt-dlp.exe").as_deref(),
+            sha256sum_checksum(sums, "yt-dlp.exe").as_deref(),
             Some("66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a")
         );
     }
@@ -227,7 +256,7 @@ mod tests {
 75104ceafcb51a7982b248df5113d3fbb449d1c32425f1edf184d5ce391c3b9b  ffmpeg-master-latest-win64-gpl.zip\r
 ";
         assert_eq!(
-            checksum_for(sums, "ffmpeg-master-latest-win64-gpl.zip").as_deref(),
+            sha256sum_checksum(sums, "ffmpeg-master-latest-win64-gpl.zip").as_deref(),
             Some("75104ceafcb51a7982b248df5113d3fbb449d1c32425f1edf184d5ce391c3b9b")
         );
     }
@@ -235,11 +264,48 @@ mod tests {
     #[test]
     fn a_file_missing_from_the_list_has_no_checksum() {
         let sums = "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a  yt-dlp.exe\n";
-        assert_eq!(checksum_for(sums, "yt-dlp_x86.exe"), None);
-        assert_eq!(checksum_for("garbage  yt-dlp.exe\n", "yt-dlp.exe"), None);
+        assert_eq!(sha256sum_checksum(sums, "yt-dlp_x86.exe"), None);
+        assert_eq!(
+            sha256sum_checksum("garbage  yt-dlp.exe\n", "yt-dlp.exe"),
+            None
+        );
     }
 
-    /// Installs the real tools from GitHub (~220 MB):
+    /// The published `deno-x86_64-pc-windows-msvc.zip.sha256sum` of v2.9.8.
+    const DENO_SHA256SUM: &str = "\r
+Algorithm : SHA256\r
+Hash      : CBA84B26E0DF5AE7F74FC66B86A95B866872A86292EBD84FA1E959927EDD93BF\r
+Path      : C:\\a\\deno\\deno\\target\\release\\deno-x86_64-pc-windows-msvc.zip\r
+\r
+";
+
+    #[test]
+    fn reads_the_checksum_of_the_deno_zip_from_get_file_hash_output() {
+        assert_eq!(
+            get_file_hash_checksum(DENO_SHA256SUM, "deno-x86_64-pc-windows-msvc.zip").as_deref(),
+            Some("cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf")
+        );
+    }
+
+    #[test]
+    fn get_file_hash_output_for_another_file_or_algorithm_has_no_checksum() {
+        assert_eq!(
+            get_file_hash_checksum(DENO_SHA256SUM, "deno-aarch64-pc-windows-msvc.zip"),
+            None
+        );
+        let sha1 = DENO_SHA256SUM.replace("SHA256", "SHA1");
+        assert_eq!(
+            get_file_hash_checksum(&sha1, "deno-x86_64-pc-windows-msvc.zip"),
+            None
+        );
+        let garbage = DENO_SHA256SUM.replace("CBA84B26", "not hex!");
+        assert_eq!(
+            get_file_hash_checksum(&garbage, "deno-x86_64-pc-windows-msvc.zip"),
+            None
+        );
+    }
+
+    /// Installs the real tools from GitHub (~265 MB):
     /// `cargo test --lib -- --ignored installs_the_real_tools`.
     #[test]
     #[ignore = "downloads the real tools from GitHub"]
@@ -267,5 +333,12 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         let output = toolbox.run(Tool::Ffprobe, &["-version".into()]).unwrap();
         assert!(String::from_utf8_lossy(&output.stdout).starts_with("ffprobe version"));
+        let output = toolbox.run(Tool::Deno, &["--version".into()]).unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).starts_with("deno "));
+        // The verbose header lists the JS runtimes yt-dlp found; without a
+        // URL it then exits with an error, which doesn't matter here.
+        let output = toolbox.run(Tool::YtDlp, &["--verbose".into()]).unwrap();
+        let header = String::from_utf8_lossy(&output.stderr);
+        assert!(header.contains("JS runtimes: deno-"), "{header}");
     }
 }
