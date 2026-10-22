@@ -372,31 +372,83 @@ test("a chosen sign-in browser stays visible so that it can be turned off", asyn
   ).toHaveDisplayValue("Firefox");
 });
 
-test("a probed Video hides signing in, even with a chosen browser", async () => {
-  const backend = await startReady();
-  await backend.settings({ signInBrowser: "firefox" });
-
-  await backend.probe({
-    status: "probed",
-    video: {
-      title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
-      channel: "TED",
-      thumbnail: null,
-      duration: 565,
-    },
-  });
-
-  expect(
-    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
-  ).not.toBeInTheDocument();
-});
-
 /** Types a URL into the field without submitting it. */
 function enterUrl(url: string) {
   fireEvent.change(screen.getByRole("textbox", { name: "Ссылка на видео" }), {
     target: { value: url },
   });
 }
+
+/** Types a URL into the field and presses «Найти». */
+function submitUrl(url: string) {
+  enterUrl(url);
+  fireEvent.submit(screen.getByRole("textbox", { name: "Ссылка на видео" }));
+}
+
+const probedVideo = {
+  status: "probed",
+  video: {
+    title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
+    channel: "TED",
+    thumbnail: null,
+    duration: 565,
+  },
+} as const;
+
+test("submitting a URL hides signing in, even with a chosen browser", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a probed Video keeps signing in hidden", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+  await backend.probe({ status: "probing" });
+  await backend.probe(probedVideo);
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("another YouTube URL after a probed Video shows signing in again", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+  await backend.probe(probedVideo);
+
+  enterUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+
+  expect(
+    screen.getByRole("combobox", { name: "Вход в YouTube" }),
+  ).toHaveDisplayValue("Firefox");
+});
+
+test.each([
+  { kind: "botCheck" },
+  { kind: "cookiesUnreadable", reason: "browserOpen" },
+] as const)(
+  "a submitted URL failing with %o shows signing in again",
+  async (error) => {
+    const backend = await startReady();
+    await backend.settings({ signInBrowser: "firefox" });
+    submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    await backend.probe({ status: "failed", error, signInBrowser: "firefox" });
+
+    expect(
+      screen.getByRole("combobox", { name: "Вход в YouTube" }),
+    ).toHaveDisplayValue("Firefox");
+  },
+);
 
 test("signing in is hidden for a URL of another site", async () => {
   const backend = await startReady();

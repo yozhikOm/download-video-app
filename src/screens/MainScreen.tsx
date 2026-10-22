@@ -178,6 +178,7 @@ export function MainScreen({ probe, settings }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
+  const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAppInfo()
@@ -189,9 +190,15 @@ export function MainScreen({ probe, settings }: Props) {
     event.preventDefault();
     const trimmed = url.trim();
     if (trimmed) {
+      setSubmittedUrl(trimmed);
       void probeUrl(trimmed);
     }
   }
+
+  // Signing in steps aside for the URL just submitted, unless its Probe
+  // failed: the user may need to sign in or change the browser to retry.
+  const awaitsSubmitted =
+    url.trim() === submittedUrl && probe.status !== "failed";
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4 self-start">
@@ -239,8 +246,8 @@ export function MainScreen({ probe, settings }: Props) {
         </p>
       )}
       {/* A chosen browser stays on screen so that it can be turned off,
-          except while a found Video is shown. */}
-      {probe.status !== "probed" &&
+          except for the URL just submitted. */}
+      {!awaitsSubmitted &&
         (settings.signInBrowser || asksToSignIn(probe)) &&
         !isOtherSite(url) && (
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
