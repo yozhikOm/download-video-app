@@ -9,20 +9,36 @@ import {
 } from "@testing-library/react";
 import { expect, test } from "vitest";
 import App from "./App";
-import type { AppEvent, ProbeState, SetupState } from "./backend";
+import type {
+  AppEvent,
+  Browser,
+  ProbeState,
+  SettingsState,
+  SetupState,
+} from "./backend";
 
 const MB = 1024 * 1024;
 
-/** Mocks the backend; `setup` and `probe` push a state to the UI's channel. */
-function mockBackend({ appInfoFails = false } = {}) {
+/**
+ * Mocks the backend; `setup`, `probe` and `settings` push a state to the
+ * UI's channel.
+ */
+function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
   const probedUrls: string[] = [];
+  const signInBrowsers: (Browser | null)[] = [];
   mockIPC((cmd, args) => {
     commands.push(cmd);
     switch (cmd) {
       case "probe":
         probedUrls.push((args as { url: string }).url);
+        return null;
+      case "set_sign_in_browser":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        signInBrowsers.push((args as { browser: Browser | null }).browser);
         return null;
       case "subscribe":
         channel = (args as { events: Channel<AppEvent> }).events;
@@ -43,8 +59,10 @@ function mockBackend({ appInfoFails = false } = {}) {
   return {
     commands,
     probedUrls,
+    signInBrowsers,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
+    settings: (state: SettingsState) => send({ type: "settings", data: state }),
   };
 }
 
@@ -179,8 +197,8 @@ test("main screen reports when the app version fails to load", async () => {
 });
 
 /** Renders the main screen after a finished setup. */
-async function startReady() {
-  const backend = mockBackend();
+async function startReady(options?: Parameters<typeof mockBackend>[0]) {
+  const backend = mockBackend(options);
   render(<App />);
   await backend.setup({ status: "ready" });
   return backend;
@@ -265,11 +283,11 @@ test.each([
   ],
   [
     { kind: "signInRequired" },
-    "Видео требует входа в аккаунт — пока не поддерживается",
+    "Видео требует входа в аккаунт. Выберите ниже браузер, в котором вы вошли в YouTube",
   ],
   [
     { kind: "botCheck" },
-    "YouTube просит подтвердить, что вы не робот. Так бывает в рабочих сетях и через VPN — попробуйте позже или из другой сети",
+    "YouTube просит подтвердить, что вы не робот. Так бывает в рабочих сетях и через VPN — выберите ниже браузер, в котором вы вошли в YouTube, или попробуйте из другой сети",
   ],
   [
     { kind: "truncatedUrl" },
@@ -285,9 +303,118 @@ test.each([
   async (error, text) => {
     const backend = await startReady();
 
-    await backend.probe({ status: "failed", error });
+    await backend.probe({ status: "failed", error, signInBrowser: null });
 
     expect(screen.getByRole("alert")).toHaveTextContent(text);
     expect(screen.queryAllByRole("heading")).toHaveLength(1);
   },
 );
+
+test("no sign-in browser is chosen by default", async () => {
+  await startReady();
+
+  expect(
+    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
+  ).toHaveDisplayValue("Не использовать");
+  expect(
+    screen.queryByText(/от имени вашего аккаунта/),
+  ).not.toBeInTheDocument();
+});
+
+test("choosing a sign-in browser saves it and warns about the account", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+
+  fireEvent.change(
+    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
+    { target: { value: "firefox" } },
+  );
+  await waitFor(() => expect(backend.signInBrowsers).toEqual(["firefox"]));
+  await backend.settings({ signInBrowser: "firefox" });
+
+  expect(
+    screen.getByRole("combobox", { name: "Вход в YouTube" }),
+  ).toHaveDisplayValue("Firefox");
+  expect(
+    screen.getByText(
+      "yt-dlp будет обращаться к YouTube от имени вашего аккаунта в Firefox. Если скачивать очень много, YouTube может ограничить этот аккаунт.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("choosing not to sign in saves no browser", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "edge" });
+
+  fireEvent.change(
+    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
+    { target: { value: "" } },
+  );
+
+  await waitFor(() => expect(backend.signInBrowsers).toEqual([null]));
+});
+
+test("a sign-in browser that can't be saved says so", async () => {
+  await startReady({ savingFails: true });
+
+  fireEvent.change(
+    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
+    { target: { value: "firefox" } },
+  );
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Не удалось сохранить выбор браузера",
+  );
+});
+
+test.each([
+  [
+    "firefox",
+    { kind: "signInRequired" },
+    "Видео требует входа, а в Firefox не выполнен вход в YouTube или у аккаунта нет доступа к этому видео",
+  ],
+  [
+    "firefox",
+    { kind: "botCheck" },
+    "YouTube всё равно просит подтвердить, что вы не робот. Проверьте, что в Firefox выполнен вход в YouTube",
+  ],
+  [
+    "vivaldi",
+    { kind: "cookiesUnreadable", reason: "browserNotFound" },
+    "Не удалось найти данные Vivaldi — браузер не установлен или в нём ещё не открывали сайты. Выберите другой браузер",
+  ],
+  [
+    "edge",
+    { kind: "cookiesUnreadable", reason: "browserOpen" },
+    "Edge не даёт прочитать cookies, пока он открыт. Закройте его полностью и нажмите «Найти» ещё раз",
+  ],
+  [
+    "chrome",
+    { kind: "cookiesUnreadable", reason: "cantDecrypt" },
+    "Chrome шифрует cookies так, что другие программы не могут их прочитать. Выберите другой браузер, например Firefox",
+  ],
+] as const)(
+  "a Probe that ran with %s as the sign-in browser names it in %o",
+  async (browser, error, text) => {
+    const backend = await startReady();
+
+    await backend.probe({ status: "failed", error, signInBrowser: browser });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(text);
+  },
+);
+
+test("a failed Probe names the browser it ran with, not the one chosen since", async () => {
+  const backend = await startReady();
+  await backend.probe({
+    status: "failed",
+    error: { kind: "botCheck" },
+    signInBrowser: null,
+  });
+
+  await backend.settings({ signInBrowser: "firefox" });
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "выберите ниже браузер, в котором вы вошли в YouTube",
+  );
+});
