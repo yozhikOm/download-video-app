@@ -315,15 +315,21 @@ Path      : C:\\a\\deno\\deno\\target\\release\\deno-x86_64-pc-windows-msvc.zip\
         use crate::clock::SystemClock;
         use crate::events::RecordingSink;
         use crate::processes::SystemProcesses;
+        use crate::settings::Settings;
         use crate::toolbox::{SetupState, Tool, Toolbox};
 
         let dir = tempfile::TempDir::new().unwrap();
+        let events = Arc::new(RecordingSink::default());
         let toolbox = Toolbox::new(
-            dir.path().to_path_buf(),
+            dir.path().join("tools"),
             Arc::new(GithubReleases::new()),
             Arc::new(SystemProcesses),
             Arc::new(SystemClock),
-            Arc::new(RecordingSink::default()),
+            Arc::new(Settings::load(
+                dir.path().join("settings.json"),
+                events.clone(),
+            )),
+            events,
         );
 
         toolbox.prepare();

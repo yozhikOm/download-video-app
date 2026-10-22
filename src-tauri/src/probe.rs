@@ -13,6 +13,7 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::events::{AppEvent, EventSink};
+use crate::settings::{Browser, Settings};
 use crate::toolbox::{Tool, Toolbox};
 
 /// What the main screen shows about the current Probe.
@@ -21,8 +22,16 @@ use crate::toolbox::{Tool, Toolbox};
 pub enum ProbeState {
     Idle,
     Probing,
-    Probed { video: VideoCard },
-    Failed { error: ProbeError },
+    Probed {
+        video: VideoCard,
+    },
+    #[serde(rename_all = "camelCase")]
+    Failed {
+        error: ProbeError,
+        /// The sign-in browser the Probe ran with, which the user may have
+        /// changed since.
+        sign_in_browser: Option<Browser>,
+    },
 }
 
 /// Why a URL can't be downloaded; the UI shows its own text for each.
@@ -33,17 +42,33 @@ pub enum ProbeError {
     Playlist,
     /// A stream that is live right now; it can be downloaded once it ends.
     Live,
-    /// Age-restricted, private or members-only; signing in isn't supported yet.
+    /// Age-restricted, private or members-only, and no sign-in browser is
+    /// chosen or its account has no access.
     SignInRequired,
     /// YouTube asks to prove the user isn't a bot; it's about the network,
-    /// not the Video.
+    /// not the Video. Signing in through a browser gets past it.
     BotCheck,
+    /// yt-dlp couldn't read the sign-in browser's cookies.
+    CookiesUnreadable { reason: CookiesError },
     /// The URL lost part of the Video's id, likely when it was copied.
     TruncatedUrl,
     /// The site isn't supported or there is no Video at the URL.
     Unsupported,
     /// The message is for the log; the UI shows a generic text.
     Other { message: String },
+}
+
+/// Why yt-dlp couldn't read the sign-in browser's cookies.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CookiesError {
+    /// The browser isn't installed or has no cookies yet.
+    BrowserNotFound,
+    /// The browser keeps its cookies locked while it runs.
+    BrowserOpen,
+    /// The browser encrypts its cookies so that other programs can't read
+    /// them; on Windows, recent Chrome, Edge and Brave do.
+    CantDecrypt,
 }
 
 /// What the user sees of a probed Video to confirm it's the right one.
@@ -126,6 +151,7 @@ impl Video {
 /// Probes URLs with yt-dlp; only the latest Probe counts.
 pub struct Prober {
     toolbox: Arc<Toolbox>,
+    settings: Arc<Settings>,
     events: Arc<dyn EventSink>,
     current: Mutex<Current>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -141,9 +167,10 @@ struct Current {
 }
 
 impl Prober {
-    pub fn new(toolbox: Arc<Toolbox>, events: Arc<dyn EventSink>) -> Self {
+    pub fn new(toolbox: Arc<Toolbox>, settings: Arc<Settings>, events: Arc<dyn EventSink>) -> Self {
         Self {
             toolbox,
+            settings,
             events,
             current: Mutex::new(Current {
                 generation: 0,
@@ -167,6 +194,7 @@ impl Prober {
     /// until yt-dlp answers.
     pub fn probe(&self, url: &str) {
         let generation = self.start();
+        let sign_in_browser = self.settings.sign_in_browser();
         let args: Vec<OsString> = ["-J", "--no-playlist", "--flat-playlist", "--", url]
             .into_iter()
             .map(Into::into)
@@ -184,7 +212,11 @@ impl Prober {
                     if let ProbeError::Other { message } = &error {
                         eprintln!("can't probe {url}: {message}");
                     }
-                    self.finish(generation, ProbeState::Failed { error }, None);
+                    let state = ProbeState::Failed {
+                        error,
+                        sign_in_browser,
+                    };
+                    self.finish(generation, state, None);
                 }
             },
             // The setup screen is up now; once yt-dlp is restored, the user
@@ -366,8 +398,16 @@ fn read_error(stderr: &str) -> ProbeError {
         .to_string();
     let lower = message.to_lowercase();
     let says = |phrases: &[&str]| phrases.iter().any(|phrase| lower.contains(phrase));
-    // YouTube's bot check asks to sign in too, so it's told apart first.
-    if says(&["not a bot"]) {
+    let cookies_unreadable = |reason| ProbeError::CookiesUnreadable { reason };
+    // YouTube's bot check asks to sign in too, so it's told apart before a
+    // Video that needs signing in.
+    if says(&["could not find"]) && says(&["cookies database"]) {
+        cookies_unreadable(CookiesError::BrowserNotFound)
+    } else if says(&["could not copy"]) && says(&["cookie database"]) {
+        cookies_unreadable(CookiesError::BrowserOpen)
+    } else if says(&["failed to decrypt with dpapi"]) {
+        cookies_unreadable(CookiesError::CantDecrypt)
+    } else if says(&["not a bot"]) {
         ProbeError::BotCheck
     } else if says(&[
         "sign in",

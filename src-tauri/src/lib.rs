@@ -3,6 +3,7 @@ pub mod events;
 pub mod probe;
 pub mod processes;
 pub mod releases;
+pub mod settings;
 pub mod toolbox;
 
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,7 @@ use crate::events::{AppEvent, EventSink};
 use crate::probe::Prober;
 use crate::processes::SystemProcesses;
 use crate::releases::github::GithubReleases;
+use crate::settings::{Browser, Settings};
 use crate::toolbox::Toolbox;
 
 #[derive(Serialize)]
@@ -64,12 +66,14 @@ fn subscribe(
     events: Channel<AppEvent>,
     toolbox: State<'_, Arc<Toolbox>>,
     prober: State<'_, Arc<Prober>>,
+    settings: State<'_, Arc<Settings>>,
     subscribers: State<'_, Arc<Subscribers>>,
 ) {
     subscribers.add(events, || {
         vec![
             AppEvent::Setup(toolbox.state()),
             AppEvent::Probe(prober.state()),
+            AppEvent::Settings(settings.state()),
         ]
     });
 }
@@ -86,6 +90,19 @@ fn probe(url: String, prober: State<'_, Arc<Prober>>) {
     std::thread::spawn(move || prober.probe(url.trim()));
 }
 
+/// Saves the browser whose YouTube sign-in yt-dlp uses, or `None` to not
+/// sign in; the change arrives as an event.
+#[tauri::command]
+fn set_sign_in_browser(
+    browser: Option<Browser>,
+    settings: State<'_, Arc<Settings>>,
+) -> Result<(), String> {
+    settings.set_sign_in_browser(browser).map_err(|error| {
+        eprintln!("can't save the sign-in browser: {error}");
+        error.to_string()
+    })
+}
+
 /// Prepares the tools in the background; the UI follows along through events.
 fn spawn_prepare(toolbox: Arc<Toolbox>) {
     std::thread::spawn(move || toolbox.prepare());
@@ -99,7 +116,8 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             app_info,
             subscribe,
             retry_setup,
-            probe
+            probe,
+            set_sign_in_browser
         ])
 }
 
@@ -108,15 +126,26 @@ pub fn run() {
     app_builder(tauri::Builder::default())
         .setup(|app| {
             let subscribers = Arc::new(Subscribers::default());
+            let data_dir = app.path().app_local_data_dir()?;
+            let settings = Arc::new(Settings::load(
+                data_dir.join("settings.json"),
+                subscribers.clone(),
+            ));
             let toolbox = Arc::new(Toolbox::new(
-                app.path().app_local_data_dir()?.join("tools"),
+                data_dir.join("tools"),
                 Arc::new(GithubReleases::new()),
                 Arc::new(SystemProcesses),
                 Arc::new(SystemClock),
+                settings.clone(),
                 subscribers.clone(),
             ));
-            let prober = Arc::new(Prober::new(toolbox.clone(), subscribers.clone()));
+            let prober = Arc::new(Prober::new(
+                toolbox.clone(),
+                settings.clone(),
+                subscribers.clone(),
+            ));
             app.manage(subscribers);
+            app.manage(settings);
             app.manage(toolbox.clone());
             app.manage(prober);
             spawn_prepare(toolbox);

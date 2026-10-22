@@ -8,6 +8,7 @@ use crate::clock::FixedClock;
 use crate::events::{AppEvent, RecordingSink};
 use crate::processes::fake::FakeProcesses;
 use crate::releases::fake::FakeReleases;
+use crate::settings::{Browser, Settings};
 use crate::toolbox::SetupState;
 
 const VIDEO: &[u8] = include_bytes!("fixtures/youtube-video.json");
@@ -17,6 +18,7 @@ struct App {
     releases: Arc<FakeReleases>,
     processes: Arc<FakeProcesses>,
     toolbox: Arc<Toolbox>,
+    settings: Arc<Settings>,
     events: Arc<RecordingSink>,
     prober: Prober,
 }
@@ -28,11 +30,16 @@ impl App {
         let releases = Arc::new(FakeReleases::new());
         let processes = Arc::new(FakeProcesses::new());
         let events = Arc::new(RecordingSink::default());
+        let settings = Arc::new(Settings::load(
+            dir.path().join("settings.json"),
+            events.clone(),
+        ));
         let toolbox = Arc::new(Toolbox::new(
             dir.path().join("tools"),
             releases.clone(),
             processes.clone(),
             Arc::new(FixedClock(SystemTime::UNIX_EPOCH)),
+            settings.clone(),
             events.clone(),
         ));
         toolbox.prepare();
@@ -40,8 +47,9 @@ impl App {
             _dir: dir,
             releases,
             processes,
-            prober: Prober::new(toolbox.clone(), events.clone()),
+            prober: Prober::new(toolbox.clone(), settings.clone(), events.clone()),
             toolbox,
+            settings,
             events,
         }
     }
@@ -65,6 +73,14 @@ impl App {
                 _ => None,
             })
             .collect()
+    }
+}
+
+/// A failed Probe that ran without a sign-in browser.
+fn failed(error: ProbeError) -> ProbeState {
+    ProbeState::Failed {
+        error,
+        sign_in_browser: None,
     }
 }
 
@@ -127,13 +143,7 @@ fn a_playlist_or_channel_is_rejected_without_a_card() {
 
         app.prober.probe(url);
 
-        assert_eq!(
-            app.prober.state(),
-            ProbeState::Failed {
-                error: ProbeError::Playlist
-            },
-            "{url}"
-        );
+        assert_eq!(app.prober.state(), failed(ProbeError::Playlist), "{url}");
         // Entries stay unresolved, so a long playlist is rejected quickly.
         let (_, args) = app.processes.runs().pop().unwrap();
         assert!(
@@ -151,12 +161,7 @@ fn a_stream_that_is_live_now_is_rejected() {
     app.prober
         .probe("https://www.youtube.com/watch?v=0sfDth4lMLc");
 
-    assert_eq!(
-        app.prober.state(),
-        ProbeState::Failed {
-            error: ProbeError::Live
-        }
-    );
+    assert_eq!(app.prober.state(), failed(ProbeError::Live));
 }
 
 #[test]
@@ -206,9 +211,7 @@ fn a_video_that_needs_signing_in_is_rejected() {
 
         assert_eq!(
             app.prober.state(),
-            ProbeState::Failed {
-                error: ProbeError::SignInRequired
-            },
+            failed(ProbeError::SignInRequired),
             "{url}"
         );
     }
@@ -231,13 +234,7 @@ fn an_unsupported_site_or_a_url_without_a_video_is_rejected() {
 
         app.prober.probe(url);
 
-        assert_eq!(
-            app.prober.state(),
-            ProbeState::Failed {
-                error: ProbeError::Unsupported
-            },
-            "{url}"
-        );
+        assert_eq!(app.prober.state(), failed(ProbeError::Unsupported), "{url}");
     }
 }
 
@@ -249,12 +246,7 @@ fn a_url_with_a_truncated_id_is_rejected() {
     app.prober
         .probe("https://www.youtube.com/watch?v=-moW9jvvMr");
 
-    assert_eq!(
-        app.prober.state(),
-        ProbeState::Failed {
-            error: ProbeError::TruncatedUrl
-        }
-    );
+    assert_eq!(app.prober.state(), failed(ProbeError::TruncatedUrl));
 }
 
 #[test]
@@ -266,10 +258,67 @@ fn a_bot_check_is_told_apart_from_a_sign_in() {
     app.prober
         .probe("https://www.youtube.com/watch?v=jNQXAC9IVRw");
 
+    assert_eq!(app.prober.state(), failed(ProbeError::BotCheck));
+}
+
+#[test]
+fn cookies_that_cant_be_read_say_why() {
+    for (browser, stderr, reason) in [
+        // Not installed, or never opened.
+        (
+            Browser::Vivaldi,
+            &include_bytes!("fixtures/cookies-browser-not-found.stderr")[..],
+            CookiesError::BrowserNotFound,
+        ),
+        // Edge and Chrome lock their cookies while they run.
+        (
+            Browser::Edge,
+            &include_bytes!("fixtures/cookies-browser-open.stderr")[..],
+            CookiesError::BrowserOpen,
+        ),
+        // Chromium-based browsers on Windows encrypt cookies for themselves.
+        (
+            Browser::Brave,
+            &include_bytes!("fixtures/cookies-cant-decrypt.stderr")[..],
+            CookiesError::CantDecrypt,
+        ),
+    ] {
+        let app = App::start();
+        app.settings.set_sign_in_browser(Some(browser)).unwrap();
+        app.ytdlp_fails(stderr);
+
+        app.prober
+            .probe("https://www.youtube.com/watch?v=jNQXAC9IVRw");
+
+        assert_eq!(
+            app.prober.state(),
+            ProbeState::Failed {
+                error: ProbeError::CookiesUnreadable { reason },
+                sign_in_browser: Some(browser),
+            },
+            "{browser:?}"
+        );
+    }
+}
+
+#[test]
+fn a_failed_probe_names_the_sign_in_browser_it_ran_with() {
+    let app = App::start();
+    app.settings
+        .set_sign_in_browser(Some(Browser::Firefox))
+        .unwrap();
+    app.ytdlp_fails(include_bytes!("fixtures/youtube-bot-check.stderr"));
+    app.prober
+        .probe("https://www.youtube.com/watch?v=jNQXAC9IVRw");
+
+    // Choosing another browser doesn't change what the Probe ran with.
+    app.settings.set_sign_in_browser(None).unwrap();
+
     assert_eq!(
         app.prober.state(),
         ProbeState::Failed {
-            error: ProbeError::BotCheck
+            error: ProbeError::BotCheck,
+            sign_in_browser: Some(Browser::Firefox),
         }
     );
 }

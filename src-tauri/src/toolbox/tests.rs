@@ -11,6 +11,7 @@ use crate::releases::fake::{
     DENO_BYTES, DENO_URL, FFMPEG_BYTES, FFMPEG_URL, FFPROBE_BYTES, FakeReleases, YTDLP_BYTES,
     YTDLP_URL,
 };
+use crate::settings::{Browser, Settings};
 
 const NOW: Duration = Duration::from_secs(1_790_000_000);
 
@@ -19,6 +20,7 @@ struct App {
     releases: Arc<FakeReleases>,
     processes: Arc<FakeProcesses>,
     events: Arc<RecordingSink>,
+    settings: Arc<Settings>,
     toolbox: Toolbox,
 }
 
@@ -42,11 +44,16 @@ impl App {
         dir: TempDir,
     ) -> Self {
         let events = Arc::new(RecordingSink::default());
+        let settings = Arc::new(Settings::load(
+            dir.path().join("settings.json"),
+            events.clone(),
+        ));
         let toolbox = Toolbox::new(
             dir.path().join("tools"),
             releases.clone(),
             processes.clone(),
             Arc::new(FixedClock(SystemTime::UNIX_EPOCH + NOW)),
+            settings.clone(),
             events.clone(),
         );
         Self {
@@ -54,6 +61,7 @@ impl App {
             releases,
             processes,
             events,
+            settings,
             toolbox,
         }
     }
@@ -369,6 +377,33 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg_and_deno() 
             (app.file("ffprobe.exe"), vec!["-version".into()]),
         ]
     );
+}
+
+#[test]
+fn with_a_sign_in_browser_yt_dlp_reads_its_cookies_on_every_run() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.settings
+        .set_sign_in_browser(Some(Browser::Firefox))
+        .unwrap();
+
+    app.toolbox
+        .run(Tool::YtDlp, &["--version".into()])
+        .expect("yt-dlp runs");
+    app.toolbox
+        .run(Tool::Ffprobe, &["-version".into()])
+        .expect("ffprobe runs");
+
+    let runs = app.processes.runs();
+    let (_, ytdlp_args) = &runs[0];
+    let cookies = ytdlp_args
+        .iter()
+        .position(|arg| arg == "--cookies-from-browser")
+        .expect("--cookies-from-browser");
+    assert_eq!(ytdlp_args[cookies + 1], "firefox");
+    // The app's own options come before the caller's.
+    assert_eq!(ytdlp_args.last().unwrap(), "--version");
+    assert_eq!(runs[1].1, [OsString::from("-version")]);
 }
 
 #[test]

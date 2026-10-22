@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 use crate::probe::ProbeState;
+use crate::settings::SettingsState;
 use crate::toolbox::SetupState;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -11,6 +12,7 @@ use crate::toolbox::SetupState;
 pub enum AppEvent {
     Setup(SetupState),
     Probe(ProbeState),
+    Settings(SettingsState),
 }
 
 pub trait EventSink: Send + Sync {

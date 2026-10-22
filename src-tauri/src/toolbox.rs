@@ -21,6 +21,7 @@ use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
 use crate::processes::Processes;
 use crate::releases::{Package, Release, Releases, ReleasesError};
+use crate::settings::Settings;
 
 const MANIFEST: &str = "manifest.json";
 /// Suffix of files that are still downloading or unverified.
@@ -125,6 +126,7 @@ pub struct Toolbox {
     releases: Arc<dyn Releases>,
     processes: Arc<dyn Processes>,
     clock: Arc<dyn Clock>,
+    settings: Arc<Settings>,
     events: Arc<dyn EventSink>,
     state: Mutex<SetupState>,
     /// Held while preparing, so concurrent requests don't download twice.
@@ -139,6 +141,7 @@ impl Toolbox {
         releases: Arc<dyn Releases>,
         processes: Arc<dyn Processes>,
         clock: Arc<dyn Clock>,
+        settings: Arc<Settings>,
         events: Arc<dyn EventSink>,
     ) -> Self {
         Self {
@@ -146,6 +149,7 @@ impl Toolbox {
             releases,
             processes,
             clock,
+            settings,
             events,
             state: Mutex::new(SetupState::Checking),
             preparing: Mutex::new(()),
@@ -180,7 +184,8 @@ impl Toolbox {
 
     /// Runs a tool from the app's own folder; yt-dlp ignores the user's
     /// config files and is pointed at the app's own ffmpeg and deno, never
-    /// at a JavaScript runtime installed elsewhere.
+    /// at a JavaScript runtime installed elsewhere, and at the sign-in
+    /// browser's cookies when the user chose one.
     ///
     /// On [`ToolBroken`] the setup screen is already showing, and the caller
     /// starts [`Toolbox::prepare`] to restore the tool.
@@ -197,6 +202,11 @@ impl Toolbox {
                 "--js-runtimes".into(),
                 deno,
             ]);
+            // yt-dlp reads the cookies itself on every run; the app never
+            // copies them.
+            if let Some(browser) = self.settings.sign_in_browser() {
+                full_args.extend(["--cookies-from-browser".into(), browser.ytdlp_name().into()]);
+            }
         }
         full_args.extend_from_slice(args);
         self.processes
