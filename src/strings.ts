@@ -6,6 +6,7 @@ export const strings = {
     ytDlp: "yt-dlp",
     ffmpeg: "ffmpeg",
     ffprobe: "ffprobe",
+    deno: "deno",
   } satisfies Record<Tool | Package, string>,
   setup: {
     title: "Идёт загрузка необходимых для работы файлов…",
