@@ -242,6 +242,22 @@ fn an_unsupported_site_or_a_url_without_a_video_is_rejected() {
 }
 
 #[test]
+fn a_url_with_a_truncated_id_is_rejected() {
+    let app = App::start();
+    app.ytdlp_fails(include_bytes!("fixtures/youtube-truncated-id.stderr"));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr");
+
+    assert_eq!(
+        app.prober.state(),
+        ProbeState::Failed {
+            error: ProbeError::TruncatedUrl
+        }
+    );
+}
+
+#[test]
 fn a_bot_check_is_not_mistaken_for_a_sign_in() {
     let app = App::start();
     let stderr = include_bytes!("fixtures/youtube-bot-check.stderr");

@@ -35,6 +35,8 @@ pub enum ProbeError {
     Live,
     /// Age-restricted, private or members-only; signing in isn't supported yet.
     SignInRequired,
+    /// The URL lost part of the Video's id, likely when it was copied.
+    TruncatedUrl,
     /// The site isn't supported or there is no Video at the URL.
     Unsupported,
     /// The message is for the log; the UI shows a generic text.
@@ -374,6 +376,8 @@ fn read_error(stderr: &str) -> ProbeError {
         "private video",
     ]) {
         ProbeError::SignInRequired
+    } else if says(&["incomplete youtube id", "looks truncated"]) {
+        ProbeError::TruncatedUrl
     } else if says(&[
         "unsupported url",
         "is not a valid url",
