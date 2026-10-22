@@ -35,6 +35,9 @@ pub enum ProbeError {
     Live,
     /// Age-restricted, private or members-only; signing in isn't supported yet.
     SignInRequired,
+    /// YouTube asks to prove the user isn't a bot; it's about the network,
+    /// not the Video.
+    BotCheck,
     /// The site isn't supported or there is no Video at the URL.
     Unsupported,
     /// The message is for the log; the UI shows a generic text.
@@ -361,10 +364,9 @@ fn read_error(stderr: &str) -> ProbeError {
         .to_string();
     let lower = message.to_lowercase();
     let says = |phrases: &[&str]| phrases.iter().any(|phrase| lower.contains(phrase));
-    // YouTube's bot check asks to sign in too, but it's about the network,
-    // not the Video.
+    // YouTube's bot check asks to sign in too, so it's told apart first.
     if says(&["not a bot"]) {
-        ProbeError::Other { message }
+        ProbeError::BotCheck
     } else if says(&[
         "sign in",
         "--cookies",
