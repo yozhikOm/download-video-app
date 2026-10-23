@@ -421,6 +421,7 @@ fn the_probed_video_keeps_what_downloads_need() {
     );
 
     let video = app.prober.video().expect("a probed Video");
+    assert_eq!(video.id, "-moW9jvvMr4");
     assert_eq!(video.url, "https://www.youtube.com/watch?v=-moW9jvvMr4");
     // Storyboards (sb0–sb3) are pictures, not streams.
     let ids: Vec<&str> = video.formats.iter().map(|f| f.id.as_str()).collect();
