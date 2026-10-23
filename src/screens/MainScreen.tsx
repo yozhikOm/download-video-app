@@ -65,9 +65,11 @@ function errorText(error: ProbeError, signInBrowser: Browser | null) {
 function VideoPreview({
   video,
   canDownload,
+  onDownload,
 }: {
   video: VideoCard;
   canDownload: boolean;
+  onDownload: () => void;
 }) {
   return (
     <Card className="pt-0">
@@ -92,11 +94,18 @@ function VideoPreview({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Button disabled={!canDownload} onClick={() => void downloadVideo()}>
+        <Button disabled={!canDownload} onClick={onDownload}>
           {strings.download.start}
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+/** One Download at a time until the Queue arrives. */
+function isRunning(download: Download | null) {
+  return (
+    download?.status === "downloading" || download?.status === "processing"
   );
 }
 
@@ -183,6 +192,10 @@ export function MainScreen({ probe, settings, download }: Props) {
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
+  // A new URL in the field puts the previous Video and its finished
+  // Download out of sight; a running Download stays to show its progress.
+  const [previewHidden, setPreviewHidden] = useState(false);
+  const [finishedHidden, setFinishedHidden] = useState(false);
 
   useEffect(() => {
     fetchAppInfo()
@@ -190,11 +203,22 @@ export function MainScreen({ probe, settings, download }: Props) {
       .catch(() => setFailed(true));
   }, []);
 
+  function changeUrl(value: string) {
+    setUrl(value);
+    const isNew = value.trim() !== submittedUrl;
+    // The same URL back in the field brings its Video back.
+    setPreviewHidden(isNew);
+    if (isNew && download && !isRunning(download)) {
+      setFinishedHidden(true);
+    }
+  }
+
   function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = url.trim();
     if (trimmed) {
       setSubmittedUrl(trimmed);
+      setPreviewHidden(false);
       void probeUrl(trimmed);
     }
   }
@@ -230,7 +254,7 @@ export function MainScreen({ probe, settings, download }: Props) {
           inputMode="url"
           spellCheck={false}
           value={url}
-          onChange={(event) => setUrl(event.target.value)}
+          onChange={(event) => changeUrl(event.target.value)}
           placeholder={strings.probe.urlPlaceholder}
           autoFocus
         />
@@ -243,14 +267,14 @@ export function MainScreen({ probe, settings, download }: Props) {
           </CardContent>
         </Card>
       )}
-      {probe.status === "probed" && (
+      {probe.status === "probed" && !previewHidden && (
         <VideoPreview
           video={probe.video}
-          // One Download at a time until the Queue arrives.
-          canDownload={
-            download?.status !== "downloading" &&
-            download?.status !== "processing"
-          }
+          canDownload={!isRunning(download)}
+          onDownload={() => {
+            setFinishedHidden(false);
+            void downloadVideo();
+          }}
         />
       )}
       {probe.status === "failed" && (
@@ -265,7 +289,9 @@ export function MainScreen({ probe, settings, download }: Props) {
         isYoutube(url) && (
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
-      {download && <DownloadCard download={download} />}
+      {download && (isRunning(download) || !finishedHidden) && (
+        <DownloadCard download={download} />
+      )}
     </div>
   );
 }

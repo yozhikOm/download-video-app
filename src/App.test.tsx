@@ -712,3 +712,67 @@ test("a Failed Download says so", async () => {
     "Не удалось скачать видео",
   );
 });
+
+const nextUrl = "https://www.youtube.com/watch?v=-moW9jvvMr4";
+
+test("a new URL hides the previous Video's card", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  enterUrl(nextUrl);
+
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Скачать" }),
+  ).not.toBeInTheDocument();
+});
+
+test.each([
+  [{ status: "done", file: "C:\\Downloads\\Me at the zoo.mp4" }],
+  [{ status: "failed", message: "ERROR: unable to download video data" }],
+] as const)("a new URL hides a finished Download (%o)", async (status) => {
+  const backend = await startReady();
+  await backend.download({ video: zoo, ...status });
+
+  enterUrl(nextUrl);
+
+  expect(
+    screen.queryByRole("region", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a running Download stays on screen when a new URL is entered", async () => {
+  const backend = await startReady();
+  await backend.download({ video: zoo, status: "processing" });
+
+  enterUrl(nextUrl);
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Обработка");
+});
+
+test("a Download started after a new URL shows its Done", async () => {
+  const backend = await startReady();
+  await backend.download({
+    video: zoo,
+    status: "done",
+    file: "C:\\Downloads\\Me at the zoo.mp4",
+  });
+  submitUrl(nextUrl);
+  const habit = { ...zoo, title: "A Simple Way to Break a Bad Habit" };
+  await backend.probe({ status: "probed", video: habit });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await backend.download({
+    video: habit,
+    status: "done",
+    file: "C:\\Downloads\\A Simple Way to Break a Bad Habit.mp4",
+  });
+
+  expect(
+    screen.getByRole("region", { name: "A Simple Way to Break a Bad Habit" }),
+  ).toHaveTextContent("Готово");
+});
