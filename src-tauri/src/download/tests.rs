@@ -255,6 +255,16 @@ fn formats(sizes: &[(&str, Option<u64>)]) -> serde_json::Value {
         .collect()
 }
 
+/// The separate Formats with only the approximate sizes the site tells.
+fn approx_formats(sizes: &[(&str, u64)]) -> serde_json::Value {
+    sizes
+        .iter()
+        .map(|(id, size)| {
+            serde_json::json!({ "format_id": id, "filesize": null, "filesize_approx": size })
+        })
+        .collect()
+}
+
 fn downloading(percent: f64, speed: f64, eta: u64) -> DownloadStatus {
     DownloadStatus::Downloading {
         percent: Some(percent),
@@ -331,7 +341,7 @@ fn a_video_received_as_separate_video_and_audio_shows_one_progress_for_both() {
 }
 
 #[test]
-fn a_format_of_unknown_size_joins_the_progress_once_its_size_is_known() {
+fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
     let app = App::start();
     app.ytdlp_downloads_formats(
         ID,
@@ -345,11 +355,68 @@ fn a_format_of_unknown_size_joins_the_progress_once_its_size_is_known() {
 
     app.downloader.download(&video(URL, "Me at the zoo"));
 
-    // While the audio's size is unknown, the video shows its own progress.
+    // The video's own percent would fall back once the audio's size is
+    // known; only its speed and time left are shown.
     assert_eq!(
         app.download_statuses()[1..3],
-        [downloading(50.0, 100.0, 8), downloading(87.5, 50.0, 5),]
+        [
+            DownloadStatus::Downloading {
+                percent: None,
+                speed: Some(100.0),
+                eta: Some(8)
+            },
+            downloading(87.5, 50.0, 5),
+        ]
     );
+}
+
+#[test]
+fn a_received_format_of_approximate_size_counts_with_the_bytes_received() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        approx_formats(&[(VIDEO_ONLY, 1000), (AUDIO_ONLY, 500)]),
+        &[
+            progress_of(VIDEO_ONLY, 1500, 1500, 100.0, 0),
+            progress_of(AUDIO_ONLY, 50, 500, 50.0, 9),
+        ],
+    );
+
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    assert_eq!(
+        app.download_statuses()[1..3],
+        [downloading(75.0, 100.0, 5), downloading(77.5, 50.0, 9)]
+    );
+}
+
+#[test]
+fn the_percent_holds_when_a_format_turns_out_bigger_than_told() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1500)), (AUDIO_ONLY, Some(500))]),
+        &[
+            progress_of(VIDEO_ONLY, 1500, 1500, 100.0, 0),
+            progress_of(AUDIO_ONLY, 100, 1000, 50.0, 18),
+            progress_of(AUDIO_ONLY, 1000, 1000, 50.0, 0),
+        ],
+    );
+
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead.
+    let percents: Vec<Option<f64>> = app
+        .download_statuses()
+        .into_iter()
+        .filter_map(|status| match status {
+            DownloadStatus::Downloading { percent, .. } => Some(percent),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(percents, [None, Some(75.0), Some(100.0)]);
 }
 
 #[test]
