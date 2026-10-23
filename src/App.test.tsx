@@ -310,8 +310,14 @@ test.each([
   },
 );
 
-/** YouTube answers the Probe with its bot check; no sign-in browser was used. */
+const youtubeUrl = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+
+/**
+ * The user submits a YouTube URL, and YouTube answers its Probe with the bot
+ * check; no sign-in browser was used.
+ */
 function botCheck(backend: ReturnType<typeof mockBackend>) {
+  submitUrl(youtubeUrl);
   return backend.probe({
     status: "failed",
     error: { kind: "botCheck" },
@@ -338,6 +344,7 @@ test.each([{ kind: "botCheck" }, { kind: "signInRequired" }] as const)(
   async (error) => {
     const backend = await startReady();
     await backend.settings({ signInBrowser: null });
+    submitUrl(youtubeUrl);
 
     await backend.probe({ status: "failed", error, signInBrowser: null });
 
@@ -362,14 +369,14 @@ test("signing in is hidden again when the next Probe needs no sign-in", async ()
   ).not.toBeInTheDocument();
 });
 
-test("a chosen sign-in browser stays visible so that it can be turned off", async () => {
+test("a chosen sign-in browser stays hidden while the URL field is empty", async () => {
   const backend = await startReady();
 
   await backend.settings({ signInBrowser: "firefox" });
 
   expect(
-    screen.getByRole("combobox", { name: "Вход в YouTube" }),
-  ).toHaveDisplayValue("Firefox");
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
 });
 
 /** Types a URL into the field without submitting it. */
@@ -479,16 +486,19 @@ test.each([
   "https://m.youtube.com/watch?v=-moW9jvvMr4",
   "https://youtu.be/-moW9jvvMr4",
   "https://www.youtube-nocookie.com/embed/-moW9jvvMr4",
-])("a chosen sign-in browser stays visible for %s", async (url) => {
-  const backend = await startReady();
-  await backend.settings({ signInBrowser: "firefox" });
+])(
+  "a chosen sign-in browser stays visible for %s so that it can be turned off",
+  async (url) => {
+    const backend = await startReady();
+    await backend.settings({ signInBrowser: "firefox" });
 
-  enterUrl(url);
+    enterUrl(url);
 
-  expect(
-    screen.getByRole("combobox", { name: "Вход в YouTube" }),
-  ).toBeInTheDocument();
-});
+    expect(
+      screen.getByRole("combobox", { name: "Вход в YouTube" }),
+    ).toHaveDisplayValue("Firefox");
+  },
+);
 
 test("choosing a sign-in browser saves it and warns about the account", async () => {
   const backend = await startReady();
@@ -515,6 +525,7 @@ test("choosing a sign-in browser saves it and warns about the account", async ()
 test("choosing not to sign in saves no browser", async () => {
   const backend = await startReady();
   await backend.settings({ signInBrowser: "edge" });
+  enterUrl(youtubeUrl);
 
   fireEvent.change(
     await screen.findByRole("combobox", { name: "Вход в YouTube" }),

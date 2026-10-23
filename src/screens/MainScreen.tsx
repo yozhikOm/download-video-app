@@ -106,8 +106,8 @@ function asksToSignIn(probe: ProbeState) {
 
 const youtubeHosts = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
 
-/** The field holds a URL of a site other than YouTube. */
-function isOtherSite(url: string) {
+/** The field holds a YouTube URL, the only one signing in is for. */
+function isYoutube(url: string) {
   const trimmed = url.trim();
   if (!trimmed) {
     return false;
@@ -118,16 +118,16 @@ function isOtherSite(url: string) {
     host = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
       .hostname;
   } catch {
-    return true;
+    return false;
   }
-  return !youtubeHosts.some(
+  return youtubeHosts.some(
     (site) => host === site || host.endsWith(`.${site}`),
   );
 }
 
 const browsers = Object.keys(strings.browsers) as Browser[];
 
-/** Which browser's YouTube sign-in yt-dlp uses, if any. */
+/** Which browser's YouTube sign-in the app uses, if any. */
 function SignInBrowserPicker({
   signInBrowser,
 }: {
@@ -245,11 +245,11 @@ export function MainScreen({ probe, settings }: Props) {
           {errorText(probe.error, probe.signInBrowser)}
         </p>
       )}
-      {/* A chosen browser stays on screen so that it can be turned off,
-          except for the URL just submitted. */}
+      {/* With a YouTube URL in the field, a chosen browser stays on screen
+          so that it can be turned off, except for the URL just submitted. */}
       {!awaitsSubmitted &&
         (settings.signInBrowser || asksToSignIn(probe)) &&
-        !isOtherSite(url) && (
+        isYoutube(url) && (
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
     </div>
