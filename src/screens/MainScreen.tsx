@@ -11,15 +11,19 @@ import { Input } from "@/components/ui/input";
 import {
   appInfo as fetchAppInfo,
   probe as probeUrl,
+  setSignInBrowser,
   type AppInfo,
+  type Browser,
   type ProbeError,
   type ProbeState,
+  type SettingsState,
   type VideoCard,
 } from "@/backend";
 import { strings } from "@/strings";
 
 type Props = {
   probe: ProbeState;
+  settings: SettingsState;
 };
 
 /** `m:ss`, or `h:mm:ss` from an hour on. */
@@ -34,16 +38,27 @@ function formatDuration(seconds: number) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-function errorText(error: ProbeError) {
+/** The error's text; it names the sign-in browser the Probe ran with. */
+function errorText(error: ProbeError, signInBrowser: Browser | null) {
+  const browser = signInBrowser && strings.browsers[signInBrowser];
   switch (error.kind) {
     case "playlist":
       return strings.probe.playlist;
     case "live":
       return strings.probe.live;
     case "signInRequired":
-      return strings.probe.signInRequired;
+      return browser
+        ? strings.probe.signInRequiredSignedIn(browser)
+        : strings.probe.signInRequired;
     case "botCheck":
-      return strings.probe.botCheck;
+      return browser
+        ? strings.probe.botCheckSignedIn(browser)
+        : strings.probe.botCheck;
+    case "cookiesUnreadable":
+      // Cookies are read only with a sign-in browser.
+      return browser
+        ? strings.probe[error.reason](browser)
+        : strings.probe.other;
     case "truncatedUrl":
       return strings.probe.truncatedUrl;
     case "unsupported":
@@ -81,10 +96,89 @@ function VideoPreview({ video }: { video: VideoCard }) {
   );
 }
 
-export function MainScreen({ probe }: Props) {
+/** Signing in is offered only once YouTube asks for it. */
+function asksToSignIn(probe: ProbeState) {
+  return (
+    probe.status === "failed" &&
+    (probe.error.kind === "botCheck" || probe.error.kind === "signInRequired")
+  );
+}
+
+const youtubeHosts = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
+
+/** The field holds a YouTube URL, the only one signing in is for. */
+function isYoutube(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return false;
+  }
+  let host;
+  try {
+    // yt-dlp accepts a URL without "https://".
+    host = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
+      .hostname;
+  } catch {
+    return false;
+  }
+  return youtubeHosts.some(
+    (site) => host === site || host.endsWith(`.${site}`),
+  );
+}
+
+const browsers = Object.keys(strings.browsers) as Browser[];
+
+/** Which browser's YouTube sign-in the app uses, if any. */
+function SignInBrowserPicker({
+  signInBrowser,
+}: {
+  signInBrowser: Browser | null;
+}) {
+  const [saveFailed, setSaveFailed] = useState(false);
+
+  function choose(value: string) {
+    setSaveFailed(false);
+    setSignInBrowser(value ? (value as Browser) : null).catch(() =>
+      setSaveFailed(true),
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-1.5 text-sm">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="sign-in-browser">{strings.signIn.browser}</label>
+        <select
+          id="sign-in-browser"
+          value={signInBrowser ?? ""}
+          onChange={(event) => choose(event.target.value)}
+          className="h-8 rounded-lg border border-input bg-transparent px-2 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+        >
+          <option value="">{strings.signIn.none}</option>
+          {browsers.map((browser) => (
+            <option key={browser} value={browser}>
+              {strings.browsers[browser]}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="text-muted-foreground">
+        {signInBrowser
+          ? strings.signIn.warning(strings.browsers[signInBrowser])
+          : strings.signIn.hint}
+      </p>
+      {saveFailed && (
+        <p role="alert" className="text-destructive">
+          {strings.signIn.saveFailed}
+        </p>
+      )}
+    </section>
+  );
+}
+
+export function MainScreen({ probe, settings }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
+  const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAppInfo()
@@ -96,9 +190,15 @@ export function MainScreen({ probe }: Props) {
     event.preventDefault();
     const trimmed = url.trim();
     if (trimmed) {
+      setSubmittedUrl(trimmed);
       void probeUrl(trimmed);
     }
   }
+
+  // Signing in steps aside for the URL just submitted, unless its Probe
+  // failed: the user may need to sign in or change the browser to retry.
+  const awaitsSubmitted =
+    url.trim() === submittedUrl && probe.status !== "failed";
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4 self-start">
@@ -142,9 +242,16 @@ export function MainScreen({ probe }: Props) {
       {probe.status === "probed" && <VideoPreview video={probe.video} />}
       {probe.status === "failed" && (
         <p role="alert" className="text-sm text-destructive">
-          {errorText(probe.error)}
+          {errorText(probe.error, probe.signInBrowser)}
         </p>
       )}
+      {/* With a YouTube URL in the field, a chosen browser stays on screen
+          so that it can be turned off, except for the URL just submitted. */}
+      {!awaitsSubmitted &&
+        (settings.signInBrowser || asksToSignIn(probe)) &&
+        isYoutube(url) && (
+          <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
+        )}
     </div>
   );
 }

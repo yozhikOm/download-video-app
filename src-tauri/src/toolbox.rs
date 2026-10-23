@@ -21,6 +21,7 @@ use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
 use crate::processes::Processes;
 use crate::releases::{Package, Release, Releases, ReleasesError};
+use crate::settings::Browser;
 
 const MANIFEST: &str = "manifest.json";
 /// Suffix of files that are still downloading or unverified.
@@ -180,11 +181,18 @@ impl Toolbox {
 
     /// Runs a tool from the app's own folder; yt-dlp ignores the user's
     /// config files and is pointed at the app's own ffmpeg and deno, never
-    /// at a JavaScript runtime installed elsewhere.
+    /// at a JavaScript runtime installed elsewhere, and at the cookies of the
+    /// sign-in browser the caller passes, so that the caller knows which one
+    /// the run used.
     ///
     /// On [`ToolBroken`] the setup screen is already showing, and the caller
     /// starts [`Toolbox::prepare`] to restore the tool.
-    pub fn run(&self, tool: Tool, args: &[OsString]) -> Result<Output, ToolBroken> {
+    pub fn run(
+        &self,
+        tool: Tool,
+        args: &[OsString],
+        sign_in_browser: Option<Browser>,
+    ) -> Result<Output, ToolBroken> {
         let mut full_args = Vec::new();
         if tool == Tool::YtDlp {
             let mut deno = OsString::from("deno:");
@@ -197,6 +205,11 @@ impl Toolbox {
                 "--js-runtimes".into(),
                 deno,
             ]);
+            // yt-dlp reads the cookies itself on every run; the app never
+            // copies them.
+            if let Some(browser) = sign_in_browser {
+                full_args.extend(["--cookies-from-browser".into(), browser.ytdlp_name().into()]);
+            }
         }
         full_args.extend_from_slice(args);
         self.processes

@@ -329,15 +329,23 @@ Path      : C:\\a\\deno\\deno\\target\\release\\deno-x86_64-pc-windows-msvc.zip\
         toolbox.prepare();
 
         assert_eq!(toolbox.state(), SetupState::Ready);
-        let output = toolbox.run(Tool::YtDlp, &["--version".into()]).unwrap();
+        let output = toolbox
+            .run(Tool::YtDlp, &["--version".into()], None)
+            .unwrap();
         assert!(output.status.success(), "{output:?}");
-        let output = toolbox.run(Tool::Ffprobe, &["-version".into()]).unwrap();
+        let output = toolbox
+            .run(Tool::Ffprobe, &["-version".into()], None)
+            .unwrap();
         assert!(String::from_utf8_lossy(&output.stdout).starts_with("ffprobe version"));
-        let output = toolbox.run(Tool::Deno, &["--version".into()]).unwrap();
+        let output = toolbox
+            .run(Tool::Deno, &["--version".into()], None)
+            .unwrap();
         assert!(String::from_utf8_lossy(&output.stdout).starts_with("deno "));
         // The verbose header lists the JS runtimes yt-dlp found; without a
         // URL it then exits with an error, which doesn't matter here.
-        let output = toolbox.run(Tool::YtDlp, &["--verbose".into()]).unwrap();
+        let output = toolbox
+            .run(Tool::YtDlp, &["--verbose".into()], None)
+            .unwrap();
         let header = String::from_utf8_lossy(&output.stderr);
         assert!(header.contains("JS runtimes: deno-"), "{header}");
     }

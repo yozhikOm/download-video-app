@@ -11,6 +11,7 @@ use crate::releases::fake::{
     DENO_BYTES, DENO_URL, FFMPEG_BYTES, FFMPEG_URL, FFPROBE_BYTES, FakeReleases, YTDLP_BYTES,
     YTDLP_URL,
 };
+use crate::settings::Browser;
 
 const NOW: Duration = Duration::from_secs(1_790_000_000);
 
@@ -342,10 +343,10 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg_and_deno() 
     app.toolbox.prepare();
 
     app.toolbox
-        .run(Tool::YtDlp, &["--version".into()])
+        .run(Tool::YtDlp, &["--version".into()], None)
         .expect("yt-dlp runs");
     app.toolbox
-        .run(Tool::Ffprobe, &["-version".into()])
+        .run(Tool::Ffprobe, &["-version".into()], None)
         .expect("ffprobe runs");
 
     let ffmpeg = app.file("ffmpeg.exe").into_os_string();
@@ -372,13 +373,37 @@ fn tools_run_from_the_app_folder_and_yt_dlp_uses_the_apps_own_ffmpeg_and_deno() 
 }
 
 #[test]
+fn yt_dlp_reads_the_cookies_of_the_sign_in_browser_it_is_given() {
+    let app = App::start();
+    app.toolbox.prepare();
+
+    app.toolbox
+        .run(Tool::YtDlp, &["--version".into()], Some(Browser::Firefox))
+        .expect("yt-dlp runs");
+    app.toolbox
+        .run(Tool::Ffprobe, &["-version".into()], Some(Browser::Firefox))
+        .expect("ffprobe runs");
+
+    let runs = app.processes.runs();
+    let (_, ytdlp_args) = &runs[0];
+    let cookies = ytdlp_args
+        .iter()
+        .position(|arg| arg == "--cookies-from-browser")
+        .expect("--cookies-from-browser");
+    assert_eq!(ytdlp_args[cookies + 1], "firefox");
+    // The app's own options come before the caller's.
+    assert_eq!(ytdlp_args.last().unwrap(), "--version");
+    assert_eq!(runs[1].1, [OsString::from("-version")]);
+}
+
+#[test]
 fn a_tool_that_fails_to_start_is_broken_and_setup_restores_it() {
     let app = App::start();
     app.toolbox.prepare();
     app.processes.break_tool("ffmpeg.exe");
     let fetched_before = app.releases.fetches().len();
 
-    let result = app.toolbox.run(Tool::Ffmpeg, &["-version".into()]);
+    let result = app.toolbox.run(Tool::Ffmpeg, &["-version".into()], None);
 
     assert_eq!(result.unwrap_err(), ToolBroken(Tool::Ffmpeg));
     assert_eq!(
@@ -415,7 +440,7 @@ fn a_broken_tool_is_restored_on_the_next_launch_too() {
     let app = App::start();
     app.toolbox.prepare();
     app.processes.break_tool("yt-dlp.exe");
-    let _ = app.toolbox.run(Tool::YtDlp, &[]);
+    let _ = app.toolbox.run(Tool::YtDlp, &[], None);
     let fetched_before = app.releases.fetches().len();
     let app = app.restart();
 
@@ -432,7 +457,7 @@ fn a_deno_that_fails_to_start_is_broken_and_setup_restores_it() {
     app.processes.break_tool("deno.exe");
     let fetched_before = app.releases.fetches().len();
 
-    let result = app.toolbox.run(Tool::Deno, &["--version".into()]);
+    let result = app.toolbox.run(Tool::Deno, &["--version".into()], None);
 
     assert_eq!(result.unwrap_err(), ToolBroken(Tool::Deno));
     app.toolbox.prepare();

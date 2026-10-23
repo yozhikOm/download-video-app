@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
-import { subscribe, type ProbeState, type SetupState } from "@/backend";
+import {
+  subscribe,
+  type ProbeState,
+  type SettingsState,
+  type SetupState,
+} from "@/backend";
 import { MainScreen } from "@/screens/MainScreen";
 import { SetupScreen } from "@/screens/SetupScreen";
 
 function App() {
   const [setup, setSetup] = useState<SetupState>({ status: "checking" });
   const [probe, setProbe] = useState<ProbeState>({ status: "idle" });
+  const [settings, setSettings] = useState<SettingsState>({
+    signInBrowser: null,
+  });
 
   useEffect(
     () =>
@@ -17,6 +25,9 @@ function App() {
           case "probe":
             setProbe(event.data);
             break;
+          case "settings":
+            setSettings(event.data);
+            break;
         }
       }),
     [],
@@ -27,7 +38,9 @@ function App() {
       {(setup.status === "installing" || setup.status === "failed") && (
         <SetupScreen state={setup} />
       )}
-      {setup.status === "ready" && <MainScreen probe={probe} />}
+      {setup.status === "ready" && (
+        <MainScreen probe={probe} settings={settings} />
+      )}
     </main>
   );
 }

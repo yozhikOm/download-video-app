@@ -9,20 +9,36 @@ import {
 } from "@testing-library/react";
 import { expect, test } from "vitest";
 import App from "./App";
-import type { AppEvent, ProbeState, SetupState } from "./backend";
+import type {
+  AppEvent,
+  Browser,
+  ProbeState,
+  SettingsState,
+  SetupState,
+} from "./backend";
 
 const MB = 1024 * 1024;
 
-/** Mocks the backend; `setup` and `probe` push a state to the UI's channel. */
-function mockBackend({ appInfoFails = false } = {}) {
+/**
+ * Mocks the backend; `setup`, `probe` and `settings` push a state to the
+ * UI's channel.
+ */
+function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
   const probedUrls: string[] = [];
+  const signInBrowsers: (Browser | null)[] = [];
   mockIPC((cmd, args) => {
     commands.push(cmd);
     switch (cmd) {
       case "probe":
         probedUrls.push((args as { url: string }).url);
+        return null;
+      case "set_sign_in_browser":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        signInBrowsers.push((args as { browser: Browser | null }).browser);
         return null;
       case "subscribe":
         channel = (args as { events: Channel<AppEvent> }).events;
@@ -43,8 +59,10 @@ function mockBackend({ appInfoFails = false } = {}) {
   return {
     commands,
     probedUrls,
+    signInBrowsers,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
+    settings: (state: SettingsState) => send({ type: "settings", data: state }),
   };
 }
 
@@ -179,8 +197,8 @@ test("main screen reports when the app version fails to load", async () => {
 });
 
 /** Renders the main screen after a finished setup. */
-async function startReady() {
-  const backend = mockBackend();
+async function startReady(options?: Parameters<typeof mockBackend>[0]) {
+  const backend = mockBackend(options);
   render(<App />);
   await backend.setup({ status: "ready" });
   return backend;
@@ -265,11 +283,11 @@ test.each([
   ],
   [
     { kind: "signInRequired" },
-    "Видео требует входа в аккаунт — пока не поддерживается",
+    "Видео требует входа в аккаунт. Выберите ниже браузер, в котором вы вошли в YouTube",
   ],
   [
     { kind: "botCheck" },
-    "YouTube просит подтвердить, что вы не робот. Так бывает в рабочих сетях и через VPN — попробуйте позже или из другой сети",
+    "YouTube просит подтвердить, что вы не робот. Так бывает в рабочих сетях и через VPN — выберите ниже браузер, в котором вы вошли в YouTube, или попробуйте из другой сети",
   ],
   [
     { kind: "truncatedUrl" },
@@ -285,9 +303,299 @@ test.each([
   async (error, text) => {
     const backend = await startReady();
 
-    await backend.probe({ status: "failed", error });
+    await backend.probe({ status: "failed", error, signInBrowser: null });
 
     expect(screen.getByRole("alert")).toHaveTextContent(text);
     expect(screen.queryAllByRole("heading")).toHaveLength(1);
   },
 );
+
+const youtubeUrl = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+
+/**
+ * The user submits a YouTube URL, and YouTube answers its Probe with the bot
+ * check; no sign-in browser was used.
+ */
+function botCheck(backend: ReturnType<typeof mockBackend>) {
+  submitUrl(youtubeUrl);
+  return backend.probe({
+    status: "failed",
+    error: { kind: "botCheck" },
+    signInBrowser: null,
+  });
+}
+
+test("signing in stays hidden until YouTube asks for it", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await backend.probe({
+    status: "failed",
+    error: { kind: "unsupported" },
+    signInBrowser: null,
+  });
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test.each([{ kind: "botCheck" }, { kind: "signInRequired" }] as const)(
+  "%o offers signing in, with no browser chosen by default",
+  async (error) => {
+    const backend = await startReady();
+    await backend.settings({ signInBrowser: null });
+    submitUrl(youtubeUrl);
+
+    await backend.probe({ status: "failed", error, signInBrowser: null });
+
+    expect(
+      screen.getByRole("combobox", { name: "Вход в YouTube" }),
+    ).toHaveDisplayValue("Не использовать");
+    expect(
+      screen.queryByText(/от имени вашего аккаунта/),
+    ).not.toBeInTheDocument();
+  },
+);
+
+test("signing in is hidden again when the next Probe needs no sign-in", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await botCheck(backend);
+
+  await backend.probe({ status: "probing" });
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a chosen sign-in browser stays hidden while the URL field is empty", async () => {
+  const backend = await startReady();
+
+  await backend.settings({ signInBrowser: "firefox" });
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+/** Types a URL into the field without submitting it. */
+function enterUrl(url: string) {
+  fireEvent.change(screen.getByRole("textbox", { name: "Ссылка на видео" }), {
+    target: { value: url },
+  });
+}
+
+/** Types a URL into the field and presses «Найти». */
+function submitUrl(url: string) {
+  enterUrl(url);
+  fireEvent.submit(screen.getByRole("textbox", { name: "Ссылка на видео" }));
+}
+
+const probedVideo = {
+  status: "probed",
+  video: {
+    title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
+    channel: "TED",
+    thumbnail: null,
+    duration: 565,
+  },
+} as const;
+
+test("submitting a URL hides signing in, even with a chosen browser", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a probed Video keeps signing in hidden", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+  await backend.probe({ status: "probing" });
+  await backend.probe(probedVideo);
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("another YouTube URL after a probed Video shows signing in again", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+  await backend.probe(probedVideo);
+
+  enterUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+
+  expect(
+    screen.getByRole("combobox", { name: "Вход в YouTube" }),
+  ).toHaveDisplayValue("Firefox");
+});
+
+test.each([
+  { kind: "botCheck" },
+  { kind: "cookiesUnreadable", reason: "browserOpen" },
+] as const)(
+  "a submitted URL failing with %o shows signing in again",
+  async (error) => {
+    const backend = await startReady();
+    await backend.settings({ signInBrowser: "firefox" });
+    submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    await backend.probe({ status: "failed", error, signInBrowser: "firefox" });
+
+    expect(
+      screen.getByRole("combobox", { name: "Вход в YouTube" }),
+    ).toHaveDisplayValue("Firefox");
+  },
+);
+
+test("signing in is hidden for a URL of another site", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await botCheck(backend);
+
+  enterUrl("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a chosen sign-in browser is hidden for a URL of another site", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "firefox" });
+
+  enterUrl("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+  expect(
+    screen.queryByRole("combobox", { name: "Вход в YouTube" }),
+  ).not.toBeInTheDocument();
+});
+
+test.each([
+  "https://www.youtube.com/watch?v=-moW9jvvMr4",
+  "youtube.com/watch?v=-moW9jvvMr4",
+  "https://m.youtube.com/watch?v=-moW9jvvMr4",
+  "https://youtu.be/-moW9jvvMr4",
+  "https://www.youtube-nocookie.com/embed/-moW9jvvMr4",
+])(
+  "a chosen sign-in browser stays visible for %s so that it can be turned off",
+  async (url) => {
+    const backend = await startReady();
+    await backend.settings({ signInBrowser: "firefox" });
+
+    enterUrl(url);
+
+    expect(
+      screen.getByRole("combobox", { name: "Вход в YouTube" }),
+    ).toHaveDisplayValue("Firefox");
+  },
+);
+
+test("choosing a sign-in browser saves it and warns about the account", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: null });
+  await botCheck(backend);
+
+  fireEvent.change(
+    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
+    { target: { value: "firefox" } },
+  );
+  await waitFor(() => expect(backend.signInBrowsers).toEqual(["firefox"]));
+  await backend.settings({ signInBrowser: "firefox" });
+
+  expect(
+    screen.getByRole("combobox", { name: "Вход в YouTube" }),
+  ).toHaveDisplayValue("Firefox");
+  expect(
+    screen.getByText(
+      "Приложение будет обращаться к YouTube от имени вашего аккаунта в Firefox. Если скачивать очень много, YouTube может ограничить этот аккаунт.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("choosing not to sign in saves no browser", async () => {
+  const backend = await startReady();
+  await backend.settings({ signInBrowser: "edge" });
+  enterUrl(youtubeUrl);
+
+  fireEvent.change(
+    await screen.findByRole("combobox", { name: "Вход в YouTube" }),
+    { target: { value: "" } },
+  );
+
+  await waitFor(() => expect(backend.signInBrowsers).toEqual([null]));
+});
+
+test("a sign-in browser that can't be saved says so", async () => {
+  const backend = await startReady({ savingFails: true });
+  await botCheck(backend);
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Вход в YouTube" }), {
+    target: { value: "firefox" },
+  });
+
+  expect(
+    await screen.findByText("Не удалось сохранить выбор браузера."),
+  ).toHaveRole("alert");
+});
+
+test.each([
+  [
+    "firefox",
+    { kind: "signInRequired" },
+    "Видео требует входа, а в Firefox не выполнен вход в YouTube или у аккаунта нет доступа к этому видео",
+  ],
+  [
+    "firefox",
+    { kind: "botCheck" },
+    "YouTube всё равно просит подтвердить, что вы не робот. Проверьте, что в Firefox выполнен вход в YouTube",
+  ],
+  [
+    "vivaldi",
+    { kind: "cookiesUnreadable", reason: "browserNotFound" },
+    "Не удалось найти данные Vivaldi — браузер не установлен или в нём ещё не открывали сайты. Выберите другой браузер",
+  ],
+  [
+    "edge",
+    { kind: "cookiesUnreadable", reason: "browserOpen" },
+    "Edge не даёт прочитать cookies, пока он открыт. Закройте его полностью и нажмите «Найти» ещё раз",
+  ],
+  [
+    "chrome",
+    { kind: "cookiesUnreadable", reason: "cantDecrypt" },
+    "Chrome шифрует cookies так, что другие программы не могут их прочитать. Выберите другой браузер, например Firefox",
+  ],
+] as const)(
+  "a Probe that ran with %s as the sign-in browser names it in %o",
+  async (browser, error, text) => {
+    const backend = await startReady();
+
+    await backend.probe({ status: "failed", error, signInBrowser: browser });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(text);
+  },
+);
+
+test("a failed Probe names the browser it ran with, not the one chosen since", async () => {
+  const backend = await startReady();
+  await backend.probe({
+    status: "failed",
+    error: { kind: "botCheck" },
+    signInBrowser: null,
+  });
+
+  await backend.settings({ signInBrowser: "firefox" });
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "выберите ниже браузер, в котором вы вошли в YouTube",
+  );
+});

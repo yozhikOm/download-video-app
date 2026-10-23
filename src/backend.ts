@@ -31,13 +31,34 @@ export type VideoCard = {
   duration: number | null;
 };
 
+/** A browser yt-dlp can read the YouTube sign-in from. */
+export type Browser =
+  | "brave"
+  | "chrome"
+  | "chromium"
+  | "edge"
+  | "firefox"
+  | "opera"
+  | "vivaldi"
+  | "whale";
+
+export type SettingsState = {
+  /** The browser whose YouTube sign-in yt-dlp uses; `null` to not sign in. */
+  signInBrowser: Browser | null;
+};
+
+/** Why yt-dlp couldn't read the sign-in browser's cookies. */
+export type CookiesError = "browserNotFound" | "browserOpen" | "cantDecrypt";
+
 /** Why a URL can't be downloaded. */
 export type ProbeError =
   | { kind: "playlist" }
   | { kind: "live" }
+  /** No sign-in browser is chosen, or its account has no access. */
   | { kind: "signInRequired" }
   /** YouTube asks to prove the user isn't a bot; it's about the network, not the Video. */
   | { kind: "botCheck" }
+  | { kind: "cookiesUnreadable"; reason: CookiesError }
   | { kind: "truncatedUrl" }
   | { kind: "unsupported" }
   /** `message` is for the log; the UI shows a generic text. */
@@ -47,11 +68,18 @@ export type ProbeState =
   | { status: "idle" }
   | { status: "probing" }
   | { status: "probed"; video: VideoCard }
-  | { status: "failed"; error: ProbeError };
+  | {
+      status: "failed";
+      error: ProbeError;
+      /** The sign-in browser the Probe ran with; the choice may have changed since. */
+      signInBrowser: Browser | null;
+    };
 
 /** What the backend pushes to the UI; the backend owns the state. */
 export type AppEvent =
-  { type: "setup"; data: SetupState } | { type: "probe"; data: ProbeState };
+  | { type: "setup"; data: SetupState }
+  | { type: "probe"; data: ProbeState }
+  | { type: "settings"; data: SettingsState };
 
 export type AppInfo = {
   name: string;
@@ -79,6 +107,11 @@ export function retrySetup(): Promise<void> {
 /** Asks the backend to Probe a URL; the result arrives as a probe event. */
 export function probe(url: string): Promise<void> {
   return invoke("probe", { url });
+}
+
+/** Saves the sign-in browser; the change arrives as a settings event. */
+export function setSignInBrowser(browser: Browser | null): Promise<void> {
+  return invoke("set_sign_in_browser", { browser });
 }
 
 export function appInfo(): Promise<AppInfo> {
