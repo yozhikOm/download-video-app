@@ -30,15 +30,15 @@ pub struct Download {
 pub enum DownloadStatus {
     /// Each field is `None` while yt-dlp doesn't tell it.
     Downloading {
-        /// 0 to 100, of the stream being received; a Video with separate
-        /// video and audio streams goes up to 100 for each.
+        /// 0 to 100, of all the Formats yt-dlp receives when their sizes are
+        /// known, else of the one being received.
         percent: Option<f64>,
         /// Bytes per second.
         speed: Option<f64>,
         /// Seconds left.
         eta: Option<u64>,
     },
-    /// ffmpeg merges the received streams into the MP4.
+    /// ffmpeg merges the received Formats into the MP4.
     Processing,
     Done {
         file: PathBuf,
@@ -112,7 +112,14 @@ impl Downloader {
             "--progress".into(),
             "--newline".into(),
             "--progress-template".into(),
-            "download:%(progress)j".into(),
+            // The Format's id places it among the separate Formats; a
+            // missing one prints as `null`.
+            r#"download:{"progress": %(progress)j, "format": %(info.format_id|null)j}"#.into(),
+            // The separate Formats and their sizes, before any is received,
+            // so that the progress covers all of them; `null` for a single
+            // Format.
+            "--print".into(),
+            r#"before_dl:{"formats": %(requested_formats.:.{format_id,filesize,filesize_approx}|null)j}"#.into(),
             // Printed right before ffmpeg merges the streams.
             "--print".into(),
             "post_process:[processing]".into(),
@@ -122,6 +129,7 @@ impl Downloader {
             "after_move:%(filepath)j".into(),
         ];
         args.extend(["--".into(), video.url.clone().into()]);
+        let mut formats = Vec::new();
         let mut finished = None;
         let result = self
             .toolbox
@@ -130,7 +138,8 @@ impl Downloader {
                 &args,
                 sign_in_browser,
                 &mut |line| match read_line(line) {
-                    Line::Progress(status) => self.report_progress(status),
+                    Line::Formats(planned) => formats = planned,
+                    Line::Progress(line) => self.report_progress(line.status(&formats)),
                     Line::Processing => self.set_status(DownloadStatus::Processing),
                     Line::Finished(path) => finished = Some(path),
                     Line::Other => {}
@@ -222,7 +231,7 @@ impl Downloader {
 
     fn report_progress(&self, status: DownloadStatus) {
         // yt-dlp reports every chunk it receives; the UI gets each tenth of
-        // a percent once.
+        // a percent of each Format once.
         let permille = |status: &DownloadStatus| match status {
             DownloadStatus::Downloading { percent, .. } => {
                 percent.map(|percent| (percent * 10.0) as u64)
@@ -326,20 +335,49 @@ fn move_file(from: &Path, to: &Path) -> io::Result<()> {
 
 /// What a line of yt-dlp's stdout tells.
 enum Line {
-    Progress(DownloadStatus),
+    /// The separate Formats yt-dlp is about to receive, in order.
+    Formats(Vec<PlannedFormat>),
+    Progress(ProgressLine),
     Processing,
     /// The finished file in the Partials folder.
     Finished(PathBuf),
     Other,
 }
 
-/// The part of a `download:%(progress)j` line the app uses.
+/// The line printed before anything is received.
+#[derive(Deserialize)]
+struct FormatsLine {
+    formats: Option<Vec<PlannedFormat>>,
+}
+
+#[derive(Deserialize)]
+struct PlannedFormat {
+    format_id: String,
+    filesize: Option<f64>,
+    filesize_approx: Option<f64>,
+}
+
+impl PlannedFormat {
+    fn size(&self) -> Option<f64> {
+        self.filesize.or(self.filesize_approx)
+    }
+}
+
+/// A line printed by the app's `--progress-template`.
+#[derive(Deserialize)]
+struct ProgressLine {
+    progress: Progress,
+    /// The id of the Format being received.
+    format: Option<String>,
+}
+
+/// The part of yt-dlp's progress the app uses.
 #[derive(Deserialize)]
 struct Progress {
     downloaded_bytes: Option<f64>,
     total_bytes: Option<f64>,
     total_bytes_estimate: Option<f64>,
-    /// A stream that comes in fragments may tell only how many there are.
+    /// A Format that comes in fragments may tell only how many there are.
     fragment_index: Option<f64>,
     fragment_count: Option<f64>,
     speed: Option<f64>,
@@ -351,8 +389,11 @@ fn read_line(line: &str) -> Line {
         return Line::Processing;
     }
     if line.starts_with('{') {
-        return match serde_json::from_str::<Progress>(line) {
-            Ok(progress) => Line::Progress(progress.status()),
+        if let Ok(progress) = serde_json::from_str::<ProgressLine>(line) {
+            return Line::Progress(progress);
+        }
+        return match serde_json::from_str::<FormatsLine>(line) {
+            Ok(formats) => Line::Formats(formats.formats.unwrap_or_default()),
             Err(_) => Line::Other,
         };
     }
@@ -362,20 +403,49 @@ fn read_line(line: &str) -> Line {
     }
 }
 
-impl Progress {
-    fn status(self) -> DownloadStatus {
+impl ProgressLine {
+    /// The status this line tells; with the separate `formats` of known
+    /// sizes, its percent and time left cover all of them.
+    fn status(&self, formats: &[PlannedFormat]) -> DownloadStatus {
+        let progress = &self.progress;
+        let total = progress.total_bytes.or(progress.total_bytes_estimate);
         let percent_of = |done: Option<f64>, total: Option<f64>| {
             let (done, total) = (done?, total?);
             (total > 0.0).then(|| (done / total).clamp(0.0, 1.0) * 100.0)
         };
-        DownloadStatus::Downloading {
-            percent: percent_of(
-                self.downloaded_bytes,
-                self.total_bytes.or(self.total_bytes_estimate),
-            )
-            .or_else(|| percent_of(self.fragment_index, self.fragment_count)),
-            speed: self.speed,
-            eta: self.eta.map(|eta| eta.max(0.0).round() as u64),
+        if let Some((done, all)) = self.of_all(formats, total) {
+            let left = (all - done).max(0.0);
+            return DownloadStatus::Downloading {
+                percent: percent_of(Some(done), Some(all)),
+                speed: progress.speed,
+                eta: progress
+                    .speed
+                    .filter(|speed| *speed > 0.0)
+                    .map(|speed| (left / speed).round() as u64)
+                    .or_else(|| progress.eta.map(|eta| eta.max(0.0).round() as u64)),
+            };
         }
+        DownloadStatus::Downloading {
+            percent: percent_of(progress.downloaded_bytes, total)
+                .or_else(|| percent_of(progress.fragment_index, progress.fragment_count)),
+            speed: progress.speed,
+            eta: progress.eta.map(|eta| eta.max(0.0).round() as u64),
+        }
+    }
+
+    /// Bytes received of all the separate `formats`, and their total;
+    /// `None` when a size is unknown or this Format isn't among them.
+    fn of_all(&self, formats: &[PlannedFormat], total: Option<f64>) -> Option<(f64, f64)> {
+        let at = formats
+            .iter()
+            .position(|planned| Some(&planned.format_id) == self.format.as_ref())?;
+        let size_of = |planned: &[PlannedFormat]| -> Option<f64> {
+            planned.iter().map(PlannedFormat::size).sum()
+        };
+        let before = size_of(&formats[..at])?;
+        let after = size_of(&formats[at + 1..])?;
+        let total = total.or(formats[at].size())?;
+        let downloaded = self.progress.downloaded_bytes?;
+        Some((before + downloaded, before + total + after))
     }
 }

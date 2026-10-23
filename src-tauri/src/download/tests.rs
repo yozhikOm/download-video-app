@@ -70,6 +70,18 @@ impl App {
     /// `progress` lines, writes `content` where it is told and prints what
     /// it is asked to print.
     fn ytdlp_downloads(&self, id: &str, content: &[u8], progress: &[String]) {
+        self.ytdlp_downloads_formats(id, content, serde_json::Value::Null, progress);
+    }
+
+    /// Like [`App::ytdlp_downloads`], for a Video that yt-dlp receives as
+    /// the separate `formats`, each `{format_id, filesize, filesize_approx}`.
+    fn ytdlp_downloads_formats(
+        &self,
+        id: &str,
+        content: &[u8],
+        formats: serde_json::Value,
+        progress: &[String],
+    ) {
         let (id, content, progress) = (id.to_owned(), content.to_owned(), progress.to_owned());
         self.processes.script("yt-dlp.exe", move |args| {
             let dir = PathBuf::from(after(args, "-P"));
@@ -81,9 +93,20 @@ impl App {
             fs::create_dir_all(&dir).unwrap();
             let file = dir.join(name);
             fs::write(&file, &content).unwrap();
-            let mut stdout = progress.join("\n") + "\n";
-            for print in values_of(args, "--print") {
+            let mut stdout = String::new();
+            let prints = values_of(args, "--print");
+            // Printed before anything is received.
+            if prints
+                .iter()
+                .any(|print| print.to_str().unwrap().starts_with("before_dl:"))
+            {
+                stdout += &serde_json::json!({ "formats": formats }).to_string();
+                stdout += "\n";
+            }
+            stdout += &(progress.join("\n") + "\n");
+            for print in prints {
                 match print.to_str().unwrap() {
+                    print if print.starts_with("before_dl:") => {}
                     "post_process:[processing]" => stdout += "[processing]\n",
                     "after_move:%(filepath)j" => {
                         stdout += &serde_json::to_string(&file).unwrap();
@@ -116,6 +139,13 @@ impl App {
                 AppEvent::Download(state) => Some(state),
                 _ => None,
             })
+            .collect()
+    }
+
+    fn download_statuses(&self) -> Vec<DownloadStatus> {
+        self.download_states()
+            .into_iter()
+            .map(|download| download.unwrap().status)
             .collect()
     }
 
@@ -183,18 +213,46 @@ fn a_downloaded_video_is_moved_to_the_save_folder_under_its_title() {
     assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
 }
 
-/// A progress line as yt-dlp prints it with `--progress-template
-/// "download:%(progress)j"`, cut down to the fields the app reads.
+/// Format ids as YouTube's.
+const VIDEO_AND_AUDIO: &str = "18";
+const VIDEO_ONLY: &str = "395";
+const AUDIO_ONLY: &str = "251";
+
+/// A progress line of a Format with both video and audio, cut down to the
+/// fields the app reads.
 fn progress(downloaded: u64, total: u64, speed: f64, eta: u64) -> String {
-    serde_json::json!({
-        "status": "downloading",
-        "downloaded_bytes": downloaded,
-        "total_bytes": total,
-        "speed": speed,
-        "eta": eta,
-        "_percent_str": "  0.5%",
-    })
-    .to_string()
+    progress_of(VIDEO_AND_AUDIO, downloaded, total, speed, eta)
+}
+
+/// A progress line of this Format.
+fn progress_of(format: &str, downloaded: u64, total: u64, speed: f64, eta: u64) -> String {
+    progress_line(
+        format,
+        serde_json::json!({
+            "status": "downloading",
+            "downloaded_bytes": downloaded,
+            "total_bytes": total,
+            "speed": speed,
+            "eta": eta,
+            "_percent_str": "  0.5%",
+        }),
+    )
+}
+
+/// A line as yt-dlp prints it with the app's `--progress-template`.
+fn progress_line(format: &str, progress: serde_json::Value) -> String {
+    serde_json::json!({ "progress": progress, "format": format }).to_string()
+}
+
+/// The separate Formats yt-dlp names before receiving them, with their
+/// sizes when the site tells.
+fn formats(sizes: &[(&str, Option<u64>)]) -> serde_json::Value {
+    sizes
+        .iter()
+        .map(|(id, size)| {
+            serde_json::json!({ "format_id": id, "filesize": size, "filesize_approx": null })
+        })
+        .collect()
 }
 
 fn downloading(percent: f64, speed: f64, eta: u64) -> DownloadStatus {
@@ -242,6 +300,56 @@ fn a_download_goes_from_downloading_through_processing_to_done() {
     );
     let card = app.downloader.state().unwrap().video;
     assert_eq!(card.title, "Me at the zoo");
+}
+
+#[test]
+fn a_video_received_as_separate_video_and_audio_shows_one_progress_for_both() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1500)), (AUDIO_ONLY, Some(500))]),
+        &[
+            progress_of(VIDEO_ONLY, 500, 1500, 100.0, 10),
+            progress_of(VIDEO_ONLY, 1500, 1500, 100.0, 0),
+            progress_of(AUDIO_ONLY, 250, 500, 50.0, 5),
+        ],
+    );
+
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    // Of the 2000 bytes of both, the time left is what remains of both at
+    // the current speed.
+    assert_eq!(
+        app.download_statuses()[1..4],
+        [
+            downloading(25.0, 100.0, 15),
+            downloading(75.0, 100.0, 5),
+            downloading(87.5, 50.0, 5),
+        ]
+    );
+}
+
+#[test]
+fn a_format_of_unknown_size_joins_the_progress_once_its_size_is_known() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1500)), (AUDIO_ONLY, None)]),
+        &[
+            progress_of(VIDEO_ONLY, 750, 1500, 100.0, 8),
+            progress_of(AUDIO_ONLY, 250, 500, 50.0, 6),
+        ],
+    );
+
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    // While the audio's size is unknown, the video shows its own progress.
+    assert_eq!(
+        app.download_statuses()[1..3],
+        [downloading(50.0, 100.0, 8), downloading(87.5, 50.0, 5),]
+    );
 }
 
 #[test]
@@ -420,16 +528,19 @@ fn a_download_asks_yt_dlp_for_this_one_video_merged_into_an_mp4() {
 #[test]
 fn a_stream_in_fragments_reports_the_share_of_fragments_received() {
     let app = App::start();
-    let fragments = serde_json::json!({
-        "status": "downloading",
-        "downloaded_bytes": 52_000,
-        "total_bytes_estimate": null,
-        "fragment_index": 3,
-        "fragment_count": 12,
-        "speed": null,
-        "eta": null,
-    });
-    app.ytdlp_downloads(ID, b"the video", &[fragments.to_string()]);
+    let fragments = progress_line(
+        "hls-1080",
+        serde_json::json!({
+            "status": "downloading",
+            "downloaded_bytes": 52_000,
+            "total_bytes_estimate": null,
+            "fragment_index": 3,
+            "fragment_count": 12,
+            "speed": null,
+            "eta": null,
+        }),
+    );
+    app.ytdlp_downloads(ID, b"the video", &[fragments]);
 
     app.downloader.download(&video(URL, "Me at the zoo"));
 
@@ -511,12 +622,19 @@ fn downloads_a_real_video_with_the_real_yt_dlp() {
             _ => None,
         })
         .collect();
-    assert!(statuses.iter().any(|status| matches!(
-        status,
-        DownloadStatus::Downloading {
-            percent: Some(_),
-            ..
-        }
-    )));
+    // "Me at the zoo" comes as separate video and audio; one progress
+    // covers both, so it never goes back.
+    let percents: Vec<f64> = statuses
+        .iter()
+        .filter_map(|status| match status {
+            DownloadStatus::Downloading { percent, .. } => *percent,
+            _ => None,
+        })
+        .collect();
+    assert!(
+        percents.windows(2).all(|pair| pair[0] <= pair[1]),
+        "{percents:?}"
+    );
+    assert_eq!(percents.last(), Some(&100.0), "{percents:?}");
     assert!(statuses.contains(&DownloadStatus::Processing));
 }

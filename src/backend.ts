@@ -79,7 +79,10 @@ export type ProbeState =
 export type Download = { video: VideoCard } & (
   | {
       status: "downloading";
-      /** 0 to 100, of the stream being received; `null` while yt-dlp doesn't tell. */
+      /**
+       * 0 to 100, of all the Formats yt-dlp receives when their sizes are
+       * known, else of the one being received; `null` while yt-dlp doesn't tell.
+       */
       percent: number | null;
       /** Bytes per second. */
       speed: number | null;
