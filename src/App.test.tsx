@@ -776,3 +776,32 @@ test("a Download started after a new URL shows its Done", async () => {
     screen.getByRole("region", { name: "A Simple Way to Break a Bad Habit" }),
   ).toHaveTextContent("Готово");
 });
+
+test("pressing «Скачать» hides the Video's card", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.commands).toContain("download"));
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Скачать" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a Video's card hidden by «Скачать» returns when its URL is submitted again", async () => {
+  const backend = await startReady();
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+
+  expect(
+    screen.getByRole("heading", { name: "Me at the zoo" }),
+  ).toBeInTheDocument();
+});
