@@ -380,6 +380,53 @@ fn a_taken_name_gets_the_next_free_number_and_nothing_is_overwritten() {
     );
 }
 
+/// A Partial, the empty file that took its name in the save folder, and a
+/// file of the user's named like the temporary copy.
+fn copy_across_drives(partial_content: Option<&[u8]>) -> (TempDir, PathBuf, PathBuf, PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let partials = dir.path().join("partials");
+    let save_dir = dir.path().join("Downloads");
+    fs::create_dir_all(&partials).unwrap();
+    fs::create_dir_all(&save_dir).unwrap();
+    let partial = partials.join(format!("{ID}.default.mp4"));
+    if let Some(content) = partial_content {
+        fs::write(&partial, content).unwrap();
+    }
+    let to = save_dir.join("Me at the zoo.mp4");
+    fs::write(&to, b"").unwrap();
+    let users = save_dir.join("Me at the zoo.mp4.download");
+    fs::write(&users, b"the user's").unwrap();
+    (dir, partial, to, users)
+}
+
+#[test]
+fn a_copy_across_drives_leaves_a_file_named_like_its_temporary_alone() {
+    let (_dir, partial, to, users) = copy_across_drives(Some(b"the video"));
+
+    copy_then_rename(&partial, &to).unwrap();
+
+    assert_eq!(fs::read(&to).unwrap(), b"the video");
+    assert_eq!(fs::read(&users).unwrap(), b"the user's");
+    assert_eq!(
+        file_names(to.parent().unwrap()),
+        ["Me at the zoo.mp4", "Me at the zoo.mp4.download"]
+    );
+    assert!(!partial.exists());
+}
+
+#[test]
+fn a_failed_copy_across_drives_leaves_a_file_named_like_its_temporary_alone() {
+    let (_dir, partial, to, users) = copy_across_drives(None);
+
+    assert!(copy_then_rename(&partial, &to).is_err());
+
+    assert_eq!(fs::read(&users).unwrap(), b"the user's");
+    assert_eq!(
+        file_names(to.parent().unwrap()),
+        ["Me at the zoo.mp4", "Me at the zoo.mp4.download"]
+    );
+}
+
 #[test]
 fn characters_windows_forbids_in_a_title_are_replaced_by_lookalikes() {
     let app = App::start();

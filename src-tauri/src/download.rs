@@ -5,7 +5,7 @@
 mod tests;
 
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -213,10 +213,8 @@ impl Downloader {
             let file = self.save_dir.join(name);
             // Creating the file takes the name, so that another program
             // can't take it before the move.
-            match OpenOptions::new().write(true).create_new(true).open(&file) {
-                Ok(_) => {}
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
+            if create_new(&file)?.is_none() {
+                continue;
             }
             return match move_file(partial, &file) {
                 Ok(()) => Ok(file),
@@ -320,10 +318,20 @@ fn move_file(from: &Path, to: &Path) -> io::Result<()> {
     if fs::rename(from, to).is_ok() {
         return Ok(());
     }
-    let mut temp = to.as_os_str().to_owned();
-    temp.push(".download");
-    let temp = PathBuf::from(temp);
-    if let Err(error) = fs::copy(from, &temp).and_then(|_| fs::rename(&temp, to)) {
+    copy_then_rename(from, to)
+}
+
+/// Copies `from` next to `to` under the first free temporary name, then
+/// renames the copy over `to`. The temporary name is taken by creating the
+/// file, so that a file of the user's named like it is neither overwritten
+/// nor removed.
+fn copy_then_rename(from: &Path, to: &Path) -> io::Result<()> {
+    let mut source = File::open(from)?;
+    let (temp, mut copy) = create_temporary(to)?;
+    let copied = io::copy(&mut source, &mut copy);
+    // Windows can't rename a file that is still open.
+    drop(copy);
+    if let Err(error) = copied.and_then(|_| fs::rename(&temp, to)) {
         let _ = fs::remove_file(&temp);
         return Err(error);
     }
@@ -331,6 +339,32 @@ fn move_file(from: &Path, to: &Path) -> io::Result<()> {
         eprintln!("can't remove the Partial {}: {error}", from.display());
     }
     Ok(())
+}
+
+/// Creates the first free file of `<to>.download`, `<to>.1.download`,
+/// `<to>.2.download`…
+fn create_temporary(to: &Path) -> io::Result<(PathBuf, File)> {
+    for number in 0.. {
+        let mut temp = to.as_os_str().to_owned();
+        if number > 0 {
+            temp.push(format!(".{number}"));
+        }
+        temp.push(".download");
+        let temp = PathBuf::from(temp);
+        if let Some(file) = create_new(&temp)? {
+            return Ok((temp, file));
+        }
+    }
+    unreachable!("some number is free")
+}
+
+/// Creates the file at `path`; `None` when a file is already there.
+fn create_new(path: &Path) -> io::Result<Option<File>> {
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// What a line of yt-dlp's stdout tells.
