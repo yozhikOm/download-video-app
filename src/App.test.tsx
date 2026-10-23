@@ -12,6 +12,7 @@ import App from "./App";
 import type {
   AppEvent,
   Browser,
+  Download,
   ProbeState,
   SettingsState,
   SetupState,
@@ -20,8 +21,8 @@ import type {
 const MB = 1024 * 1024;
 
 /**
- * Mocks the backend; `setup`, `probe` and `settings` push a state to the
- * UI's channel.
+ * Mocks the backend; `setup`, `probe`, `settings` and `download` push a
+ * state to the UI's channel.
  */
 function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
   let channel: Channel<AppEvent> | undefined;
@@ -63,6 +64,8 @@ function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
     settings: (state: SettingsState) => send({ type: "settings", data: state }),
+    download: (state: Download | null) =>
+      send({ type: "download", data: state }),
   };
 }
 
@@ -597,5 +600,115 @@ test("a failed Probe names the browser it ran with, not the one chosen since", a
 
   expect(screen.getByRole("alert")).toHaveTextContent(
     "выберите ниже браузер, в котором вы вошли в YouTube",
+  );
+});
+
+const zoo = {
+  title: "Me at the zoo",
+  channel: "jawed",
+  thumbnail: null,
+  duration: 19,
+};
+
+test("a probed Video is downloaded on request", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.commands).toContain("download"));
+});
+
+test("a Download shows its percent, speed and time left while downloading", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "downloading",
+    percent: 25.4,
+    speed: 1.5 * MB,
+    eta: 67,
+  });
+
+  const status = screen.getByRole("region", { name: "Me at the zoo" });
+  expect(status).toHaveTextContent("Скачивание");
+  expect(status).toHaveTextContent("25%");
+  expect(status).toHaveTextContent("1,5 МБ/с");
+  expect(status).toHaveTextContent("осталось 1:07");
+  expect(screen.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuenow",
+    "25",
+  );
+});
+
+test("a Download shows that it is starting before yt-dlp tells its progress", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "downloading",
+    percent: null,
+    speed: null,
+    eta: null,
+  });
+
+  const status = screen.getByRole("region", { name: "Me at the zoo" });
+  expect(status).toHaveTextContent("Скачивание");
+  expect(status).not.toHaveTextContent("%");
+  expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+});
+
+test("a Download shows processing while ffmpeg merges the streams", async () => {
+  const backend = await startReady();
+
+  await backend.download({ video: zoo, status: "processing" });
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Обработка");
+});
+
+test("another Video can't be downloaded while a Download runs", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  await backend.download({ video: zoo, status: "processing" });
+
+  expect(screen.getByRole("button", { name: "Скачать" })).toBeDisabled();
+});
+
+test("a Done Download opens its file or shows it in its folder", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "done",
+    file: "C:\\Users\\me\\Downloads\\Me at the zoo (1).mp4",
+  });
+
+  const status = screen.getByRole("region", { name: "Me at the zoo" });
+  expect(status).toHaveTextContent("Готово");
+  expect(status).toHaveTextContent("Me at the zoo (1).mp4");
+  expect(status).not.toHaveTextContent("Downloads");
+  fireEvent.click(screen.getByRole("button", { name: "Открыть файл" }));
+  fireEvent.click(screen.getByRole("button", { name: "Показать в папке" }));
+  await waitFor(() =>
+    expect(backend.commands).toEqual(
+      expect.arrayContaining(["open_downloaded_file", "show_downloaded_file"]),
+    ),
+  );
+});
+
+test("a Failed Download says so", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "failed",
+    message: "ERROR: unable to download video data",
+  });
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Не удалось скачать видео",
   );
 });

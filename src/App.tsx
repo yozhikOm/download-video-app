@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   subscribe,
+  type Download,
   type ProbeState,
   type SettingsState,
   type SetupState,
@@ -14,6 +15,7 @@ function App() {
   const [settings, setSettings] = useState<SettingsState>({
     signInBrowser: null,
   });
+  const [download, setDownload] = useState<Download | null>(null);
 
   useEffect(
     () =>
@@ -28,6 +30,9 @@ function App() {
           case "settings":
             setSettings(event.data);
             break;
+          case "download":
+            setDownload(event.data);
+            break;
         }
       }),
     [],
@@ -39,7 +44,7 @@ function App() {
         <SetupScreen state={setup} />
       )}
       {setup.status === "ready" && (
-        <MainScreen probe={probe} settings={settings} />
+        <MainScreen probe={probe} settings={settings} download={download} />
       )}
     </main>
   );
