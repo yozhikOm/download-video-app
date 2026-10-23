@@ -63,6 +63,15 @@ impl App {
         self.processes.fail_with("yt-dlp.exe", stderr);
     }
 
+    /// The browser the last yt-dlp run read cookies from, if any.
+    fn cookies_browser(&self) -> Option<OsString> {
+        let (_, args) = self.processes.runs().pop().unwrap();
+        let cookies = args
+            .iter()
+            .position(|arg| arg == "--cookies-from-browser")?;
+        Some(args[cookies + 1].clone())
+    }
+
     fn probe_states(&self) -> Vec<ProbeState> {
         self.events
             .events()
@@ -347,6 +356,59 @@ fn a_probe_runs_yt_dlp_with_the_sign_in_browser_it_names() {
             sign_in_browser: Some(Browser::Firefox),
         }
     );
+}
+
+#[test]
+fn every_youtube_url_runs_with_the_sign_in_browser() {
+    for url in [
+        "youtu.be/jNQXAC9IVRw",
+        "https://m.youtube.com/watch?v=jNQXAC9IVRw",
+        "https://www.youtube-nocookie.com/embed/jNQXAC9IVRw",
+    ] {
+        let app = App::start();
+        app.settings
+            .set_sign_in_browser(Some(Browser::Firefox))
+            .unwrap();
+        app.ytdlp_prints(VIDEO);
+
+        app.prober.probe(url);
+
+        assert_eq!(app.cookies_browser(), Some("firefox".into()), "{url}");
+    }
+}
+
+#[test]
+fn a_url_of_another_site_runs_without_the_sign_in_browser() {
+    let app = App::start();
+    app.settings
+        .set_sign_in_browser(Some(Browser::Edge))
+        .unwrap();
+    app.ytdlp_fails(b"ERROR: Unsupported URL: https://rutube.ru/");
+
+    app.prober
+        .probe("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+    // The user's sign-in to other sites stays in the browser.
+    assert_eq!(app.cookies_browser(), None);
+    assert_eq!(app.prober.state(), failed(ProbeError::Unsupported));
+}
+
+#[test]
+fn a_host_that_only_looks_like_youtube_runs_without_the_sign_in_browser() {
+    for url in [
+        "https://notyoutube.com/watch?v=jNQXAC9IVRw",
+        "https://youtube.com.example.org/watch?v=jNQXAC9IVRw",
+    ] {
+        let app = App::start();
+        app.settings
+            .set_sign_in_browser(Some(Browser::Firefox))
+            .unwrap();
+        app.ytdlp_prints(VIDEO);
+
+        app.prober.probe(url);
+
+        assert_eq!(app.cookies_browser(), None, "{url}");
+    }
 }
 
 #[test]
