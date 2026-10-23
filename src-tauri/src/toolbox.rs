@@ -193,6 +193,33 @@ impl Toolbox {
         args: &[OsString],
         sign_in_browser: Option<Browser>,
     ) -> Result<Output, ToolBroken> {
+        let args = self.full_args(tool, args, sign_in_browser);
+        self.processes
+            .run(&self.path(tool), &args)
+            .map_err(|_| self.broke(tool))
+    }
+
+    /// Like [`Toolbox::run`], but hands each line the tool prints to stdout
+    /// to `on_line` as soon as it is printed.
+    pub fn run_streaming(
+        &self,
+        tool: Tool,
+        args: &[OsString],
+        sign_in_browser: Option<Browser>,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<Output, ToolBroken> {
+        let args = self.full_args(tool, args, sign_in_browser);
+        self.processes
+            .run_streaming(&self.path(tool), &args, on_line)
+            .map_err(|_| self.broke(tool))
+    }
+
+    fn full_args(
+        &self,
+        tool: Tool,
+        args: &[OsString],
+        sign_in_browser: Option<Browser>,
+    ) -> Vec<OsString> {
         let mut full_args = Vec::new();
         if tool == Tool::YtDlp {
             let mut deno = OsString::from("deno:");
@@ -212,12 +239,12 @@ impl Toolbox {
             }
         }
         full_args.extend_from_slice(args);
-        self.processes
-            .run(&self.path(tool), &full_args)
-            .map_err(|_| {
-                self.forget(tool);
-                ToolBroken(tool)
-            })
+        full_args
+    }
+
+    fn broke(&self, tool: Tool) -> ToolBroken {
+        self.forget(tool);
+        ToolBroken(tool)
     }
 
     /// When yt-dlp was last installed or checked for updates.
