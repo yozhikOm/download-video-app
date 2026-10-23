@@ -9,9 +9,11 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
 use crate::probe::{Video, VideoCard, error_line};
 use crate::settings::Settings;
@@ -49,14 +51,20 @@ pub enum DownloadStatus {
     },
 }
 
+/// How often the UI gets the speed and time left while the percent stands.
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Downloads Videos with yt-dlp.
 pub struct Downloader {
     toolbox: Arc<Toolbox>,
     settings: Arc<Settings>,
     partials_dir: PathBuf,
     save_dir: PathBuf,
+    clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     current: Mutex<Option<Download>>,
+    /// When the UI last got the progress.
+    progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
     /// the changes in the same order.
     sending: Mutex<()>,
@@ -68,6 +76,7 @@ impl Downloader {
         settings: Arc<Settings>,
         partials_dir: PathBuf,
         save_dir: PathBuf,
+        clock: Arc<dyn Clock>,
         events: Arc<dyn EventSink>,
     ) -> Self {
         Self {
@@ -75,8 +84,10 @@ impl Downloader {
             settings,
             partials_dir,
             save_dir,
+            clock,
             events,
             current: Mutex::new(None),
+            progress_sent: Mutex::new(None),
             sending: Mutex::new(()),
         }
     }
@@ -231,6 +242,7 @@ impl Downloader {
     }
 
     fn report_progress(&self, mut status: DownloadStatus) {
+        let now = self.clock.now();
         let Some(shown) = self.state() else {
             return self.set_status(status);
         };
@@ -245,7 +257,8 @@ impl Downloader {
             *percent = Some(percent.map_or(shown, |percent| percent.max(shown)));
         }
         // yt-dlp reports every chunk it receives; the UI gets each tenth of
-        // a percent once.
+        // a percent at once, and the speed and time left at least once a
+        // second.
         let permille = |status: &DownloadStatus| match status {
             DownloadStatus::Downloading { percent, .. } => {
                 percent.map(|percent| (percent * 10.0) as u64)
@@ -256,9 +269,15 @@ impl Downloader {
             percent: Some(_), ..
         } = shown.status
             && permille(&shown.status) == permille(&status)
+            && self.progress_sent.lock().unwrap().is_some_and(|sent| {
+                // A clock set back counts as the interval gone.
+                now.duration_since(sent)
+                    .is_ok_and(|elapsed| elapsed < PROGRESS_INTERVAL)
+            })
         {
             return;
         }
+        *self.progress_sent.lock().unwrap() = Some(now);
         self.set_status(status);
     }
 

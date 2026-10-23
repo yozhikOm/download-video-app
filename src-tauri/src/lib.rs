@@ -187,6 +187,7 @@ pub fn run() {
                 settings.clone(),
                 data_dir.join("partials"),
                 save_dir,
+                Arc::new(SystemClock),
                 subscribers.clone(),
             ));
             app.manage(subscribers);

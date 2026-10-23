@@ -3,12 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 
 use super::*;
-use crate::clock::FixedClock;
+use crate::clock::{Clock, FixedClock};
 use crate::events::{AppEvent, RecordingSink};
 use crate::probe::{TranscriptLanguages, Video};
 use crate::processes::fake::{FakeProcesses, exit_status};
@@ -26,7 +26,36 @@ struct App {
     processes: Arc<FakeProcesses>,
     settings: Arc<Settings>,
     events: Arc<RecordingSink>,
+    clock: Arc<SteppingClock>,
     downloader: Arc<Downloader>,
+}
+
+/// Each reading is `step` later than the one before; the step is zero until
+/// a test sets it.
+struct SteppingClock {
+    now: Mutex<SystemTime>,
+    step: Mutex<Duration>,
+}
+
+impl SteppingClock {
+    fn new() -> Self {
+        Self {
+            now: Mutex::new(SystemTime::UNIX_EPOCH),
+            step: Mutex::new(Duration::ZERO),
+        }
+    }
+
+    fn step_by(&self, step: Duration) {
+        *self.step.lock().unwrap() = step;
+    }
+}
+
+impl Clock for SteppingClock {
+    fn now(&self) -> SystemTime {
+        let mut now = self.now.lock().unwrap();
+        *now += *self.step.lock().unwrap();
+        *now
+    }
 }
 
 impl App {
@@ -48,11 +77,13 @@ impl App {
             events.clone(),
         ));
         toolbox.prepare();
+        let clock = Arc::new(SteppingClock::new());
         let downloader = Arc::new(Downloader::new(
             toolbox.clone(),
             settings.clone(),
             dir.path().join("partials"),
             dir.path().join("Downloads"),
+            clock.clone(),
             events.clone(),
         ));
         Self {
@@ -62,6 +93,7 @@ impl App {
             processes,
             settings,
             events,
+            clock,
             downloader,
         }
     }
@@ -420,6 +452,29 @@ fn the_percent_holds_when_a_format_turns_out_bigger_than_told() {
 }
 
 #[test]
+fn the_speed_and_time_left_update_each_second_while_the_percent_stands() {
+    let app = App::start();
+    app.clock.step_by(Duration::from_millis(600));
+    app.ytdlp_downloads(
+        ID,
+        b"the video",
+        &[
+            progress(250, 1000, 100.0, 9),
+            progress(250, 1000, 80.0, 10),
+            progress(250, 1000, 50.0, 15),
+        ],
+    );
+
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    // The second line comes 0.6 s after the first, the third 1.2 s.
+    assert_eq!(
+        app.download_statuses()[1..3],
+        [downloading(25.0, 100.0, 9), downloading(25.0, 50.0, 15)]
+    );
+}
+
+#[test]
 fn a_taken_name_gets_the_next_free_number_and_nothing_is_overwritten() {
     let app = App::start();
     fs::create_dir_all(app.save_dir()).unwrap();
@@ -714,6 +769,7 @@ fn downloads_a_real_video_with_the_real_yt_dlp() {
         settings,
         dir.path().join("partials"),
         dir.path().join("Downloads"),
+        Arc::new(SystemClock),
         events.clone(),
     );
 
