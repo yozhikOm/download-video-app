@@ -24,7 +24,11 @@ const MB = 1024 * 1024;
  * Mocks the backend; `setup`, `probe`, `settings` and `download` push a
  * state to the UI's channel.
  */
-function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
+function mockBackend({
+  appInfoFails = false,
+  savingFails = false,
+  openingFails = false,
+} = {}) {
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
   const probedUrls: string[] = [];
@@ -40,6 +44,11 @@ function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
           throw new Error("disk is full");
         }
         signInBrowsers.push((args as { browser: Browser | null }).browser);
+        return null;
+      case "open_downloaded_file":
+        if (openingFails) {
+          throw new Error("file is gone");
+        }
         return null;
       case "subscribe":
         channel = (args as { events: Channel<AppEvent> }).events;
@@ -631,7 +640,7 @@ test("a Download shows its percent, speed and time left while downloading", asyn
   });
 
   const status = screen.getByRole("region", { name: "Me at the zoo" });
-  expect(status).toHaveTextContent("Скачивание");
+  expect(status).toHaveTextContent("Скачивание...");
   expect(status).toHaveTextContent("25%");
   expect(status).toHaveTextContent("1,5 МБ/с");
   expect(status).toHaveTextContent("осталось 1:07");
@@ -653,7 +662,7 @@ test("a Download shows that it is starting before yt-dlp tells its progress", as
   });
 
   const status = screen.getByRole("region", { name: "Me at the zoo" });
-  expect(status).toHaveTextContent("Скачивание");
+  expect(status).toHaveTextContent("Скачивание...");
   expect(status).not.toHaveTextContent("%");
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
 });
@@ -775,6 +784,40 @@ test("a Download started after a new URL shows its Done", async () => {
   expect(
     screen.getByRole("region", { name: "A Simple Way to Break a Bad Habit" }),
   ).toHaveTextContent("Готово");
+});
+
+test("a new Download of the same Video doesn't show the previous one's file error", async () => {
+  const backend = await startReady({ openingFails: true });
+  const done = {
+    video: zoo,
+    status: "done",
+    file: "C:\\Downloads\\Me at the zoo.mp4",
+  } as const;
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await backend.download(done);
+  fireEvent.click(screen.getByRole("button", { name: "Открыть файл" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Не удалось открыть файл",
+  );
+
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await backend.download({
+    video: zoo,
+    status: "downloading",
+    percent: null,
+    speed: null,
+    eta: null,
+  });
+  await backend.download(done);
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Готово");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 test("pressing «Скачать» hides the Video's card", async () => {

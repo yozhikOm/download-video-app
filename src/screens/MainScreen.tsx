@@ -197,6 +197,9 @@ export function MainScreen({ probe, settings, download }: Props) {
   // «Скачать» hides the Video too, until its URL is submitted again.
   const [previewHidden, setPreviewHidden] = useState(false);
   const [finishedHidden, setFinishedHidden] = useState(false);
+  // Each «Скачать» gets a card of its own, so that the previous Download's
+  // failure to open its file doesn't carry over to the next one.
+  const [downloadsStarted, setDownloadsStarted] = useState(0);
 
   useEffect(() => {
     fetchAppInfo()
@@ -276,6 +279,7 @@ export function MainScreen({ probe, settings, download }: Props) {
             // The Download's card takes over from the Video's.
             setPreviewHidden(true);
             setFinishedHidden(false);
+            setDownloadsStarted((count) => count + 1);
             void downloadVideo();
           }}
         />
@@ -293,7 +297,7 @@ export function MainScreen({ probe, settings, download }: Props) {
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
       {download && (isRunning(download) || !finishedHidden) && (
-        <DownloadCard download={download} />
+        <DownloadCard key={downloadsStarted} download={download} />
       )}
     </div>
   );
