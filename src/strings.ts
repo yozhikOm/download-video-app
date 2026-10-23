@@ -67,7 +67,7 @@ export const strings = {
     percent: (percent: string) => `${percent}%`,
     speed: (mbPerSecond: string) => `${mbPerSecond} МБ/с`,
     eta: (time: string) => `осталось ${time}`,
-    processing: "Обработка — соединяю видео и звук…",
+    processing: "Обработка видео…",
     done: "Готово",
     openFile: "Открыть файл",
     showInFolder: "Показать в папке",
