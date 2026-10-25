@@ -6,6 +6,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::clock::FixedClock;
 use crate::events::{AppEvent, RecordingSink};
+use crate::preset::VideoPreset;
 use crate::processes::fake::FakeProcesses;
 use crate::releases::fake::FakeReleases;
 use crate::settings::{Browser, Settings};
@@ -106,16 +107,199 @@ fn a_video_url_shows_the_video_card() {
         thumbnail: Some("https://i.ytimg.com/vi/-moW9jvvMr4/maxresdefault.jpg".into()),
         duration: Some(565.0),
     };
+    let probed = ProbeState::Probed {
+        video: card,
+        video_presets: vec![
+            VideoPreset::Best,
+            VideoPreset::P1080,
+            VideoPreset::P720,
+            VideoPreset::P480,
+        ],
+        default_video_preset: VideoPreset::P1080,
+    };
+    assert_eq!(app.probe_states(), [ProbeState::Probing, probed.clone()]);
+    assert_eq!(app.prober.state(), probed);
+}
+
+/// The Video presets the latest Probe offers, and the one chosen at first.
+fn offered_presets(app: &App) -> (Vec<VideoPreset>, VideoPreset) {
+    match app.prober.state() {
+        ProbeState::Probed {
+            video_presets,
+            default_video_preset,
+            ..
+        } => (video_presets, default_video_preset),
+        state => panic!("not probed: {state:?}"),
+    }
+}
+
+#[test]
+fn a_probed_video_offers_only_the_video_presets_it_has_with_1080p_chosen() {
+    let app = App::start();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
     assert_eq!(
-        app.probe_states(),
-        [
-            ProbeState::Probing,
-            ProbeState::Probed {
-                video: card.clone()
-            }
-        ]
+        offered_presets(&app),
+        (
+            vec![
+                VideoPreset::Best,
+                VideoPreset::P1080,
+                VideoPreset::P720,
+                VideoPreset::P480
+            ],
+            VideoPreset::P1080
+        )
     );
-    assert_eq!(app.prober.state(), ProbeState::Probed { video: card });
+}
+
+/// The `-J` answer of `youtube-video.json` with its Formats changed by
+/// `edit`.
+fn video_with_formats(edit: impl FnOnce(&mut Vec<serde_json::Value>)) -> Vec<u8> {
+    let mut answer: serde_json::Value = serde_json::from_slice(VIDEO).unwrap();
+    let serde_json::Value::Array(formats) = &mut answer["formats"] else {
+        panic!("no formats");
+    };
+    edit(formats);
+    serde_json::to_vec(&answer).unwrap()
+}
+
+/// The `-J` answer of `youtube-video.json` without the Formats taller than
+/// `height`.
+fn video_up_to(height: u64) -> Vec<u8> {
+    video_with_formats(|formats| {
+        formats.retain(|format| format["height"].as_u64().is_none_or(|it| it <= height))
+    })
+}
+
+#[test]
+fn without_1080p_the_nearest_lower_video_preset_is_chosen() {
+    for (height, presets, chosen) in [
+        (
+            720,
+            vec![VideoPreset::Best, VideoPreset::P720, VideoPreset::P480],
+            VideoPreset::P720,
+        ),
+        (
+            480,
+            vec![VideoPreset::Best, VideoPreset::P480],
+            VideoPreset::P480,
+        ),
+        // Nothing lower is offered, so the Video's best is all there is.
+        (360, vec![VideoPreset::Best], VideoPreset::Best),
+    ] {
+        let app = App::start();
+        app.ytdlp_prints(&video_up_to(height));
+
+        app.prober
+            .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+        assert_eq!(offered_presets(&app), (presets, chosen), "up to {height}p");
+    }
+}
+
+#[test]
+fn a_video_above_1080p_offers_its_higher_presets_with_1080p_still_chosen() {
+    let app = App::start();
+    // As YouTube offers them: above 1080p only VP9 and AV1.
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        formats.extend([
+            serde_json::json!({"format_id": "271", "ext": "webm", "vcodec": "vp9", "acodec": "none", "width": 2560, "height": 1440}),
+            serde_json::json!({"format_id": "401", "ext": "mp4", "vcodec": "av01.0.12M.08", "acodec": "none", "width": 3840, "height": 2160}),
+        ])
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(
+        offered_presets(&app),
+        (
+            vec![
+                VideoPreset::Best,
+                VideoPreset::P2160,
+                VideoPreset::P1440,
+                VideoPreset::P1080,
+                VideoPreset::P720,
+                VideoPreset::P480
+            ],
+            VideoPreset::P1080
+        )
+    );
+}
+
+#[test]
+fn without_1080p_or_lower_the_nearest_higher_video_preset_is_chosen() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        formats.retain(|format| format["height"].is_null());
+        formats.extend([
+            serde_json::json!({"format_id": "271", "ext": "webm", "vcodec": "vp9", "acodec": "none", "width": 2560, "height": 1440}),
+            serde_json::json!({"format_id": "401", "ext": "mp4", "vcodec": "av01.0.12M.08", "acodec": "none", "width": 3840, "height": 2160}),
+        ])
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(
+        offered_presets(&app),
+        (
+            vec![VideoPreset::Best, VideoPreset::P2160, VideoPreset::P1440],
+            VideoPreset::P1440
+        )
+    );
+}
+
+#[test]
+fn a_widescreen_or_vertical_video_offers_presets_by_the_smaller_side() {
+    // The picture's width and height for each of the fixture's heights.
+    let widescreen = |height: u64| (height * 16 / 9, height * 800 / 1080);
+    let vertical = |height: u64| (height, height * 16 / 9);
+    for (shape, size) in [
+        ("widescreen", &widescreen as &dyn Fn(u64) -> (u64, u64)),
+        ("vertical", &vertical),
+    ] {
+        let app = App::start();
+        app.ytdlp_prints(&video_with_formats(|formats| {
+            for format in formats.iter_mut() {
+                if let Some(height) = format["height"].as_u64() {
+                    let (width, height) = size(height);
+                    format["width"] = width.into();
+                    format["height"] = height.into();
+                }
+            }
+        }));
+
+        app.prober
+            .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+        assert_eq!(offered_presets(&app).1, VideoPreset::P1080, "{shape}");
+    }
+}
+
+#[test]
+fn a_video_from_another_site_offers_presets_from_its_formats_with_sound() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/rutube-video.json"));
+
+    app.prober
+        .probe("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+    assert_eq!(
+        offered_presets(&app),
+        (
+            vec![
+                VideoPreset::Best,
+                VideoPreset::P1080,
+                VideoPreset::P720,
+                VideoPreset::P480
+            ],
+            VideoPreset::P1080
+        )
+    );
 }
 
 #[test]
@@ -188,7 +372,14 @@ fn a_finished_stream_is_an_ordinary_video() {
                 channel: Some("Travel with Peppa".into()),
                 thumbnail: Some("https://i.ytimg.com/vi/pZMrdjuU-CY/maxresdefault.jpg".into()),
                 duration: Some(14339.0),
-            }
+            },
+            video_presets: vec![
+                VideoPreset::Best,
+                VideoPreset::P1080,
+                VideoPreset::P720,
+                VideoPreset::P480,
+            ],
+            default_video_preset: VideoPreset::P1080,
         }
     );
 }

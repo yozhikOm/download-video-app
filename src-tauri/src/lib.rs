@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod download;
 pub mod events;
+pub mod preset;
 pub mod probe;
 pub mod processes;
 pub mod releases;
