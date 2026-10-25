@@ -992,15 +992,19 @@ fn probe_with_real_tools(
     (video, toolbox, downloader)
 }
 
+/// A 12-second public Video with 1080p in H.264 and, above it, only 1440p
+/// in VP9, as YouTube offered it on 2026-10-25.
+const PRESET_URL: &str = "https://www.youtube.com/watch?v=QiucFPLFMVc";
+
 /// Downloads a Video that has 1080p in H.264 and, above it, only 1440p in
 /// VP9 or AV1, with «Лучшее» and with 1080p:
-/// `SMOKE_PRESET_URL=<url> cargo test --lib -- --ignored video_presets_pick`.
-/// See [`probe_with_real_tools`] for `SMOKE_SIGN_IN_BROWSER`.
+/// `cargo test --lib -- --ignored video_presets_pick`. Another such Video
+/// can be named in `SMOKE_PRESET_URL`. See [`probe_with_real_tools`] for
+/// `SMOKE_SIGN_IN_BROWSER`.
 #[test]
 #[ignore = "downloads the real tools and a real Video"]
 fn video_presets_pick_the_resolution_then_h264_and_aac_with_the_real_yt_dlp() {
-    let url = std::env::var("SMOKE_PRESET_URL")
-        .expect("SMOKE_PRESET_URL names a Video with 1080p in H.264 and 1440p in VP9");
+    let url = std::env::var("SMOKE_PRESET_URL").unwrap_or_else(|_| PRESET_URL.into());
     let dir = TempDir::new().unwrap();
     let events = Arc::new(RecordingSink::default());
     let (video, toolbox, downloader) = probe_with_real_tools(dir.path(), &url, events);
