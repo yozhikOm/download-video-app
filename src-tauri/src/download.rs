@@ -524,6 +524,15 @@ impl ProgressLine {
             .or(self.progress.total_bytes_estimate)
     }
 
+    /// 0 to 1, of the fragments of a Format that comes in fragments. Its
+    /// size is only estimated from the fragments received so far, which
+    /// YouTube's HLS makes far too small, so the share of fragments is
+    /// closer.
+    fn share_of_fragments(&self) -> Option<f64> {
+        let (index, count) = (self.progress.fragment_index?, self.progress.fragment_count?);
+        (count > 0.0).then(|| (index / count).clamp(0.0, 1.0))
+    }
+
     /// Remembers the size of the Format being received among the separate
     /// `formats`, so that it counts as received rather than as told.
     fn note(&self, formats: &mut [PlannedFormat]) {
@@ -551,8 +560,10 @@ impl ProgressLine {
             .position(|planned| Some(&planned.format_id) == self.format.as_ref())
         else {
             return DownloadStatus::Downloading {
-                percent: percent_of(progress.downloaded_bytes, total)
-                    .or_else(|| percent_of(progress.fragment_index, progress.fragment_count)),
+                percent: self
+                    .share_of_fragments()
+                    .map(|share| share * 100.0)
+                    .or_else(|| percent_of(progress.downloaded_bytes, total)),
                 speed: progress.speed,
                 eta: own_eta,
             };
@@ -595,8 +606,17 @@ impl ProgressLine {
             .iter()
             .map(PlannedFormat::size)
             .sum::<Option<f64>>()?;
-        let total = total.or(formats[at].size())?;
-        let downloaded = self.progress.downloaded_bytes?;
+        let (downloaded, total) = match self.share_of_fragments() {
+            // Its told size stands in for the estimate.
+            Some(share) => {
+                let size = formats[at].size()?;
+                (share * size, size)
+            }
+            None => (
+                self.progress.downloaded_bytes?,
+                total.or(formats[at].size())?,
+            ),
+        };
         Some((before + downloaded, before + total + after))
     }
 }

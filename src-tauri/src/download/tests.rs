@@ -915,6 +915,86 @@ fn a_format_in_fragments_reports_the_share_of_fragments_received() {
     );
 }
 
+/// A progress line of a Format in fragments, whose size yt-dlp only
+/// estimates from the fragments received so far.
+fn fragment_progress(
+    format: &str,
+    downloaded: u64,
+    estimate: u64,
+    index: u64,
+    count: u64,
+) -> String {
+    progress_line(
+        format,
+        serde_json::json!({
+            "status": "downloading",
+            "downloaded_bytes": downloaded,
+            "total_bytes_estimate": estimate,
+            "fragment_index": index,
+            "fragment_count": count,
+            "speed": 160_967.0,
+            "eta": 1426,
+        }),
+    )
+}
+
+/// The percents a Download showed while downloading, in order.
+fn percents(app: &App) -> Vec<Option<f64>> {
+    app.download_statuses()
+        .into_iter()
+        .filter_map(|status| match status {
+            DownloadStatus::Downloading { percent, .. } => Some(percent),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_format_in_fragments_shows_the_share_of_fragments_rather_than_its_size_estimate() {
+    let app = App::start();
+    // As YouTube's HLS sends them: the first chunk estimates the whole
+    // Format at its own size, and later estimates stay far too small.
+    app.ytdlp_downloads(
+        ID,
+        b"the video",
+        &[
+            fragment_progress("95", 1024, 1024, 0, 1183),
+            fragment_progress("95", 4_059_672, 224_815_968, 21, 1183),
+        ],
+    );
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+
+    assert_eq!(
+        percents(&app),
+        [None, Some(0.0), Some(21.0 / 1183.0 * 100.0)]
+    );
+}
+
+#[test]
+fn a_format_in_fragments_among_separate_formats_counts_by_its_fragments() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[("398", Some(1_000_000)), (AUDIO_ONLY, Some(100_000))]),
+        &[
+            fragment_progress("398", 1024, 1024, 0, 100),
+            fragment_progress("398", 300_000, 310_000, 50, 100),
+        ],
+    );
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+
+    // Half of the video's fragments are half its told size.
+    assert_eq!(
+        percents(&app),
+        [None, Some(0.0), Some(500_000.0 / 1_100_000.0 * 100.0)]
+    );
+}
+
 /// Probes and downloads a short public Video with the real tools:
 /// `cargo test --lib -- --ignored downloads_a_real_video`. YouTube may ask
 /// to prove the user isn't a bot; then name a browser signed in to YouTube
