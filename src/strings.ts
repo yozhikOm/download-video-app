@@ -61,6 +61,21 @@ export const strings = {
     unsupported: "Сайт не поддерживается или по ссылке нет видео.",
     other: "Не удалось получить сведения о видео. Попробуйте ещё раз.",
   },
+  download: {
+    start: "Скачать",
+    downloading: "Скачивание…",
+    percent: (percent: string) => `${percent}%`,
+    speed: (mbPerSecond: string) => `${mbPerSecond} МБ/с`,
+    eta: (time: string) => `осталось ${time}`,
+    processing: "Обработка видео…",
+    done: "Готово",
+    openFile: "Открыть файл",
+    showInFolder: "Показать в папке",
+    failed: "Не удалось скачать видео. Попробуйте ещё раз.",
+    retry: "Повторить",
+    actionFailed:
+      "Не удалось открыть файл — возможно, его переместили или удалили.",
+  },
   signIn: {
     browser: "Вход в YouTube",
     none: "Не использовать",

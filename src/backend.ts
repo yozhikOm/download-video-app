@@ -75,11 +75,35 @@ export type ProbeState =
       signInBrowser: Browser | null;
     };
 
+/** The Download the main screen shows. */
+export type Download = { video: VideoCard } & (
+  | {
+      status: "downloading";
+      /**
+       * 0 to 100, of all the Formats yt-dlp receives; `null` while the size
+       * of one is unknown. Never goes down during a Download.
+       */
+      percent: number | null;
+      /** Bytes per second. */
+      speed: number | null;
+      /** Seconds left. */
+      eta: number | null;
+    }
+  /** ffmpeg merges the received Formats into the MP4. */
+  | { status: "processing" }
+  /** `file` is the saved file's full path. */
+  | { status: "done"; file: string }
+  /** `message` is for the log; the UI shows a generic text. */
+  | { status: "failed"; message: string }
+);
+
 /** What the backend pushes to the UI; the backend owns the state. */
 export type AppEvent =
   | { type: "setup"; data: SetupState }
   | { type: "probe"; data: ProbeState }
-  | { type: "settings"; data: SettingsState };
+  | { type: "settings"; data: SettingsState }
+  /** `null` before the first Download. */
+  | { type: "download"; data: Download | null };
 
 export type AppInfo = {
   name: string;
@@ -107,6 +131,29 @@ export function retrySetup(): Promise<void> {
 /** Asks the backend to Probe a URL; the result arrives as a probe event. */
 export function probe(url: string): Promise<void> {
   return invoke("probe", { url });
+}
+
+/**
+ * Downloads the probed Video; its progress arrives as download events.
+ * Rejects when no Probe found a Video.
+ */
+export function download(): Promise<void> {
+  return invoke("download");
+}
+
+/** Downloads the Failed Download's Video again, resuming from its Partial. */
+export function retryDownload(): Promise<void> {
+  return invoke("retry_download");
+}
+
+/** Opens the Done Download's file in its default program. */
+export function openDownloadedFile(): Promise<void> {
+  return invoke("open_downloaded_file");
+}
+
+/** Shows the Done Download's file selected in its folder. */
+export function showDownloadedFile(): Promise<void> {
+  return invoke("show_downloaded_file");
 }
 
 /** Saves the sign-in browser; the change arrives as a settings event. */

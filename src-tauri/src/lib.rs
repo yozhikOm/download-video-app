@@ -1,4 +1,5 @@
 pub mod clock;
+pub mod download;
 pub mod events;
 pub mod probe;
 pub mod processes;
@@ -13,6 +14,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Builder, Manager, Runtime, State};
 
 use crate::clock::SystemClock;
+use crate::download::Downloader;
 use crate::events::{AppEvent, EventSink};
 use crate::probe::Prober;
 use crate::processes::SystemProcesses;
@@ -67,6 +69,7 @@ fn subscribe(
     toolbox: State<'_, Arc<Toolbox>>,
     prober: State<'_, Arc<Prober>>,
     settings: State<'_, Arc<Settings>>,
+    downloader: State<'_, Arc<Downloader>>,
     subscribers: State<'_, Arc<Subscribers>>,
 ) {
     subscribers.add(events, || {
@@ -74,6 +77,7 @@ fn subscribe(
             AppEvent::Setup(toolbox.state()),
             AppEvent::Probe(prober.state()),
             AppEvent::Settings(settings.state()),
+            AppEvent::Download(downloader.state()),
         ]
     });
 }
@@ -88,6 +92,47 @@ fn retry_setup(toolbox: State<'_, Arc<Toolbox>>) {
 fn probe(url: String, prober: State<'_, Arc<Prober>>) {
     let prober = prober.inner().clone();
     std::thread::spawn(move || prober.probe(url.trim()));
+}
+
+/// Downloads the Video the latest Probe found in the background; the UI
+/// follows along through events. Fails when no Probe found a Video.
+#[tauri::command]
+fn download(
+    prober: State<'_, Arc<Prober>>,
+    downloader: State<'_, Arc<Downloader>>,
+) -> Result<(), String> {
+    let video = prober.video().ok_or("no probed Video")?;
+    let downloader = downloader.inner().clone();
+    std::thread::spawn(move || downloader.download(&video));
+    Ok(())
+}
+
+/// Downloads the Failed Download's Video again in the background; the UI
+/// follows along through events.
+#[tauri::command]
+fn retry_download(downloader: State<'_, Arc<Downloader>>) {
+    let downloader = downloader.inner().clone();
+    std::thread::spawn(move || downloader.retry());
+}
+
+/// Opens the Done Download's file in its default program.
+#[tauri::command]
+fn open_downloaded_file(downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
+    let file = downloader.saved_file().ok_or("no Done Download")?;
+    tauri_plugin_opener::open_path(&file, None::<&str>).map_err(|error| {
+        eprintln!("can't open {}: {error}", file.display());
+        error.to_string()
+    })
+}
+
+/// Shows the Done Download's file selected in its folder.
+#[tauri::command]
+fn show_downloaded_file(downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
+    let file = downloader.saved_file().ok_or("no Done Download")?;
+    tauri_plugin_opener::reveal_item_in_dir(&file).map_err(|error| {
+        eprintln!("can't show {}: {error}", file.display());
+        error.to_string()
+    })
 }
 
 /// Saves the browser whose YouTube sign-in yt-dlp uses, or `None` to not
@@ -117,7 +162,11 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             subscribe,
             retry_setup,
             probe,
-            set_sign_in_browser
+            set_sign_in_browser,
+            download,
+            retry_download,
+            open_downloaded_file,
+            show_downloaded_file
         ])
 }
 
@@ -143,10 +192,24 @@ pub fn run() {
                 settings.clone(),
                 subscribers.clone(),
             ));
+            let save_dir = app
+                .path()
+                .download_dir()
+                .or_else(|_| app.path().home_dir().map(|home| home.join("Downloads")))
+                .unwrap_or_else(|_| data_dir.join("downloads"));
+            let downloader = Arc::new(Downloader::new(
+                toolbox.clone(),
+                settings.clone(),
+                data_dir.join("partials"),
+                save_dir,
+                Arc::new(SystemClock),
+                subscribers.clone(),
+            ));
             app.manage(subscribers);
             app.manage(settings);
             app.manage(toolbox.clone());
             app.manage(prober);
+            app.manage(downloader);
             spawn_prepare(toolbox);
             Ok(())
         })

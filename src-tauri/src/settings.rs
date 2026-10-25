@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::events::{AppEvent, EventSink};
 
@@ -83,6 +84,12 @@ impl Settings {
         self.state.lock().unwrap().sign_in_browser
     }
 
+    /// The sign-in browser to ask about `url` with. Signing in is for
+    /// YouTube; the user's sign-in to other sites stays in the browser.
+    pub fn sign_in_browser_for(&self, url: &str) -> Option<Browser> {
+        self.sign_in_browser().filter(|_| is_youtube(url))
+    }
+
     /// Saves the choice; when it can't be saved, nothing changes.
     pub fn set_sign_in_browser(&self, browser: Option<Browser>) -> io::Result<()> {
         let _saving = self.saving.lock().unwrap();
@@ -107,4 +114,23 @@ impl Settings {
         fs::write(&temp, serde_json::to_vec_pretty(state)?)?;
         fs::rename(&temp, &self.path)
     }
+}
+
+/// The same hosts as `youtubeHosts` in `MainScreen.tsx`.
+const YOUTUBE_HOSTS: [&str; 3] = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
+
+fn is_youtube(url: &str) -> bool {
+    let url = url.trim();
+    // yt-dlp accepts a URL without "https://".
+    let parsed = if url.contains("://") {
+        Url::parse(url)
+    } else {
+        Url::parse(&format!("https://{url}"))
+    };
+    let Some(host) = parsed.as_ref().ok().and_then(Url::host_str) else {
+        return false;
+    };
+    YOUTUBE_HOSTS
+        .iter()
+        .any(|site| host == *site || host.ends_with(&format!(".{site}")))
 }

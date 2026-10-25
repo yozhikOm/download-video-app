@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 use crate::events::{AppEvent, EventSink};
 use crate::settings::{Browser, Settings};
@@ -85,6 +84,8 @@ pub struct VideoCard {
 /// Everything a Probe learned about a Video.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Video {
+    /// The site's id of the Video.
+    pub id: String,
     /// The Video's own page, without the playlist a URL may have named.
     pub url: String,
     pub title: String,
@@ -195,9 +196,7 @@ impl Prober {
     /// until yt-dlp answers.
     pub fn probe(&self, url: &str) {
         let generation = self.start();
-        // Signing in is for YouTube; the user's sign-in to other sites stays
-        // in the browser.
-        let sign_in_browser = self.settings.sign_in_browser().filter(|_| is_youtube(url));
+        let sign_in_browser = self.settings.sign_in_browser_for(url);
         let args: Vec<OsString> = ["-J", "--no-playlist", "--flat-playlist", "--", url]
             .into_iter()
             .map(Into::into)
@@ -261,30 +260,12 @@ impl Prober {
     }
 }
 
-/// The same hosts as `youtubeHosts` in `MainScreen.tsx`.
-const YOUTUBE_HOSTS: [&str; 3] = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
-
-fn is_youtube(url: &str) -> bool {
-    let url = url.trim();
-    // yt-dlp accepts a URL without "https://".
-    let parsed = if url.contains("://") {
-        Url::parse(url)
-    } else {
-        Url::parse(&format!("https://{url}"))
-    };
-    let Some(host) = parsed.as_ref().ok().and_then(Url::host_str) else {
-        return false;
-    };
-    YOUTUBE_HOSTS
-        .iter()
-        .any(|site| host == *site || host.ends_with(&format!(".{site}")))
-}
-
 /// The part of yt-dlp's `-J` answer the app uses.
 #[derive(Deserialize)]
 struct Info {
     #[serde(rename = "_type")]
     kind: Option<String>,
+    id: Option<String>,
     webpage_url: Option<String>,
     title: Option<String>,
     channel: Option<String>,
@@ -335,6 +316,7 @@ impl Info {
                 .collect()
         };
         Video {
+            id: self.id.unwrap_or_default(),
             url: self.webpage_url.unwrap_or_else(|| url.into()),
             title: self.title.unwrap_or_default(),
             channel: self.channel.or(self.uploader),
@@ -411,13 +393,18 @@ fn read_answer(output: &Output, url: &str) -> Result<Video, ProbeError> {
     Ok(info.into_video(url))
 }
 
-/// Tells why yt-dlp failed from its error message.
-fn read_error(stderr: &str) -> ProbeError {
-    let message = stderr
+/// The line of yt-dlp's stderr that tells why it failed.
+pub fn error_line(stderr: &str) -> String {
+    stderr
         .lines()
         .rfind(|line| line.starts_with("ERROR:"))
         .unwrap_or(stderr.trim())
-        .to_string();
+        .to_string()
+}
+
+/// Tells why yt-dlp failed from its error message.
+fn read_error(stderr: &str) -> ProbeError {
+    let message = error_line(stderr);
     let lower = message.to_lowercase();
     let says = |phrases: &[&str]| phrases.iter().any(|phrase| lower.contains(phrase));
     let cookies_unreadable = |reason| ProbeError::CookiesUnreadable { reason };

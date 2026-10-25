@@ -10,33 +10,26 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   appInfo as fetchAppInfo,
+  download as downloadVideo,
   probe as probeUrl,
   setSignInBrowser,
   type AppInfo,
   type Browser,
+  type Download,
   type ProbeError,
   type ProbeState,
   type SettingsState,
   type VideoCard,
 } from "@/backend";
+import { formatDuration } from "@/lib/format";
+import { DownloadCard } from "@/screens/DownloadCard";
 import { strings } from "@/strings";
 
 type Props = {
   probe: ProbeState;
   settings: SettingsState;
+  download: Download | null;
 };
-
-/** `m:ss`, or `h:mm:ss` from an hour on. */
-function formatDuration(seconds: number) {
-  const total = Math.round(seconds);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const [h, m, s] = [
-    Math.floor(total / 3600),
-    Math.floor(total / 60) % 60,
-    total % 60,
-  ];
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
 
 /** The error's text; it names the sign-in browser the Probe ran with. */
 function errorText(error: ProbeError, signInBrowser: Browser | null) {
@@ -68,8 +61,16 @@ function errorText(error: ProbeError, signInBrowser: Browser | null) {
   }
 }
 
-/** The probed Video, for the user to confirm it's the right one. */
-function VideoPreview({ video }: { video: VideoCard }) {
+/** The probed Video, for the user to confirm it's the right one and download it. */
+function VideoPreview({
+  video,
+  canDownload,
+  onDownload,
+}: {
+  video: VideoCard;
+  canDownload: boolean;
+  onDownload: () => void;
+}) {
   return (
     <Card className="pt-0">
       {video.thumbnail && (
@@ -92,7 +93,19 @@ function VideoPreview({ video }: { video: VideoCard }) {
           )}
         </CardDescription>
       </CardHeader>
+      <CardContent>
+        <Button disabled={!canDownload} onClick={onDownload}>
+          {strings.download.start}
+        </Button>
+      </CardContent>
     </Card>
+  );
+}
+
+/** One Download at a time until the Queue arrives. */
+function isRunning(download: Download | null) {
+  return (
+    download?.status === "downloading" || download?.status === "processing"
   );
 }
 
@@ -174,11 +187,20 @@ function SignInBrowserPicker({
   );
 }
 
-export function MainScreen({ probe, settings }: Props) {
+export function MainScreen({ probe, settings, download }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
+  // A new URL in the field puts the previous Video and its Done or Failed
+  // Download out of sight; a running Download stays to show its progress.
+  // «Скачать» hides the Video too, until the field gets its URL back after
+  // an edit or the URL is submitted again.
+  const [previewHidden, setPreviewHidden] = useState(false);
+  const [endedHidden, setEndedHidden] = useState(false);
+  // Each «Скачать» gets a card of its own, so that the previous Download's
+  // failure to open its file doesn't carry over to the next one.
+  const [downloadsStarted, setDownloadsStarted] = useState(0);
 
   useEffect(() => {
     fetchAppInfo()
@@ -186,11 +208,22 @@ export function MainScreen({ probe, settings }: Props) {
       .catch(() => setFailed(true));
   }, []);
 
+  function changeUrl(value: string) {
+    setUrl(value);
+    const isNew = value.trim() !== submittedUrl;
+    // The same URL back in the field brings its Video back.
+    setPreviewHidden(isNew);
+    if (isNew && download && !isRunning(download)) {
+      setEndedHidden(true);
+    }
+  }
+
   function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = url.trim();
     if (trimmed) {
       setSubmittedUrl(trimmed);
+      setPreviewHidden(false);
       void probeUrl(trimmed);
     }
   }
@@ -226,7 +259,7 @@ export function MainScreen({ probe, settings }: Props) {
           inputMode="url"
           spellCheck={false}
           value={url}
-          onChange={(event) => setUrl(event.target.value)}
+          onChange={(event) => changeUrl(event.target.value)}
           placeholder={strings.probe.urlPlaceholder}
           autoFocus
         />
@@ -239,7 +272,20 @@ export function MainScreen({ probe, settings }: Props) {
           </CardContent>
         </Card>
       )}
-      {probe.status === "probed" && <VideoPreview video={probe.video} />}
+      {probe.status === "probed" && !previewHidden && (
+        <VideoPreview
+          video={probe.video}
+          canDownload={!isRunning(download)}
+          onDownload={() => {
+            // The Download's card takes over from the Video's.
+            setPreviewHidden(true);
+            setEndedHidden(false);
+            setDownloadsStarted((count) => count + 1);
+            // With no Video to download, its card comes back.
+            downloadVideo().catch(() => setPreviewHidden(false));
+          }}
+        />
+      )}
       {probe.status === "failed" && (
         <p role="alert" className="text-sm text-destructive">
           {errorText(probe.error, probe.signInBrowser)}
@@ -252,6 +298,9 @@ export function MainScreen({ probe, settings }: Props) {
         isYoutube(url) && (
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
+      {download && (isRunning(download) || !endedHidden) && (
+        <DownloadCard key={downloadsStarted} download={download} />
+      )}
     </div>
   );
 }

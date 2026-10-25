@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 
+use crate::download::Download;
 use crate::probe::ProbeState;
 use crate::settings::SettingsState;
 use crate::toolbox::SetupState;
@@ -13,6 +14,8 @@ pub enum AppEvent {
     Setup(SetupState),
     Probe(ProbeState),
     Settings(SettingsState),
+    /// `None` before the first Download.
+    Download(Option<Download>),
 }
 
 pub trait EventSink: Send + Sync {

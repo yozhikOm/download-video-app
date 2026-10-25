@@ -12,6 +12,7 @@ import App from "./App";
 import type {
   AppEvent,
   Browser,
+  Download,
   ProbeState,
   SettingsState,
   SetupState,
@@ -20,10 +21,15 @@ import type {
 const MB = 1024 * 1024;
 
 /**
- * Mocks the backend; `setup`, `probe` and `settings` push a state to the
- * UI's channel.
+ * Mocks the backend; `setup`, `probe`, `settings` and `download` push a
+ * state to the UI's channel.
  */
-function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
+function mockBackend({
+  appInfoFails = false,
+  savingFails = false,
+  openingFails = false,
+  downloadFails = false,
+} = {}) {
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
   const probedUrls: string[] = [];
@@ -39,6 +45,16 @@ function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
           throw new Error("disk is full");
         }
         signInBrowsers.push((args as { browser: Browser | null }).browser);
+        return null;
+      case "download":
+        if (downloadFails) {
+          throw new Error("no probed Video");
+        }
+        return null;
+      case "open_downloaded_file":
+        if (openingFails) {
+          throw new Error("file is gone");
+        }
         return null;
       case "subscribe":
         channel = (args as { events: Channel<AppEvent> }).events;
@@ -63,6 +79,8 @@ function mockBackend({ appInfoFails = false, savingFails = false } = {}) {
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
     settings: (state: SettingsState) => send({ type: "settings", data: state }),
+    download: (state: Download | null) =>
+      send({ type: "download", data: state }),
   };
 }
 
@@ -598,4 +616,269 @@ test("a failed Probe names the browser it ran with, not the one chosen since", a
   expect(screen.getByRole("alert")).toHaveTextContent(
     "выберите ниже браузер, в котором вы вошли в YouTube",
   );
+});
+
+const zoo = {
+  title: "Me at the zoo",
+  channel: "jawed",
+  thumbnail: null,
+  duration: 19,
+};
+
+test("a probed Video is downloaded on request", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.commands).toContain("download"));
+});
+
+test("a Download shows its percent, speed and time left while downloading", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "downloading",
+    percent: 25.4,
+    speed: 1.5 * MB,
+    eta: 67,
+  });
+
+  const status = screen.getByRole("region", { name: "Me at the zoo" });
+  expect(status).toHaveTextContent("Скачивание…");
+  expect(status).toHaveTextContent("25%");
+  expect(status).toHaveTextContent("1,5 МБ/с");
+  expect(status).toHaveTextContent("осталось 1:07");
+  expect(screen.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuenow",
+    "25",
+  );
+});
+
+test("a Download shows that it is starting before yt-dlp tells its progress", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "downloading",
+    percent: null,
+    speed: null,
+    eta: null,
+  });
+
+  const status = screen.getByRole("region", { name: "Me at the zoo" });
+  expect(status).toHaveTextContent("Скачивание…");
+  expect(status).not.toHaveTextContent("%");
+  expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+});
+
+test("a Download shows processing while ffmpeg merges the video and audio", async () => {
+  const backend = await startReady();
+
+  await backend.download({ video: zoo, status: "processing" });
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Обработка");
+});
+
+test("another Video can't be downloaded while a Download runs", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  await backend.download({ video: zoo, status: "processing" });
+
+  expect(screen.getByRole("button", { name: "Скачать" })).toBeDisabled();
+});
+
+test("a Done Download opens its file or shows it in its folder", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "done",
+    file: "C:\\Users\\me\\Downloads\\Me at the zoo (1).mp4",
+  });
+
+  const status = screen.getByRole("region", { name: "Me at the zoo" });
+  expect(status).toHaveTextContent("Готово");
+  expect(status).toHaveTextContent("Me at the zoo (1).mp4");
+  expect(status).not.toHaveTextContent("Downloads");
+  fireEvent.click(screen.getByRole("button", { name: "Открыть файл" }));
+  fireEvent.click(screen.getByRole("button", { name: "Показать в папке" }));
+  await waitFor(() =>
+    expect(backend.commands).toEqual(
+      expect.arrayContaining(["open_downloaded_file", "show_downloaded_file"]),
+    ),
+  );
+});
+
+test("a Failed Download says so", async () => {
+  const backend = await startReady();
+
+  await backend.download({
+    video: zoo,
+    status: "failed",
+    message: "ERROR: unable to download video data",
+  });
+
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Не удалось скачать видео",
+  );
+});
+
+test("a Failed Download is retried from its card", async () => {
+  const backend = await startReady();
+  await backend.download({
+    video: zoo,
+    status: "failed",
+    message: "ERROR: unable to download video data",
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+
+  await waitFor(() => expect(backend.commands).toContain("retry_download"));
+});
+
+const nextUrl = "https://www.youtube.com/watch?v=-moW9jvvMr4";
+
+test("a new URL hides the previous Video's card", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  enterUrl(nextUrl);
+
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Скачать" }),
+  ).not.toBeInTheDocument();
+});
+
+test.each([
+  [{ status: "done", file: "C:\\Downloads\\Me at the zoo.mp4" }],
+  [{ status: "failed", message: "ERROR: unable to download video data" }],
+] as const)(
+  "a new URL hides a Done or Failed Download (%o)",
+  async (status) => {
+    const backend = await startReady();
+    await backend.download({ video: zoo, ...status });
+
+    enterUrl(nextUrl);
+
+    expect(
+      screen.queryByRole("region", { name: "Me at the zoo" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+test("a running Download stays on screen when a new URL is entered", async () => {
+  const backend = await startReady();
+  await backend.download({ video: zoo, status: "processing" });
+
+  enterUrl(nextUrl);
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Обработка");
+});
+
+test("a Download started after a new URL shows its Done", async () => {
+  const backend = await startReady();
+  await backend.download({
+    video: zoo,
+    status: "done",
+    file: "C:\\Downloads\\Me at the zoo.mp4",
+  });
+  submitUrl(nextUrl);
+  const habit = { ...zoo, title: "A Simple Way to Break a Bad Habit" };
+  await backend.probe({ status: "probed", video: habit });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await backend.download({
+    video: habit,
+    status: "done",
+    file: "C:\\Downloads\\A Simple Way to Break a Bad Habit.mp4",
+  });
+
+  expect(
+    screen.getByRole("region", { name: "A Simple Way to Break a Bad Habit" }),
+  ).toHaveTextContent("Готово");
+});
+
+test("a new Download of the same Video doesn't show the previous one's file error", async () => {
+  const backend = await startReady({ openingFails: true });
+  const done = {
+    video: zoo,
+    status: "done",
+    file: "C:\\Downloads\\Me at the zoo.mp4",
+  } as const;
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await backend.download(done);
+  fireEvent.click(screen.getByRole("button", { name: "Открыть файл" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Не удалось открыть файл",
+  );
+
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await backend.download({
+    video: zoo,
+    status: "downloading",
+    percent: null,
+    speed: null,
+    eta: null,
+  });
+  await backend.download(done);
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Готово");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("pressing «Скачать» hides the Video's card", async () => {
+  const backend = await startReady();
+  await backend.probe({ status: "probed", video: zoo });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.commands).toContain("download"));
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Скачать" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a Video's card comes back when the backend has nothing to download", async () => {
+  const backend = await startReady({ downloadFails: true });
+  await backend.probe({ status: "probed", video: zoo });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.commands).toContain("download"));
+  expect(
+    await screen.findByRole("heading", { name: "Me at the zoo" }),
+  ).toBeInTheDocument();
+});
+
+test("a Video's card hidden by «Скачать» returns when its URL is submitted again", async () => {
+  const backend = await startReady();
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  submitUrl(nextUrl);
+  await backend.probe({ status: "probed", video: zoo });
+
+  expect(
+    screen.getByRole("heading", { name: "Me at the zoo" }),
+  ).toBeInTheDocument();
 });
