@@ -36,7 +36,7 @@ export type VideoCard = {
  * Video has.
  */
 export type VideoPreset =
-  "best" | "2160p" | "1440p" | "1080p" | "720p" | "480p";
+  "best" | "2160p" | "1440p" | "1080p" | "720p" | "480p" | "360p";
 
 /** A browser yt-dlp can read the YouTube sign-in from. */
 export type Browser =

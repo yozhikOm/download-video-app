@@ -114,6 +114,7 @@ fn a_video_url_shows_the_video_card() {
             VideoPreset::P1080,
             VideoPreset::P720,
             VideoPreset::P480,
+            VideoPreset::P360,
         ],
         default_video_preset: VideoPreset::P1080,
     };
@@ -148,7 +149,8 @@ fn a_probed_video_offers_only_the_video_presets_it_has_with_1080p_chosen() {
                 VideoPreset::Best,
                 VideoPreset::P1080,
                 VideoPreset::P720,
-                VideoPreset::P480
+                VideoPreset::P480,
+                VideoPreset::P360
             ],
             VideoPreset::P1080
         )
@@ -179,16 +181,24 @@ fn without_1080p_the_nearest_lower_video_preset_is_chosen() {
     for (height, presets, chosen) in [
         (
             720,
-            vec![VideoPreset::Best, VideoPreset::P720, VideoPreset::P480],
+            vec![
+                VideoPreset::Best,
+                VideoPreset::P720,
+                VideoPreset::P480,
+                VideoPreset::P360,
+            ],
             VideoPreset::P720,
         ),
         (
             480,
-            vec![VideoPreset::Best, VideoPreset::P480],
+            vec![VideoPreset::Best, VideoPreset::P480, VideoPreset::P360],
             VideoPreset::P480,
         ),
-        // Nothing lower is offered, so the Video's best is all there is.
-        (360, vec![VideoPreset::Best], VideoPreset::Best),
+        (
+            360,
+            vec![VideoPreset::Best, VideoPreset::P360],
+            VideoPreset::P360,
+        ),
     ] {
         let app = App::start();
         app.ytdlp_prints(&video_up_to(height));
@@ -223,7 +233,8 @@ fn a_video_above_1080p_offers_its_higher_presets_with_1080p_still_chosen() {
                 VideoPreset::P1440,
                 VideoPreset::P1080,
                 VideoPreset::P720,
-                VideoPreset::P480
+                VideoPreset::P480,
+                VideoPreset::P360
             ],
             VideoPreset::P1080
         )
@@ -295,7 +306,8 @@ fn a_video_from_another_site_offers_presets_from_its_formats_with_sound() {
                 VideoPreset::Best,
                 VideoPreset::P1080,
                 VideoPreset::P720,
-                VideoPreset::P480
+                VideoPreset::P480,
+                VideoPreset::P360
             ],
             VideoPreset::P1080
         )
@@ -378,6 +390,7 @@ fn a_finished_stream_is_an_ordinary_video() {
                 VideoPreset::P1080,
                 VideoPreset::P720,
                 VideoPreset::P480,
+                VideoPreset::P360,
             ],
             default_video_preset: VideoPreset::P1080,
         }

@@ -21,20 +21,20 @@ pub enum VideoPreset {
     P720,
     #[serde(rename = "480p")]
     P480,
+    #[serde(rename = "360p")]
+    P360,
 }
 
 /// The Video presets with a resolution, highest first, and their
 /// resolutions as yt-dlp counts them: the smaller side of the picture.
-const RESOLUTIONS: [(VideoPreset, u32); 5] = [
+const RESOLUTIONS: [(VideoPreset, u32); 6] = [
     (VideoPreset::P2160, 2160),
     (VideoPreset::P1440, 1440),
     (VideoPreset::P1080, 1080),
     (VideoPreset::P720, 720),
     (VideoPreset::P480, 480),
+    (VideoPreset::P360, 360),
 ];
-
-/// Below 480p a Format belongs to no Video preset but the Video's best.
-const LOWEST_RESOLUTION: u32 = 360;
 
 /// The resolution of the Video preset chosen at first, when the Video has
 /// it.
@@ -59,6 +59,7 @@ impl VideoPreset {
             Self::P1080 => "1080p",
             Self::P720 => "720p",
             Self::P480 => "480p",
+            Self::P360 => "360p",
         }
     }
 }
@@ -67,14 +68,14 @@ impl VideoPreset {
 /// always, then each resolution that some video Format falls under, highest
 /// first. A Format falls under the Preset whose resolution it reaches
 /// without reaching the next one up, so that a widescreen 1920×800 counts
-/// as 1080p, and so does a vertical 1080×1920.
+/// as 1080p, and so does a vertical 1080×1920. 360p takes all below it.
 pub fn video_presets(formats: &[Format]) -> Vec<VideoPreset> {
     let resolutions: Vec<u32> = formats.iter().filter_map(Format::resolution).collect();
     let lower_bounds = RESOLUTIONS
         .iter()
         .skip(1)
         .map(|(_, resolution)| *resolution)
-        .chain([LOWEST_RESOLUTION]);
+        .chain([0]);
     let mut presets = vec![VideoPreset::Best];
     presets.extend(
         RESOLUTIONS
