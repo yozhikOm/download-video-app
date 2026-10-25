@@ -136,6 +136,11 @@ impl Downloader {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
         let mut args: Vec<OsString> = vec![
             "--no-playlist".into(),
+            // Separate video and audio: preferring AAC would otherwise pick
+            // a Format with both, which YouTube sends slowly over HLS. A
+            // site with only such Formats falls back to the best of them.
+            "-f".into(),
+            "bv+ba/b".into(),
             "-S".into(),
             format_sort(preset).into(),
             "--merge-output-format".into(),

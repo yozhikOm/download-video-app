@@ -850,6 +850,20 @@ fn a_video_preset_limits_the_resolution_and_prefers_h264_and_aac_at_equal_resolu
 }
 
 #[test]
+fn a_download_takes_separate_video_and_audio_over_a_format_with_both() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+
+    // Preferring AAC would otherwise pick a Format with both, which YouTube
+    // sends slowly over HLS; a site with only such Formats falls back to one.
+    let (_, args) = app.processes.runs().pop().unwrap();
+    assert_eq!(after(&args, "-f"), "bv+ba/b");
+}
+
+#[test]
 fn each_video_preset_of_a_video_keeps_a_partial_of_its_own() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
