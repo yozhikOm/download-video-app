@@ -80,8 +80,8 @@ export type Download = { video: VideoCard } & (
   | {
       status: "downloading";
       /**
-       * 0 to 100, of all the Formats yt-dlp receives when their sizes are
-       * known, else of the one being received; `null` while yt-dlp doesn't tell.
+       * 0 to 100, of all the Formats yt-dlp receives; `null` while the size
+       * of one is unknown. Never goes down during a Download.
        */
       percent: number | null;
       /** Bytes per second. */
@@ -89,7 +89,7 @@ export type Download = { video: VideoCard } & (
       /** Seconds left. */
       eta: number | null;
     }
-  /** ffmpeg merges the received streams into the MP4. */
+  /** ffmpeg merges the received Formats into the MP4. */
   | { status: "processing" }
   /** `file` is the saved file's full path. */
   | { status: "done"; file: string }

@@ -739,7 +739,7 @@ fn a_download_asks_yt_dlp_for_this_one_video_merged_into_an_mp4() {
 }
 
 #[test]
-fn a_stream_in_fragments_reports_the_share_of_fragments_received() {
+fn a_format_in_fragments_reports_the_share_of_fragments_received() {
     let app = App::start();
     let fragments = progress_line(
         "hls-1080",

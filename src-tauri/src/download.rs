@@ -1,5 +1,5 @@
 //! Downloading a probed Video: yt-dlp works in the Partials folder, and the
-//! finished file is moved to the save folder under the Video's title.
+//! final file is moved to the save folder under the Video's title.
 
 #[cfg(test)]
 mod tests;
@@ -150,7 +150,7 @@ impl Downloader {
             // Format.
             "--print".into(),
             r#"before_dl:{"formats": %(requested_formats.:.{format_id,filesize,filesize_approx}|null)j}"#.into(),
-            // Printed right before ffmpeg merges the streams.
+            // Printed right before ffmpeg merges the video and audio.
             "--print".into(),
             "post_process:[processing]".into(),
             // A JSON string, so that a path with non-ASCII letters survives
@@ -160,7 +160,7 @@ impl Downloader {
         ];
         args.extend(["--".into(), video.url.clone().into()]);
         let mut formats = Vec::new();
-        let mut finished = None;
+        let mut final_file = None;
         let result = self
             .toolbox
             .run_streaming(
@@ -174,7 +174,7 @@ impl Downloader {
                         self.report_progress(line.status(&formats));
                     }
                     Line::Processing => self.set_status(DownloadStatus::Processing),
-                    Line::Finished(path) => finished = Some(path),
+                    Line::FinalFile(path) => final_file = Some(path),
                     Line::Other => {}
                 },
             );
@@ -189,7 +189,7 @@ impl Downloader {
             Ok(output) if !output.status.success() => DownloadStatus::Failed {
                 message: error_line(&String::from_utf8_lossy(&output.stderr)),
             },
-            Ok(_) => match finished {
+            Ok(_) => match final_file {
                 Some(partial) => match self.save(&partial, &file_name(video)) {
                     Ok(file) => DownloadStatus::Done { file },
                     Err(error) => DownloadStatus::Failed {
@@ -234,7 +234,7 @@ impl Downloader {
         true
     }
 
-    /// Moves the finished file out of the Partials folder under the first
+    /// Moves the final file out of the Partials folder under the first
     /// free name: the title, then the title with " (1)", " (2)"…
     fn save(&self, partial: &Path, name: &str) -> io::Result<PathBuf> {
         fs::create_dir_all(&self.save_dir)?;
@@ -427,8 +427,8 @@ enum Line {
     Formats(Vec<PlannedFormat>),
     Progress(ProgressLine),
     Processing,
-    /// The finished file in the Partials folder.
-    Finished(PathBuf),
+    /// The final file in the Partials folder.
+    FinalFile(PathBuf),
     Other,
 }
 
@@ -489,7 +489,7 @@ fn read_line(line: &str) -> Line {
         };
     }
     match serde_json::from_str::<PathBuf>(line) {
-        Ok(path) => Line::Finished(path),
+        Ok(path) => Line::FinalFile(path),
         Err(_) => Line::Other,
     }
 }

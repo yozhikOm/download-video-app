@@ -667,7 +667,7 @@ test("a Download shows that it is starting before yt-dlp tells its progress", as
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
 });
 
-test("a Download shows processing while ffmpeg merges the streams", async () => {
+test("a Download shows processing while ffmpeg merges the video and audio", async () => {
   const backend = await startReady();
 
   await backend.download({ video: zoo, status: "processing" });
@@ -754,16 +754,19 @@ test("a new URL hides the previous Video's card", async () => {
 test.each([
   [{ status: "done", file: "C:\\Downloads\\Me at the zoo.mp4" }],
   [{ status: "failed", message: "ERROR: unable to download video data" }],
-] as const)("a new URL hides a finished Download (%o)", async (status) => {
-  const backend = await startReady();
-  await backend.download({ video: zoo, ...status });
+] as const)(
+  "a new URL hides a Done or Failed Download (%o)",
+  async (status) => {
+    const backend = await startReady();
+    await backend.download({ video: zoo, ...status });
 
-  enterUrl(nextUrl);
+    enterUrl(nextUrl);
 
-  expect(
-    screen.queryByRole("region", { name: "Me at the zoo" }),
-  ).not.toBeInTheDocument();
-});
+    expect(
+      screen.queryByRole("region", { name: "Me at the zoo" }),
+    ).not.toBeInTheDocument();
+  },
+);
 
 test("a running Download stays on screen when a new URL is entered", async () => {
   const backend = await startReady();

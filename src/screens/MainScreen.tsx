@@ -192,11 +192,11 @@ export function MainScreen({ probe, settings, download }: Props) {
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
-  // A new URL in the field puts the previous Video and its finished
+  // A new URL in the field puts the previous Video and its Done or Failed
   // Download out of sight; a running Download stays to show its progress.
   // «Скачать» hides the Video too, until its URL is submitted again.
   const [previewHidden, setPreviewHidden] = useState(false);
-  const [finishedHidden, setFinishedHidden] = useState(false);
+  const [endedHidden, setEndedHidden] = useState(false);
   // Each «Скачать» gets a card of its own, so that the previous Download's
   // failure to open its file doesn't carry over to the next one.
   const [downloadsStarted, setDownloadsStarted] = useState(0);
@@ -213,7 +213,7 @@ export function MainScreen({ probe, settings, download }: Props) {
     // The same URL back in the field brings its Video back.
     setPreviewHidden(isNew);
     if (isNew && download && !isRunning(download)) {
-      setFinishedHidden(true);
+      setEndedHidden(true);
     }
   }
 
@@ -278,7 +278,7 @@ export function MainScreen({ probe, settings, download }: Props) {
           onDownload={() => {
             // The Download's card takes over from the Video's.
             setPreviewHidden(true);
-            setFinishedHidden(false);
+            setEndedHidden(false);
             setDownloadsStarted((count) => count + 1);
             void downloadVideo();
           }}
@@ -296,7 +296,7 @@ export function MainScreen({ probe, settings, download }: Props) {
         isYoutube(url) && (
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
-      {download && (isRunning(download) || !finishedHidden) && (
+      {download && (isRunning(download) || !endedHidden) && (
         <DownloadCard key={downloadsStarted} download={download} />
       )}
     </div>
