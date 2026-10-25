@@ -33,7 +33,7 @@ export type VideoCard = {
 
 /**
  * A Video preset: the quality of the saved MP4; `best` is the highest the
- * Video has.
+ * Video has, offered only above 2160p or when the Video has no other.
  */
 export type VideoPreset =
   "best" | "2160p" | "1440p" | "1080p" | "720p" | "480p" | "360p";
@@ -77,7 +77,10 @@ export type ProbeState =
   | {
       status: "probed";
       video: VideoCard;
-      /** The Video presets the Video has, `best` first, then highest first. */
+      /**
+       * The Video presets the Video has, highest first, after `best` when it
+       * saves more than the highest of them or there is no other.
+       */
       videoPresets: VideoPreset[];
       /** The Video preset chosen at first. */
       defaultVideoPreset: VideoPreset;

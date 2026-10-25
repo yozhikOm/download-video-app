@@ -1091,7 +1091,7 @@ fn probe_with_real_tools(
 const PRESET_URL: &str = "https://www.youtube.com/watch?v=QiucFPLFMVc";
 
 /// Downloads a Video that has 1080p in H.264 and, above it, only 1440p in
-/// VP9 or AV1, with «Лучшее» and with 1080p:
+/// VP9 or AV1, with 1440p and with 1080p:
 /// `cargo test --lib -- --ignored video_presets_pick`. Another such Video
 /// can be named in `SMOKE_PRESET_URL`. See [`probe_with_real_tools`] for
 /// `SMOKE_SIGN_IN_BROWSER`.
@@ -1103,13 +1103,13 @@ fn video_presets_pick_the_resolution_then_h264_and_aac_with_the_real_yt_dlp() {
     let events = Arc::new(RecordingSink::default());
     let (video, toolbox, downloader) = probe_with_real_tools(dir.path(), &url, events);
     assert_eq!(
-        video.video_presets()[..3],
-        [VideoPreset::Best, VideoPreset::P1440, VideoPreset::P1080],
+        video.video_presets()[..2],
+        [VideoPreset::P1440, VideoPreset::P1080],
         "the Video's highest Preset is 1440p"
     );
 
     for (preset, resolution, video_codec) in [
-        (VideoPreset::Best, 1440, None),
+        (VideoPreset::P1440, 1440, None),
         (VideoPreset::P1080, 1080, Some("h264")),
     ] {
         downloader.download(&video, preset);

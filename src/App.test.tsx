@@ -26,7 +26,7 @@ const MB = 1024 * 1024;
 /** A Probe that found `video`, with the Video presets of a 1080p Video. */
 function probed(
   video: VideoCard,
-  videoPresets: VideoPreset[] = ["best", "1080p", "720p", "480p"],
+  videoPresets: VideoPreset[] = ["1080p", "720p", "480p", "360p"],
   defaultVideoPreset: VideoPreset = "1080p",
 ): ProbeState {
   return { status: "probed", video, videoPresets, defaultVideoPreset };
@@ -647,7 +647,7 @@ test("a probed Video is downloaded on request with the chosen Video preset", asy
 test("a probed Video offers only its Video presets on the Video tab", async () => {
   const backend = await startReady();
 
-  await backend.probe(probed(zoo, ["best", "720p", "480p"], "720p"));
+  await backend.probe(probed(zoo, ["720p", "480p", "360p"], "720p"));
 
   expect(screen.getByRole("tab", { name: "Видео" })).toHaveAttribute(
     "aria-selected",
@@ -656,7 +656,7 @@ test("a probed Video offers only its Video presets on the Video tab", async () =
   const presets = screen.getByRole("radiogroup", { name: "Качество" });
   const radios = within(presets).getAllByRole("radio");
   expect(radios).toHaveLength(3);
-  ["Лучшее", "720p", "480p"].forEach((name, at) =>
+  ["720p", "480p", "360p"].forEach((name, at) =>
     expect(radios[at]).toHaveAccessibleName(name),
   );
   expect(screen.getByRole("radio", { name: "720p" })).toBeChecked();
@@ -664,7 +664,8 @@ test("a probed Video offers only its Video presets on the Video tab", async () =
 
 test("another Video preset can be chosen before downloading", async () => {
   const backend = await startReady();
-  await backend.probe(probed(zoo));
+  // «Лучшее» is offered above 2160p.
+  await backend.probe(probed(zoo, ["best", "2160p", "1080p", "720p"]));
 
   fireEvent.click(screen.getByRole("radio", { name: "Лучшее" }));
   expect(screen.getByRole("radio", { name: "Лучшее" })).toBeChecked();

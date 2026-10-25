@@ -8,7 +8,8 @@ use crate::probe::Format;
 /// A Video preset: the quality of the saved MP4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VideoPreset {
-    /// The highest resolution the Video has.
+    /// The highest resolution the Video has, offered only above 2160p or
+    /// when the Video has no other Preset.
     #[serde(rename = "best")]
     Best,
     #[serde(rename = "2160p")]
@@ -64,11 +65,12 @@ impl VideoPreset {
     }
 }
 
-/// The Video presets a Video with these Formats has: the Video's best
-/// always, then each resolution that some video Format falls under, highest
-/// first. A Format falls under the Preset whose resolution it reaches
-/// without reaching the next one up, so that a widescreen 1920×800 counts
-/// as 1080p, and so does a vertical 1080×1920. 360p takes all below it.
+/// The Video presets a Video with these Formats has: each resolution that
+/// some video Format falls under, highest first, after the Video's best
+/// when it saves more than the highest of them or there is none. A Format
+/// falls under the Preset whose resolution it reaches without reaching the
+/// next one up, so that a widescreen 1920×800 counts as 1080p, and so does
+/// a vertical 1080×1920. 360p takes all below it.
 pub fn video_presets(formats: &[Format]) -> Vec<VideoPreset> {
     let resolutions: Vec<u32> = formats.iter().filter_map(Format::resolution).collect();
     let lower_bounds = RESOLUTIONS
@@ -76,19 +78,22 @@ pub fn video_presets(formats: &[Format]) -> Vec<VideoPreset> {
         .skip(1)
         .map(|(_, resolution)| *resolution)
         .chain([0]);
-    let mut presets = vec![VideoPreset::Best];
-    presets.extend(
-        RESOLUTIONS
-            .into_iter()
-            .zip(lower_bounds)
-            .filter(|((_, highest), below)| {
-                resolutions
-                    .iter()
-                    .any(|resolution| below < resolution && resolution <= highest)
-            })
-            .map(|((preset, _), _)| preset),
-    );
-    presets
+    let with_resolution: Vec<VideoPreset> = RESOLUTIONS
+        .into_iter()
+        .zip(lower_bounds)
+        .filter(|((_, highest), below)| {
+            resolutions
+                .iter()
+                .any(|resolution| below < resolution && resolution <= highest)
+        })
+        .map(|((preset, _), _)| preset)
+        .collect();
+    // Otherwise the highest of them saves the same as the Video's best.
+    let (_, highest) = RESOLUTIONS[0];
+    let best_saves_more =
+        with_resolution.is_empty() || resolutions.iter().any(|resolution| *resolution > highest);
+    let best = best_saves_more.then_some(VideoPreset::Best);
+    best.into_iter().chain(with_resolution).collect()
 }
 
 /// The Video preset chosen at first among `presets`, as [`video_presets`]

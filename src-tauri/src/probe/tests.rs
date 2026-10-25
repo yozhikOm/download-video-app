@@ -110,7 +110,6 @@ fn a_video_url_shows_the_video_card() {
     let probed = ProbeState::Probed {
         video: card,
         video_presets: vec![
-            VideoPreset::Best,
             VideoPreset::P1080,
             VideoPreset::P720,
             VideoPreset::P480,
@@ -146,7 +145,6 @@ fn a_probed_video_offers_only_the_video_presets_it_has_with_1080p_chosen() {
         offered_presets(&app),
         (
             vec![
-                VideoPreset::Best,
                 VideoPreset::P1080,
                 VideoPreset::P720,
                 VideoPreset::P480,
@@ -181,24 +179,15 @@ fn without_1080p_the_nearest_lower_video_preset_is_chosen() {
     for (height, presets, chosen) in [
         (
             720,
-            vec![
-                VideoPreset::Best,
-                VideoPreset::P720,
-                VideoPreset::P480,
-                VideoPreset::P360,
-            ],
+            vec![VideoPreset::P720, VideoPreset::P480, VideoPreset::P360],
             VideoPreset::P720,
         ),
         (
             480,
-            vec![VideoPreset::Best, VideoPreset::P480, VideoPreset::P360],
+            vec![VideoPreset::P480, VideoPreset::P360],
             VideoPreset::P480,
         ),
-        (
-            360,
-            vec![VideoPreset::Best, VideoPreset::P360],
-            VideoPreset::P360,
-        ),
+        (360, vec![VideoPreset::P360], VideoPreset::P360),
     ] {
         let app = App::start();
         app.ytdlp_prints(&video_up_to(height));
@@ -228,7 +217,6 @@ fn a_video_above_1080p_offers_its_higher_presets_with_1080p_still_chosen() {
         offered_presets(&app),
         (
             vec![
-                VideoPreset::Best,
                 VideoPreset::P2160,
                 VideoPreset::P1440,
                 VideoPreset::P1080,
@@ -238,6 +226,48 @@ fn a_video_above_1080p_offers_its_higher_presets_with_1080p_still_chosen() {
             ],
             VideoPreset::P1080
         )
+    );
+}
+
+#[test]
+fn a_video_above_2160p_offers_its_best_too() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        formats.push(serde_json::json!({"format_id": "571", "ext": "mp4", "vcodec": "av01.0.16M.08", "acodec": "none", "width": 7680, "height": 4320}))
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(
+        offered_presets(&app),
+        (
+            vec![
+                VideoPreset::Best,
+                VideoPreset::P1080,
+                VideoPreset::P720,
+                VideoPreset::P480,
+                VideoPreset::P360
+            ],
+            VideoPreset::P1080
+        )
+    );
+}
+
+#[test]
+fn a_video_of_unknown_size_offers_only_its_best() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        formats.retain(|format| format["height"].is_null());
+        formats.push(serde_json::json!({"format_id": "18", "ext": "mp4", "vcodec": "avc1.42001E", "acodec": "mp4a.40.2"}))
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(
+        offered_presets(&app),
+        (vec![VideoPreset::Best], VideoPreset::Best)
     );
 }
 
@@ -258,7 +288,7 @@ fn without_1080p_or_lower_the_nearest_higher_video_preset_is_chosen() {
     assert_eq!(
         offered_presets(&app),
         (
-            vec![VideoPreset::Best, VideoPreset::P2160, VideoPreset::P1440],
+            vec![VideoPreset::P2160, VideoPreset::P1440],
             VideoPreset::P1440
         )
     );
@@ -303,7 +333,6 @@ fn a_video_from_another_site_offers_presets_from_its_formats_with_sound() {
         offered_presets(&app),
         (
             vec![
-                VideoPreset::Best,
                 VideoPreset::P1080,
                 VideoPreset::P720,
                 VideoPreset::P480,
@@ -386,7 +415,6 @@ fn a_finished_stream_is_an_ordinary_video() {
                 duration: Some(14339.0),
             },
             video_presets: vec![
-                VideoPreset::Best,
                 VideoPreset::P1080,
                 VideoPreset::P720,
                 VideoPreset::P480,
