@@ -646,7 +646,7 @@ test("a Download shows its percent, speed and time left while downloading", asyn
   });
 
   const status = screen.getByRole("region", { name: "Me at the zoo" });
-  expect(status).toHaveTextContent("Скачивание...");
+  expect(status).toHaveTextContent("Скачивание…");
   expect(status).toHaveTextContent("25%");
   expect(status).toHaveTextContent("1,5 МБ/с");
   expect(status).toHaveTextContent("осталось 1:07");
@@ -668,7 +668,7 @@ test("a Download shows that it is starting before yt-dlp tells its progress", as
   });
 
   const status = screen.getByRole("region", { name: "Me at the zoo" });
-  expect(status).toHaveTextContent("Скачивание...");
+  expect(status).toHaveTextContent("Скачивание…");
   expect(status).not.toHaveTextContent("%");
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
 });
