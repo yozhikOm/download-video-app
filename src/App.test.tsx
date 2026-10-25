@@ -28,6 +28,7 @@ function mockBackend({
   appInfoFails = false,
   savingFails = false,
   openingFails = false,
+  downloadFails = false,
 } = {}) {
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
@@ -44,6 +45,11 @@ function mockBackend({
           throw new Error("disk is full");
         }
         signInBrowsers.push((args as { browser: Browser | null }).browser);
+        return null;
+      case "download":
+        if (downloadFails) {
+          throw new Error("no probed Video");
+        }
         return null;
       case "open_downloaded_file":
         if (openingFails) {
@@ -849,6 +855,18 @@ test("pressing «Скачать» hides the Video's card", async () => {
   expect(
     screen.queryByRole("button", { name: "Скачать" }),
   ).not.toBeInTheDocument();
+});
+
+test("a Video's card comes back when the backend has nothing to download", async () => {
+  const backend = await startReady({ downloadFails: true });
+  await backend.probe({ status: "probed", video: zoo });
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.commands).toContain("download"));
+  expect(
+    await screen.findByRole("heading", { name: "Me at the zoo" }),
+  ).toBeInTheDocument();
 });
 
 test("a Video's card hidden by «Скачать» returns when its URL is submitted again", async () => {

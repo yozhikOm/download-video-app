@@ -95,14 +95,16 @@ fn probe(url: String, prober: State<'_, Arc<Prober>>) {
 }
 
 /// Downloads the Video the latest Probe found in the background; the UI
-/// follows along through events.
+/// follows along through events. Fails when no Probe found a Video.
 #[tauri::command]
-fn download(prober: State<'_, Arc<Prober>>, downloader: State<'_, Arc<Downloader>>) {
-    let Some(video) = prober.video() else {
-        return;
-    };
+fn download(
+    prober: State<'_, Arc<Prober>>,
+    downloader: State<'_, Arc<Downloader>>,
+) -> Result<(), String> {
+    let video = prober.video().ok_or("no probed Video")?;
     let downloader = downloader.inner().clone();
     std::thread::spawn(move || downloader.download(&video));
+    Ok(())
 }
 
 /// Downloads the Failed Download's Video again in the background; the UI

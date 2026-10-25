@@ -281,7 +281,8 @@ export function MainScreen({ probe, settings, download }: Props) {
             setPreviewHidden(true);
             setEndedHidden(false);
             setDownloadsStarted((count) => count + 1);
-            void downloadVideo();
+            // With no Video to download, its card comes back.
+            downloadVideo().catch(() => setPreviewHidden(false));
           }}
         />
       )}

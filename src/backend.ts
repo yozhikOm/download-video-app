@@ -133,7 +133,10 @@ export function probe(url: string): Promise<void> {
   return invoke("probe", { url });
 }
 
-/** Downloads the probed Video; its progress arrives as download events. */
+/**
+ * Downloads the probed Video; its progress arrives as download events.
+ * Rejects when no Probe found a Video.
+ */
 export function download(): Promise<void> {
   return invoke("download");
 }
