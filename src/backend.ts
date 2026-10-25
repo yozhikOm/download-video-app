@@ -31,6 +31,13 @@ export type VideoCard = {
   duration: number | null;
 };
 
+/**
+ * A Video preset: the quality of the saved MP4; `best` is the highest the
+ * Video has.
+ */
+export type VideoPreset =
+  "best" | "2160p" | "1440p" | "1080p" | "720p" | "480p";
+
 /** A browser yt-dlp can read the YouTube sign-in from. */
 export type Browser =
   | "brave"
@@ -67,7 +74,14 @@ export type ProbeError =
 export type ProbeState =
   | { status: "idle" }
   | { status: "probing" }
-  | { status: "probed"; video: VideoCard }
+  | {
+      status: "probed";
+      video: VideoCard;
+      /** The Video presets the Video has, `best` first, then highest first. */
+      videoPresets: VideoPreset[];
+      /** The Video preset chosen at first. */
+      defaultVideoPreset: VideoPreset;
+    }
   | {
       status: "failed";
       error: ProbeError;
@@ -134,11 +148,12 @@ export function probe(url: string): Promise<void> {
 }
 
 /**
- * Downloads the probed Video; its progress arrives as download events.
- * Rejects when no Probe found a Video.
+ * Downloads the probed Video with a Video preset; its progress arrives as
+ * download events. Rejects when no Probe found a Video or the Video lacks
+ * the Preset.
  */
-export function download(): Promise<void> {
-  return invoke("download");
+export function download(preset: VideoPreset): Promise<void> {
+  return invoke("download", { preset });
 }
 
 /** Downloads the Failed Download's Video again, resuming from its Partial. */

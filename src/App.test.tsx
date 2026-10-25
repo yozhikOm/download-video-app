@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { expect, test } from "vitest";
 import App from "./App";
@@ -16,9 +17,20 @@ import type {
   ProbeState,
   SettingsState,
   SetupState,
+  VideoCard,
+  VideoPreset,
 } from "./backend";
 
 const MB = 1024 * 1024;
+
+/** A Probe that found `video`, with the Video presets of a 1080p Video. */
+function probed(
+  video: VideoCard,
+  videoPresets: VideoPreset[] = ["best", "1080p", "720p", "480p"],
+  defaultVideoPreset: VideoPreset = "1080p",
+): ProbeState {
+  return { status: "probed", video, videoPresets, defaultVideoPreset };
+}
 
 /**
  * Mocks the backend; `setup`, `probe`, `settings` and `download` push a
@@ -34,6 +46,7 @@ function mockBackend({
   const commands: string[] = [];
   const probedUrls: string[] = [];
   const signInBrowsers: (Browser | null)[] = [];
+  const downloadedPresets: VideoPreset[] = [];
   mockIPC((cmd, args) => {
     commands.push(cmd);
     switch (cmd) {
@@ -50,6 +63,7 @@ function mockBackend({
         if (downloadFails) {
           throw new Error("no probed Video");
         }
+        downloadedPresets.push((args as { preset: VideoPreset }).preset);
         return null;
       case "open_downloaded_file":
         if (openingFails) {
@@ -76,6 +90,7 @@ function mockBackend({
     commands,
     probedUrls,
     signInBrowsers,
+    downloadedPresets,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
     settings: (state: SettingsState) => send({ type: "settings", data: state }),
@@ -253,15 +268,14 @@ test("an empty URL isn't probed", async () => {
 test("a probed Video shows its thumbnail, title, channel and duration", async () => {
   const backend = await startReady();
 
-  await backend.probe({
-    status: "probed",
-    video: {
+  await backend.probe(
+    probed({
       title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
       channel: "TED",
       thumbnail: "https://i.ytimg.com/vi/-moW9jvvMr4/maxresdefault.jpg",
       duration: 565,
-    },
-  });
+    }),
+  );
 
   expect(
     screen.getByRole("heading", {
@@ -279,15 +293,14 @@ test("a probed Video shows its thumbnail, title, channel and duration", async ()
 test("a duration over an hour shows hours", async () => {
   const backend = await startReady();
 
-  await backend.probe({
-    status: "probed",
-    video: {
+  await backend.probe(
+    probed({
       title: "Around the World with Peppa Pig",
       channel: null,
       thumbnail: null,
       duration: 14339,
-    },
-  });
+    }),
+  );
 
   expect(screen.getByText("3:58:59")).toBeInTheDocument();
   expect(screen.queryByRole("img")).not.toBeInTheDocument();
@@ -410,15 +423,12 @@ function submitUrl(url: string) {
   fireEvent.submit(screen.getByRole("textbox", { name: "Ссылка на видео" }));
 }
 
-const probedVideo = {
-  status: "probed",
-  video: {
-    title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
-    channel: "TED",
-    thumbnail: null,
-    duration: 565,
-  },
-} as const;
+const probedVideo = probed({
+  title: "A Simple Way to Break a Bad Habit | Judson Brewer | TED",
+  channel: "TED",
+  thumbnail: null,
+  duration: 565,
+});
 
 test("submitting a URL hides signing in, even with a chosen browser", async () => {
   const backend = await startReady();
@@ -625,13 +635,53 @@ const zoo = {
   duration: 19,
 };
 
-test("a probed Video is downloaded on request", async () => {
+test("a probed Video is downloaded on request with the chosen Video preset", async () => {
   const backend = await startReady();
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
 
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
 
-  await waitFor(() => expect(backend.commands).toContain("download"));
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["1080p"]));
+});
+
+test("a probed Video offers only its Video presets on the Video tab", async () => {
+  const backend = await startReady();
+
+  await backend.probe(probed(zoo, ["best", "720p", "480p"], "720p"));
+
+  expect(screen.getByRole("tab", { name: "Видео" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const presets = screen.getByRole("radiogroup", { name: "Качество" });
+  const radios = within(presets).getAllByRole("radio");
+  expect(radios).toHaveLength(3);
+  ["Лучшее", "720p", "480p"].forEach((name, at) =>
+    expect(radios[at]).toHaveAccessibleName(name),
+  );
+  expect(screen.getByRole("radio", { name: "720p" })).toBeChecked();
+});
+
+test("another Video preset can be chosen before downloading", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+
+  fireEvent.click(screen.getByRole("radio", { name: "Лучшее" }));
+  expect(screen.getByRole("radio", { name: "Лучшее" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["best"]));
+});
+
+test("a new Probe chooses its own default Video preset again", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  fireEvent.click(screen.getByRole("radio", { name: "720p" }));
+
+  await backend.probe({ status: "probing" });
+  await backend.probe(probed(zoo));
+
+  expect(screen.getByRole("radio", { name: "1080p" })).toBeChecked();
 });
 
 test("a Download shows its percent, speed and time left while downloading", async () => {
@@ -685,7 +735,7 @@ test("a Download shows processing while ffmpeg merges the video and audio", asyn
 
 test("another Video can't be downloaded while a Download runs", async () => {
   const backend = await startReady();
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
 
   await backend.download({ video: zoo, status: "processing" });
 
@@ -745,7 +795,7 @@ const nextUrl = "https://www.youtube.com/watch?v=-moW9jvvMr4";
 
 test("a new URL hides the previous Video's card", async () => {
   const backend = await startReady();
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
 
   enterUrl(nextUrl);
 
@@ -794,7 +844,7 @@ test("a Download started after a new URL shows its Done", async () => {
   });
   submitUrl(nextUrl);
   const habit = { ...zoo, title: "A Simple Way to Break a Bad Habit" };
-  await backend.probe({ status: "probed", video: habit });
+  await backend.probe(probed(habit));
 
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
   await backend.download({
@@ -816,7 +866,7 @@ test("a new Download of the same Video doesn't show the previous one's file erro
     file: "C:\\Downloads\\Me at the zoo.mp4",
   } as const;
   submitUrl(nextUrl);
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
   await backend.download(done);
   fireEvent.click(screen.getByRole("button", { name: "Открыть файл" }));
@@ -825,7 +875,7 @@ test("a new Download of the same Video doesn't show the previous one's file erro
   );
 
   submitUrl(nextUrl);
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
   await backend.download({
     video: zoo,
@@ -844,7 +894,7 @@ test("a new Download of the same Video doesn't show the previous one's file erro
 
 test("pressing «Скачать» hides the Video's card", async () => {
   const backend = await startReady();
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
 
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
 
@@ -859,7 +909,7 @@ test("pressing «Скачать» hides the Video's card", async () => {
 
 test("a Video's card comes back when the backend has nothing to download", async () => {
   const backend = await startReady({ downloadFails: true });
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
 
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
 
@@ -869,14 +919,34 @@ test("a Video's card comes back when the backend has nothing to download", async
   ).toBeInTheDocument();
 });
 
+test("a Video's card that comes back keeps the chosen Video preset", async () => {
+  const backend = await startReady({ downloadFails: true });
+  await backend.probe(probed(zoo));
+  fireEvent.click(screen.getByRole("radio", { name: "720p" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  expect(await screen.findByRole("radio", { name: "720p" })).toBeChecked();
+});
+
+test("a Video probed again without probing in between gets its default Video preset", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  fireEvent.click(screen.getByRole("radio", { name: "720p" }));
+
+  await backend.probe(probed(zoo));
+
+  expect(screen.getByRole("radio", { name: "1080p" })).toBeChecked();
+});
+
 test("a Video's card hidden by «Скачать» returns when its URL is submitted again", async () => {
   const backend = await startReady();
   submitUrl(nextUrl);
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
 
   submitUrl(nextUrl);
-  await backend.probe({ status: "probed", video: zoo });
+  await backend.probe(probed(zoo));
 
   expect(
     screen.getByRole("heading", { name: "Me at the zoo" }),

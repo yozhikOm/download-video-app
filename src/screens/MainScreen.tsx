@@ -8,6 +8,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   appInfo as fetchAppInfo,
   download as downloadVideo,
@@ -20,6 +22,7 @@ import {
   type ProbeState,
   type SettingsState,
   type VideoCard,
+  type VideoPreset,
 } from "@/backend";
 import { formatDuration } from "@/lib/format";
 import { DownloadCard } from "@/screens/DownloadCard";
@@ -61,13 +64,46 @@ function errorText(error: ProbeError, signInBrowser: Browser | null) {
   }
 }
 
-/** The probed Video, for the user to confirm it's the right one and download it. */
+/** The Video presets the Video has, to choose the quality from. */
+function VideoPresetPicker({
+  presets,
+  chosen,
+  onChoose,
+}: {
+  presets: VideoPreset[];
+  chosen: VideoPreset;
+  onChoose: (preset: VideoPreset) => void;
+}) {
+  return (
+    <RadioGroup
+      aria-label={strings.presets.quality}
+      value={chosen}
+      onValueChange={(value) => onChoose(value as VideoPreset)}
+      className="flex flex-wrap gap-x-4"
+    >
+      {presets.map((preset) => (
+        <label key={preset} className="flex items-center gap-2">
+          <RadioGroupItem value={preset} />
+          {strings.presets.video[preset]}
+        </label>
+      ))}
+    </RadioGroup>
+  );
+}
+
+/** The probed Video, for the user to confirm it's the right one, choose a Preset and download it. */
 function VideoPreview({
   video,
+  videoPresets,
+  videoPreset,
+  onChooseVideoPreset,
   canDownload,
   onDownload,
 }: {
   video: VideoCard;
+  videoPresets: VideoPreset[];
+  videoPreset: VideoPreset;
+  onChooseVideoPreset: (preset: VideoPreset) => void;
   canDownload: boolean;
   onDownload: () => void;
 }) {
@@ -93,10 +129,24 @@ function VideoPreview({
           )}
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <Button disabled={!canDownload} onClick={onDownload}>
-          {strings.download.start}
-        </Button>
+      <CardContent className="flex flex-col gap-4">
+        <Tabs defaultValue="video">
+          <TabsList>
+            <TabsTrigger value="video">{strings.presets.videoTab}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="video">
+            <VideoPresetPicker
+              presets={videoPresets}
+              chosen={videoPreset}
+              onChoose={onChooseVideoPreset}
+            />
+          </TabsContent>
+        </Tabs>
+        <div>
+          <Button disabled={!canDownload} onClick={onDownload}>
+            {strings.download.start}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -201,6 +251,13 @@ export function MainScreen({ probe, settings, download }: Props) {
   // Each «Скачать» gets a card of its own, so that the previous Download's
   // failure to open its file doesn't carry over to the next one.
   const [downloadsStarted, setDownloadsStarted] = useState(0);
+  // The Video preset the user chose, for the Probe it was chosen in; each
+  // Probe starts from its own default, while a card that comes back keeps
+  // the choice.
+  const [videoPresetChoice, setVideoPresetChoice] = useState<{
+    probe: ProbeState;
+    preset: VideoPreset;
+  } | null>(null);
 
   useEffect(() => {
     fetchAppInfo()
@@ -226,6 +283,14 @@ export function MainScreen({ probe, settings, download }: Props) {
       setPreviewHidden(false);
       void probeUrl(trimmed);
     }
+  }
+
+  function chosenVideoPreset(
+    probed: Extract<ProbeState, { status: "probed" }>,
+  ) {
+    return videoPresetChoice?.probe === probed
+      ? videoPresetChoice.preset
+      : probed.defaultVideoPreset;
   }
 
   // Signing in steps aside for the URL just submitted, unless its Probe
@@ -275,6 +340,11 @@ export function MainScreen({ probe, settings, download }: Props) {
       {probe.status === "probed" && !previewHidden && (
         <VideoPreview
           video={probe.video}
+          videoPresets={probe.videoPresets}
+          videoPreset={chosenVideoPreset(probe)}
+          onChooseVideoPreset={(preset) =>
+            setVideoPresetChoice({ probe, preset })
+          }
           canDownload={!isRunning(download)}
           onDownload={() => {
             // The Download's card takes over from the Video's.
@@ -282,7 +352,9 @@ export function MainScreen({ probe, settings, download }: Props) {
             setEndedHidden(false);
             setDownloadsStarted((count) => count + 1);
             // With no Video to download, its card comes back.
-            downloadVideo().catch(() => setPreviewHidden(false));
+            downloadVideo(chosenVideoPreset(probe)).catch(() =>
+              setPreviewHidden(false),
+            );
           }}
         />
       )}
