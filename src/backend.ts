@@ -138,6 +138,11 @@ export function download(): Promise<void> {
   return invoke("download");
 }
 
+/** Downloads the Failed Download's Video again, resuming from its Partial. */
+export function retryDownload(): Promise<void> {
+  return invoke("retry_download");
+}
+
 /** Opens the Done Download's file in its default program. */
 export function openDownloadedFile(): Promise<void> {
   return invoke("open_downloaded_file");

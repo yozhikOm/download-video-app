@@ -105,6 +105,14 @@ fn download(prober: State<'_, Arc<Prober>>, downloader: State<'_, Arc<Downloader
     std::thread::spawn(move || downloader.download(&video));
 }
 
+/// Downloads the Failed Download's Video again in the background; the UI
+/// follows along through events.
+#[tauri::command]
+fn retry_download(downloader: State<'_, Arc<Downloader>>) {
+    let downloader = downloader.inner().clone();
+    std::thread::spawn(move || downloader.retry());
+}
+
 /// Opens the Done Download's file in its default program.
 #[tauri::command]
 fn open_downloaded_file(downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
@@ -154,6 +162,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             probe,
             set_sign_in_browser,
             download,
+            retry_download,
             open_downloaded_file,
             show_downloaded_file
         ])

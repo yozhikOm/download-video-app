@@ -609,6 +609,50 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
     assert!(!app.save_dir().exists());
 }
 
+/// The yt-dlp runs so far, each with its arguments.
+fn ytdlp_runs(app: &App) -> Vec<Vec<OsString>> {
+    app.processes
+        .runs()
+        .into_iter()
+        .filter(|(program, _)| program.ends_with("yt-dlp.exe"))
+        .map(|(_, args)| args)
+        .collect()
+}
+
+#[test]
+fn a_failed_download_is_retried_with_its_own_video_under_the_same_partial_name() {
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+    app.downloader.download(&video(URL, "Me at the zoo"));
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.downloader.retry();
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("Me at the zoo.mp4")
+        })
+    );
+    let runs = ytdlp_runs(&app);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0], runs[1]);
+}
+
+#[test]
+fn retry_does_nothing_unless_the_download_failed() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.downloader.retry();
+    app.downloader.download(&video(URL, "Me at the zoo"));
+    app.downloader.retry();
+
+    assert_eq!(ytdlp_runs(&app).len(), 1);
+    assert_eq!(file_names(&app.save_dir()), ["Me at the zoo.mp4"]);
+}
+
 #[test]
 fn a_broken_yt_dlp_is_restored_and_the_download_is_dropped() {
     let app = App::start();

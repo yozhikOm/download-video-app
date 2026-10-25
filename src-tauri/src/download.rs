@@ -63,6 +63,8 @@ pub struct Downloader {
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     current: Mutex<Option<Download>>,
+    /// The current Download's Video, for retrying it once it is Failed.
+    video: Mutex<Option<Video>>,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -87,6 +89,7 @@ impl Downloader {
             clock,
             events,
             current: Mutex::new(None),
+            video: Mutex::new(None),
             progress_sent: Mutex::new(None),
             sending: Mutex::new(()),
         }
@@ -101,6 +104,22 @@ impl Downloader {
         match self.state()?.status {
             DownloadStatus::Done { file } => Some(file),
             _ => None,
+        }
+    }
+
+    /// Downloads the current Download's Video again if it is Failed; yt-dlp
+    /// resumes from its Partial. Blocks until the Download ends.
+    pub fn retry(&self) {
+        let failed = matches!(
+            self.state(),
+            Some(Download {
+                status: DownloadStatus::Failed { .. },
+                ..
+            })
+        );
+        let video = self.video.lock().unwrap().clone();
+        if let (true, Some(video)) = (failed, video) {
+            self.download(&video);
         }
     }
 
@@ -209,6 +228,7 @@ impl Downloader {
                 return false;
             }
             *current = Some(download.clone());
+            *self.video.lock().unwrap() = Some(video.clone());
         }
         self.events.send(AppEvent::Download(Some(download)));
         true

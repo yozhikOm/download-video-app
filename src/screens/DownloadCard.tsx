@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   openDownloadedFile,
+  retryDownload,
   showDownloadedFile,
   type Download,
 } from "@/backend";
@@ -100,9 +101,16 @@ export function DownloadCard({ download }: { download: Download }) {
           </>
         )}
         {download.status === "failed" && (
-          <p role="alert" className="text-destructive">
-            {strings.download.failed}
-          </p>
+          <>
+            <p role="alert" className="text-destructive">
+              {strings.download.failed}
+            </p>
+            <div>
+              <Button onClick={() => void retryDownload()}>
+                {strings.download.retry}
+              </Button>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

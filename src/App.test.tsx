@@ -722,6 +722,19 @@ test("a Failed Download says so", async () => {
   );
 });
 
+test("a Failed Download is retried from its card", async () => {
+  const backend = await startReady();
+  await backend.download({
+    video: zoo,
+    status: "failed",
+    message: "ERROR: unable to download video data",
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+
+  await waitFor(() => expect(backend.commands).toContain("retry_download"));
+});
+
 const nextUrl = "https://www.youtube.com/watch?v=-moW9jvvMr4";
 
 test("a new URL hides the previous Video's card", async () => {
