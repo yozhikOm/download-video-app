@@ -17,6 +17,7 @@ use tauri::{AppHandle, Builder, Manager, Runtime, State};
 use crate::clock::SystemClock;
 use crate::download::Downloader;
 use crate::events::{AppEvent, EventSink};
+use crate::preset::VideoPreset;
 use crate::probe::Prober;
 use crate::processes::SystemProcesses;
 use crate::releases::github::GithubReleases;
@@ -95,16 +96,21 @@ fn probe(url: String, prober: State<'_, Arc<Prober>>) {
     std::thread::spawn(move || prober.probe(url.trim()));
 }
 
-/// Downloads the Video the latest Probe found in the background; the UI
-/// follows along through events. Fails when no Probe found a Video.
+/// Downloads the Video the latest Probe found with a Video preset in the
+/// background; the UI follows along through events. Fails when no Probe
+/// found a Video or the Video lacks the Preset.
 #[tauri::command]
 fn download(
+    preset: VideoPreset,
     prober: State<'_, Arc<Prober>>,
     downloader: State<'_, Arc<Downloader>>,
 ) -> Result<(), String> {
     let video = prober.video().ok_or("no probed Video")?;
+    if !video.video_presets().contains(&preset) {
+        return Err(format!("the Video has no {} Preset", preset.name()));
+    }
     let downloader = downloader.inner().clone();
-    std::thread::spawn(move || downloader.download(&video));
+    std::thread::spawn(move || downloader.download(&video, preset));
     Ok(())
 }
 
