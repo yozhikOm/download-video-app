@@ -190,7 +190,11 @@ pub fn run() {
                 settings.clone(),
                 subscribers.clone(),
             ));
-            let save_dir = app.path().download_dir()?;
+            let save_dir = app
+                .path()
+                .download_dir()
+                .or_else(|_| app.path().home_dir().map(|home| home.join("Downloads")))
+                .unwrap_or_else(|_| data_dir.join("downloads"));
             let downloader = Arc::new(Downloader::new(
                 toolbox.clone(),
                 settings.clone(),
