@@ -194,7 +194,8 @@ export function MainScreen({ probe, settings, download }: Props) {
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
   // A new URL in the field puts the previous Video and its Done or Failed
   // Download out of sight; a running Download stays to show its progress.
-  // «Скачать» hides the Video too, until its URL is submitted again.
+  // «Скачать» hides the Video too, until the field gets its URL back after
+  // an edit or the URL is submitted again.
   const [previewHidden, setPreviewHidden] = useState(false);
   const [endedHidden, setEndedHidden] = useState(false);
   // Each «Скачать» gets a card of its own, so that the previous Download's
