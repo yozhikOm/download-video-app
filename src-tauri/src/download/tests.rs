@@ -475,6 +475,68 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_stands() {
 }
 
 #[test]
+fn the_speed_and_time_left_update_each_second_while_the_percent_is_unknown() {
+    let app = App::start();
+    app.clock.step_by(Duration::from_millis(600));
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1500)), (AUDIO_ONLY, None)]),
+        &[
+            progress_of(VIDEO_ONLY, 250, 1500, 100.0, 9),
+            progress_of(VIDEO_ONLY, 500, 1500, 80.0, 10),
+            progress_of(VIDEO_ONLY, 750, 1500, 50.0, 15),
+        ],
+    );
+
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    // The second line comes 0.6 s after the first, the third 1.2 s.
+    assert_eq!(
+        app.download_statuses()[1..4],
+        [
+            DownloadStatus::Downloading {
+                percent: None,
+                speed: Some(100.0),
+                eta: Some(9)
+            },
+            DownloadStatus::Downloading {
+                percent: None,
+                speed: Some(50.0),
+                eta: Some(15)
+            },
+            DownloadStatus::Processing,
+        ]
+    );
+}
+
+#[test]
+fn a_new_download_shows_its_first_progress_at_once() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1500)), (AUDIO_ONLY, None)]),
+        &[progress_of(VIDEO_ONLY, 250, 1500, 100.0, 9)],
+    );
+    app.downloader.download(&video(URL, "Me at the zoo"));
+    let first = app.download_statuses().len();
+
+    // The clock stands still, so the line comes at once after the last
+    // one of the Download before.
+    app.downloader.download(&video(URL, "Me at the zoo"));
+
+    assert_eq!(
+        app.download_statuses()[first + 1],
+        DownloadStatus::Downloading {
+            percent: None,
+            speed: Some(100.0),
+            eta: Some(9)
+        }
+    );
+}
+
+#[test]
 fn a_taken_name_gets_the_next_free_number_and_nothing_is_overwritten() {
     let app = App::start();
     fs::create_dir_all(app.save_dir()).unwrap();

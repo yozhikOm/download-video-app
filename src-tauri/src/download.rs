@@ -230,6 +230,8 @@ impl Downloader {
             *current = Some(download.clone());
             *self.video.lock().unwrap() = Some(video.clone());
         }
+        // The new Download's first progress goes out at once.
+        *self.progress_sent.lock().unwrap() = None;
         self.events.send(AppEvent::Download(Some(download)));
         true
     }
@@ -277,17 +279,16 @@ impl Downloader {
             *percent = Some(percent.map_or(shown, |percent| percent.max(shown)));
         }
         // yt-dlp reports every chunk it receives; the UI gets each tenth of
-        // a percent at once, and the speed and time left at least once a
-        // second.
+        // a percent at once, and otherwise a line at most once a second, so
+        // the speed and time left move even while the percent stands or is
+        // unknown.
         let permille = |status: &DownloadStatus| match status {
             DownloadStatus::Downloading { percent, .. } => {
                 percent.map(|percent| (percent * 10.0) as u64)
             }
             _ => None,
         };
-        if let DownloadStatus::Downloading {
-            percent: Some(_), ..
-        } = shown.status
+        if let DownloadStatus::Downloading { .. } = shown.status
             && permille(&shown.status) == permille(&status)
             && self.progress_sent.lock().unwrap().is_some_and(|sent| {
                 // A clock set back counts as the interval gone.
