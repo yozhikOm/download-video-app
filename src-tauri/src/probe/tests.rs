@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::clock::FixedClock;
 use crate::events::{AppEvent, RecordingSink};
-use crate::preset::VideoPreset;
+use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::processes::fake::FakeProcesses;
 use crate::releases::fake::FakeReleases;
 use crate::settings::{Browser, Settings};
@@ -116,6 +116,7 @@ fn a_video_url_shows_the_video_card() {
             VideoPreset::P360,
         ],
         default_video_preset: VideoPreset::P1080,
+        audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
     };
     assert_eq!(app.probe_states(), [ProbeState::Probing, probed.clone()]);
     assert_eq!(app.prober.state(), probed);
@@ -351,6 +352,66 @@ fn a_video_preset_goes_to_the_ui_and_back_by_its_name() {
     assert!(serde_json::from_value::<VideoPreset>("4320p".into()).is_err());
 }
 
+/// The Audio presets the latest Probe offers.
+fn offered_audio_presets(app: &App) -> Vec<AudioPreset> {
+    match app.prober.state() {
+        ProbeState::Probed { audio_presets, .. } => audio_presets,
+        state => panic!("not probed: {state:?}"),
+    }
+}
+
+#[test]
+fn a_video_with_sound_offers_m4a_and_mp3() {
+    for (url, answer) in [
+        ("https://www.youtube.com/watch?v=-moW9jvvMr4", VIDEO),
+        // Its Formats have video and sound together.
+        (
+            "https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/",
+            include_bytes!("fixtures/rutube-video.json"),
+        ),
+    ] {
+        let app = App::start();
+        app.ytdlp_prints(answer);
+
+        app.prober.probe(url);
+
+        assert_eq!(
+            offered_audio_presets(&app),
+            vec![AudioPreset::M4a, AudioPreset::Mp3],
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn a_video_without_sound_offers_no_audio_presets() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        formats.retain(|format| format["acodec"] == "none")
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(offered_audio_presets(&app), []);
+}
+
+#[test]
+fn a_preset_comes_from_the_ui_by_its_name() {
+    for (name, preset) in [
+        ("1080p", Preset::Video(VideoPreset::P1080)),
+        ("m4a", Preset::Audio(AudioPreset::M4a)),
+        ("mp3", Preset::Audio(AudioPreset::Mp3)),
+    ] {
+        assert_eq!(
+            serde_json::from_value::<Preset>(name.into()).unwrap(),
+            preset
+        );
+    }
+    assert_eq!(serde_json::to_value(AudioPreset::Mp3).unwrap(), "mp3");
+    assert!(serde_json::from_value::<Preset>("flac".into()).is_err());
+}
+
 #[test]
 fn a_video_from_another_site_offers_presets_from_its_formats_with_sound() {
     let app = App::start();
@@ -451,6 +512,7 @@ fn a_finished_stream_is_an_ordinary_video() {
                 VideoPreset::P360,
             ],
             default_video_preset: VideoPreset::P1080,
+            audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
         }
     );
 }

@@ -13,7 +13,7 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::events::{AppEvent, EventSink};
-use crate::preset::{self, VideoPreset};
+use crate::preset::{self, AudioPreset, Preset, VideoPreset};
 use crate::settings::{Browser, Settings};
 use crate::toolbox::{Tool, Toolbox};
 
@@ -31,6 +31,8 @@ pub enum ProbeState {
         video_presets: Vec<VideoPreset>,
         /// The Video preset chosen at first.
         default_video_preset: VideoPreset,
+        /// The Audio presets the Video has; none when it has no sound.
+        audio_presets: Vec<AudioPreset>,
     },
     #[serde(rename_all = "camelCase")]
     Failed {
@@ -141,6 +143,11 @@ impl Format {
             (width, height) => width.or(height),
         }
     }
+
+    /// Whether this Format has sound or doesn't tell.
+    pub fn has_sound(&self) -> bool {
+        self.audio_codec.as_deref() != Some("none")
+    }
 }
 
 /// The languages a Transcript can be saved in, by the source of the text.
@@ -174,6 +181,19 @@ impl Video {
     /// highest first.
     pub fn video_presets(&self) -> Vec<VideoPreset> {
         preset::video_presets(&self.formats)
+    }
+
+    /// The Audio presets this Video has: none when it has no sound.
+    pub fn audio_presets(&self) -> Vec<AudioPreset> {
+        preset::audio_presets(&self.formats)
+    }
+
+    /// Whether this Video has `preset`.
+    pub fn has_preset(&self, preset: Preset) -> bool {
+        match preset {
+            Preset::Video(preset) => self.video_presets().contains(&preset),
+            Preset::Audio(preset) => self.audio_presets().contains(&preset),
+        }
     }
 }
 
@@ -236,6 +256,7 @@ impl Prober {
                         video: video.card(),
                         default_video_preset: preset::default_video_preset(&video_presets),
                         video_presets,
+                        audio_presets: video.audio_presets(),
                     };
                     self.finish(generation, state, Some(video));
                 }
