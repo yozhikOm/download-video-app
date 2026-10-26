@@ -280,6 +280,8 @@ pub fn run() {
                 Arc::new(SystemClock),
                 subscribers.clone(),
             ));
+            // Before the UI can add a Download that would resume from one.
+            downloader.discard_old_partials();
             app.manage(subscribers);
             app.manage(settings);
             app.manage(toolbox.clone());

@@ -278,6 +278,9 @@ enum Stopped {
 /// How often the UI gets the speed and time left while the percent stands.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How long a Partial untouched is kept for a later Download to resume.
+const PARTIAL_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// Keeps the Queue and downloads its Videos with yt-dlp.
 pub struct Downloader {
     toolbox: Arc<Toolbox>,
@@ -419,6 +422,31 @@ impl Downloader {
             queue.entries[at].download.status = DownloadStatus::Cancelled;
             true
         })
+    }
+
+    /// Removes the Partials untouched for longer than [`PARTIAL_LIFETIME`].
+    /// Called at launch, before any Download is received.
+    pub fn discard_old_partials(&self) {
+        let Ok(entries) = fs::read_dir(&self.partials_dir) else {
+            return;
+        };
+        let now = self.clock.now();
+        for entry in entries.flatten() {
+            let untouched = entry
+                .metadata()
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| now.duration_since(modified).ok());
+            if untouched.is_some_and(|untouched| untouched > PARTIAL_LIFETIME)
+                && let Err(error) = fs::remove_file(entry.path())
+            {
+                eprintln!(
+                    "can't remove the Partial {}: {error}",
+                    entry.path().display()
+                );
+            }
+        }
     }
 
     /// Takes a Done Download out of the Queue; its files stay.

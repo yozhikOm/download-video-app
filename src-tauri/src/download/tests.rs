@@ -50,6 +50,10 @@ impl SteppingClock {
     fn step_by(&self, step: Duration) {
         *self.step.lock().unwrap() = step;
     }
+
+    fn set(&self, now: SystemTime) {
+        *self.now.lock().unwrap() = now;
+    }
 }
 
 impl Clock for SteppingClock {
@@ -1417,6 +1421,40 @@ fn a_queued_download_cancelled_leaves_the_transcript_the_running_one_receives() 
     assert_eq!(
         file_names(&app.save_dir()),
         ["Me at the zoo.mp4", "Me at the zoo.txt"]
+    );
+}
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[test]
+fn partials_untouched_for_seven_days_are_discarded_and_newer_ones_stay() {
+    let app = App::start();
+    // At first launch there is no Partials folder yet.
+    app.downloader.discard_old_partials();
+    let now = SystemTime::UNIX_EPOCH + 100 * DAY;
+    app.clock.set(now);
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    for (name, untouched) in [
+        ("month.1080p.f137.mp4.part", 30 * DAY),
+        (
+            "week.1080p.f137.mp4.part",
+            7 * DAY + Duration::from_secs(60),
+        ),
+        (
+            "days.1080p.f137.mp4.part",
+            7 * DAY - Duration::from_secs(60),
+        ),
+        ("today.mp3.webm.part", Duration::ZERO),
+    ] {
+        let file = fs::File::create(app.partials_dir().join(name)).unwrap();
+        file.set_modified(now - untouched).unwrap();
+    }
+
+    app.downloader.discard_old_partials();
+
+    assert_eq!(
+        file_names(&app.partials_dir()),
+        ["days.1080p.f137.mp4.part", "today.mp3.webm.part"]
     );
 }
 
