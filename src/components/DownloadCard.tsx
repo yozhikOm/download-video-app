@@ -60,7 +60,7 @@ export function DownloadCard({ download }: { download: Download }) {
               }
             />
             <p className="flex justify-between gap-4">
-              <span>{strings.download.downloading}</span>
+              <span>{strings.download.downloading[download.receiving]}</span>
               <span className="text-muted-foreground tabular-nums">
                 {progressText(download)}
               </span>

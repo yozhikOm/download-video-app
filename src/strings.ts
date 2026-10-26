@@ -2,6 +2,7 @@ import type {
   AudioPreset,
   Browser,
   Package,
+  Receiving,
   Tool,
   VideoPreset,
 } from "@/backend";
@@ -98,7 +99,11 @@ export const strings = {
   },
   download: {
     start: "Скачать",
-    downloading: "Скачивание…",
+    downloading: {
+      transcript: "Скачивание транскрипта…",
+      video: "Скачивание видео…",
+      audio: "Скачивание аудио…",
+    } satisfies Record<Receiving, string>,
     percent: (percent: string) => `${percent}%`,
     speed: (mbPerSecond: string) => `${mbPerSecond} МБ/с`,
     eta: (time: string) => `осталось ${time}`,

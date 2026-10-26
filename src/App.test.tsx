@@ -938,13 +938,14 @@ test("a Download shows its percent, speed and time left while downloading", asyn
   await backend.download({
     video: zoo,
     status: "downloading",
+    receiving: "video",
     percent: 25.4,
     speed: 1.5 * MB,
     eta: 67,
   });
 
   const status = screen.getByRole("region", { name: "Me at the zoo" });
-  expect(status).toHaveTextContent("Скачивание…");
+  expect(status).toHaveTextContent("Скачивание видео…");
   expect(status).toHaveTextContent("25%");
   expect(status).toHaveTextContent("1,5 МБ/с");
   expect(status).toHaveTextContent("осталось 1:07");
@@ -960,15 +961,37 @@ test("a Download shows that it is starting before yt-dlp tells its progress", as
   await backend.download({
     video: zoo,
     status: "downloading",
+    receiving: "video",
     percent: null,
     speed: null,
     eta: null,
   });
 
   const status = screen.getByRole("region", { name: "Me at the zoo" });
-  expect(status).toHaveTextContent("Скачивание…");
+  expect(status).toHaveTextContent("Скачивание видео…");
   expect(status).not.toHaveTextContent("%");
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+});
+
+test("a Download shows whether it receives the Transcript, the video or the audio", async () => {
+  const backend = await startReady();
+  const downloading = {
+    video: zoo,
+    status: "downloading",
+    percent: null,
+    speed: null,
+    eta: null,
+  } as const;
+  const status = () => screen.getByRole("region", { name: "Me at the zoo" });
+
+  await backend.download({ ...downloading, receiving: "transcript" });
+  expect(status()).toHaveTextContent("Скачивание транскрипта…");
+
+  await backend.download({ ...downloading, receiving: "video" });
+  expect(status()).toHaveTextContent("Скачивание видео…");
+
+  await backend.download({ ...downloading, receiving: "audio" });
+  expect(status()).toHaveTextContent("Скачивание аудио…");
 });
 
 test("a Download shows processing while ffmpeg merges the video and audio", async () => {
@@ -1128,6 +1151,7 @@ test("a new Download of the same Video doesn't show the previous one's file erro
   await backend.download({
     video: zoo,
     status: "downloading",
+    receiving: "video",
     percent: null,
     speed: null,
     eta: null,

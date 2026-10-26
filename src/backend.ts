@@ -123,10 +123,17 @@ export type ProbeState =
       signInBrowser: Browser | null;
     };
 
+/**
+ * What a Downloading Download receives now: its Transcript, a Format with
+ * the picture (with or without the sound), or one with the sound alone.
+ */
+export type Receiving = "transcript" | "video" | "audio";
+
 /** The Download the main screen shows. */
 export type Download = { video: VideoCard } & (
   | {
       status: "downloading";
+      receiving: Receiving;
       /**
        * 0 to 100, of all the Formats yt-dlp receives; `null` while the size
        * of one is unknown. Never goes down during a Download.
