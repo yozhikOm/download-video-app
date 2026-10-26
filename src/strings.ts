@@ -107,6 +107,7 @@ export const strings = {
     percent: (percent: string) => `${percent}%`,
     speed: (mbPerSecond: string) => `${mbPerSecond} МБ/с`,
     eta: (time: string) => `осталось ${time}`,
+    queued: "В очереди",
     processing: "Обработка…",
     done: "Готово",
     openFile: "Открыть файл",
@@ -115,6 +116,16 @@ export const strings = {
     retry: "Повторить",
     actionFailed:
       "Не удалось открыть файл — возможно, его переместили или удалили.",
+    duplicate:
+      "Это видео с теми же настройками уже скачивается или ждёт в очереди.",
+    remove: "Убрать",
+  },
+  queue: {
+    title: "Очередь",
+    clearDone: "Очистить завершённые",
+    /** What a Download saves: its Preset, with or without the Transcript. */
+    withTranscript: (preset: string) => `${preset} + транскрипт`,
+    transcriptAlone: "Транскрипт",
   },
   signIn: {
     browser: "Вход в YouTube",

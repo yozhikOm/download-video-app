@@ -129,36 +129,54 @@ export type ProbeState =
  */
 export type Receiving = "transcript" | "video" | "audio";
 
-/** The Download the main screen shows. */
-export type Download = { video: VideoCard } & (
-  | {
-      status: "downloading";
-      receiving: Receiving;
-      /**
-       * 0 to 100, of all the Formats yt-dlp receives; `null` while the size
-       * of one is unknown. Never goes down during a Download.
-       */
-      percent: number | null;
-      /** Bytes per second. */
-      speed: number | null;
-      /** Seconds left. */
-      eta: number | null;
-    }
-  /** ffmpeg merges the received Formats into the MP4, or extracts the sound. */
-  | { status: "processing" }
-  /** `file` is the saved file's full path: the media, or the Transcript alone. */
-  | { status: "done"; file: string }
-  /** `message` is for the log; the UI shows a generic text. */
-  | { status: "failed"; message: string }
-);
+/** A Download in the Queue, as the main screen shows it. */
+export type Download = {
+  /** Tells the Download apart from the others in the Queue. */
+  id: number;
+  video: VideoCard;
+  /** `null` for the Transcript alone. */
+  preset: Preset | null;
+  /** The language of the Transcript, when it is saved. */
+  transcriptLanguage: string | null;
+} &
+  /** Waits for the Downloads ahead of it in the Queue. */
+  (
+    | { status: "queued" }
+    | {
+        status: "downloading";
+        receiving: Receiving;
+        /**
+         * 0 to 100, of all the Formats yt-dlp receives; `null` while the size
+         * of one is unknown. Never goes down during a Download.
+         */
+        percent: number | null;
+        /** Bytes per second. */
+        speed: number | null;
+        /** Seconds left. */
+        eta: number | null;
+      }
+    /** ffmpeg merges the received Formats into the MP4, or extracts the sound. */
+    | { status: "processing" }
+    /** `file` is the saved file's full path: the media, or the Transcript alone. */
+    | { status: "done"; file: string }
+    /** `message` is for the log; the UI shows a generic text. */
+    | { status: "failed"; message: string }
+  );
 
 /** What the backend pushes to the UI; the backend owns the state. */
 export type AppEvent =
   | { type: "setup"; data: SetupState }
   | { type: "probe"; data: ProbeState }
   | { type: "settings"; data: SettingsState }
-  /** `null` before the first Download. */
-  | { type: "download"; data: Download | null };
+  /** The Downloads in the Queue, in the order they run. */
+  | { type: "queue"; data: Download[] };
+
+/**
+ * What became of a Download asked for: it waits in the Queue, or nothing
+ * was added since the same Video with the same Preset, or its Transcript
+ * alone in the same language, is Queued or running.
+ */
+export type Added = "queued" | "duplicate";
 
 export type AppInfo = {
   name: string;
@@ -189,32 +207,45 @@ export function probe(url: string): Promise<void> {
 }
 
 /**
- * Downloads the probed Video: its media with a Video or Audio preset, its
- * Transcript in a language next to it under the same name, or the
- * Transcript alone without a Preset; its progress arrives as download
- * events. Rejects when no Probe found a Video, when neither is asked for,
- * or when the Video lacks the Preset or the language.
+ * Adds a Download of the probed Video to the Queue: its media with a Video
+ * or Audio preset, its Transcript in a language next to it under the same
+ * name, or the Transcript alone without a Preset; the Queue arrives as
+ * queue events. Rejects when no Probe found a Video, when neither is asked
+ * for, or when the Video lacks the Preset or the language.
  */
-export function download(
+export function addDownload(
   preset: Preset | null,
   transcript: string | null,
-): Promise<void> {
-  return invoke("download", { preset, transcript });
+): Promise<Added> {
+  return invoke<Added>("add_download", { preset, transcript });
 }
 
-/** Downloads the Failed Download's Video again, resuming from its Partial. */
-export function retryDownload(): Promise<void> {
-  return invoke("retry_download");
+/**
+ * Puts the Failed Download back at the end of the Queue to download its
+ * Video again, resuming from its Partial.
+ */
+export function retryDownload(id: number): Promise<Added> {
+  return invoke<Added>("retry_download", { id });
+}
+
+/** Takes the Done Download out of the Queue; its files stay. */
+export function removeDownload(id: number): Promise<void> {
+  return invoke("remove_download", { id });
+}
+
+/** Takes every Done Download out of the Queue; their files stay. */
+export function clearDoneDownloads(): Promise<void> {
+  return invoke("clear_done_downloads");
 }
 
 /** Opens the Done Download's file in its default program. */
-export function openDownloadedFile(): Promise<void> {
-  return invoke("open_downloaded_file");
+export function openDownloadedFile(id: number): Promise<void> {
+  return invoke("open_downloaded_file", { id });
 }
 
 /** Shows the Done Download's file selected in its folder. */
-export function showDownloadedFile(): Promise<void> {
-  return invoke("show_downloaded_file");
+export function showDownloadedFile(id: number): Promise<void> {
+  return invoke("show_downloaded_file", { id });
 }
 
 /** Saves the sign-in browser; the change arrives as a settings event. */
