@@ -127,7 +127,6 @@ export function VideoPreview({
   transcriptLanguages,
   choice,
   onChoose,
-  canDownload,
   onDownload,
 }: {
   video: VideoCard;
@@ -137,7 +136,6 @@ export function VideoPreview({
   transcriptLanguages: TranscriptLanguage[];
   choice: CardChoice;
   onChoose: (choice: CardChoice) => void;
-  canDownload: boolean;
   onDownload: () => void;
 }) {
   const hasTranscript = transcriptLanguages.length > 0;
@@ -242,9 +240,7 @@ export function VideoPreview({
         )}
         <div>
           <Button
-            disabled={
-              !canDownload || (choice.group === "transcript" && !hasTranscript)
-            }
+            disabled={choice.group === "transcript" && !hasTranscript}
             onClick={onDownload}
           >
             {strings.download.start}

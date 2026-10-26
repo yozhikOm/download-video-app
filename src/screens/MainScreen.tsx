@@ -1,13 +1,14 @@
 import { useEffect, useState, type SubmitEvent } from "react";
-import { DownloadCard } from "@/components/DownloadCard";
+import { QueueList } from "@/components/QueueList";
 import { SignInBrowserPicker } from "@/components/SignInBrowserPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
+import { useDuplicateWarning } from "@/lib/duplicate";
 import {
+  addDownload,
   appInfo as fetchAppInfo,
-  download as downloadVideo,
   probe as probeUrl,
   type AppInfo,
   type Browser,
@@ -22,7 +23,7 @@ import { strings } from "@/strings";
 type Props = {
   probe: ProbeState;
   settings: SettingsState;
-  download: Download | null;
+  queue: Download[];
 };
 
 /** The error's text; it names the sign-in browser the Probe ran with. */
@@ -55,13 +56,6 @@ function errorText(error: ProbeError, signInBrowser: Browser | null) {
   }
 }
 
-/** One Download at a time until the Queue arrives. */
-function isRunning(download: Download | null) {
-  return (
-    download?.status === "downloading" || download?.status === "processing"
-  );
-}
-
 /** Signing in is offered only once YouTube asks for it. */
 function asksToSignIn(probe: ProbeState) {
   return (
@@ -91,20 +85,26 @@ function isYoutube(url: string) {
   );
 }
 
-export function MainScreen({ probe, settings, download }: Props) {
+export function MainScreen({ probe, settings, queue }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
-  // A new URL in the field puts the previous Video and its Done or Failed
-  // Download out of sight; a running Download stays to show its progress.
-  // «Скачать» hides the Video too, until the field gets its URL back after
-  // an edit or the URL is submitted again.
+  // A new URL in the field puts the previous Video out of sight. «Скачать»
+  // hides the Video too, until the field gets its URL back after an edit or
+  // the URL is submitted again.
   const [previewHidden, setPreviewHidden] = useState(false);
-  const [endedHidden, setEndedHidden] = useState(false);
-  // Each «Скачать» gets a card of its own, so that the previous Download's
-  // failure to open its file doesn't carry over to the next one.
-  const [downloadsStarted, setDownloadsStarted] = useState(0);
+  // The Probe a submitted URL replaces stays out of sight until the backend
+  // sends the next one.
+  const [supersededProbe, setSupersededProbe] = useState<ProbeState | null>(
+    null,
+  );
+  // The submitted URL's Probe couldn't start, so the backend sends none.
+  const [probeFailed, setProbeFailed] = useState(false);
+  // «Скачать» added nothing: the same Download is Queued or running. The
+  // warning stays while it is, until the choice, the Video or the URL
+  // changes.
+  const duplicate = useDuplicateWarning(queue);
   // The tab, Presets and Transcript the user chose, for the Probe they were
   // chosen in; each Probe starts on the Video tab with its own defaults and
   // without the Transcript, while a card that comes back keeps the choice.
@@ -121,12 +121,9 @@ export function MainScreen({ probe, settings, download }: Props) {
 
   function changeUrl(value: string) {
     setUrl(value);
-    const isNew = value.trim() !== submittedUrl;
     // The same URL back in the field brings its Video back.
-    setPreviewHidden(isNew);
-    if (isNew && download && !isRunning(download)) {
-      setEndedHidden(true);
-    }
+    setPreviewHidden(value.trim() !== submittedUrl);
+    duplicate.clear();
   }
 
   function submit(event: SubmitEvent<HTMLFormElement>) {
@@ -135,7 +132,10 @@ export function MainScreen({ probe, settings, download }: Props) {
     if (trimmed) {
       setSubmittedUrl(trimmed);
       setPreviewHidden(false);
-      void probeUrl(trimmed);
+      setSupersededProbe(probe);
+      setProbeFailed(false);
+      duplicate.clear();
+      probeUrl(trimmed).catch(() => setProbeFailed(true));
     }
   }
 
@@ -176,6 +176,7 @@ export function MainScreen({ probe, settings, download }: Props) {
   // failed: the user may need to sign in or change the browser to retry.
   const awaitsSubmitted =
     url.trim() === submittedUrl && probe.status !== "failed";
+  const previewShown = !previewHidden && probe !== supersededProbe;
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4 self-start">
@@ -216,7 +217,7 @@ export function MainScreen({ probe, settings, download }: Props) {
           </CardContent>
         </Card>
       )}
-      {probe.status === "probed" && !previewHidden && (
+      {probe.status === "probed" && previewShown && (
         <VideoPreview
           video={probe.video}
           videoPresets={probe.videoPresets}
@@ -224,24 +225,41 @@ export function MainScreen({ probe, settings, download }: Props) {
           m4aKeepsSound={probe.m4aKeepsSound}
           transcriptLanguages={probe.transcriptLanguages}
           choice={cardChoiceFor(probe)}
-          onChoose={(choice) => setCardChoice({ probe, choice })}
-          canDownload={!isRunning(download)}
+          onChoose={(choice) => {
+            setCardChoice({ probe, choice });
+            duplicate.clear();
+          }}
           onDownload={() => {
-            // The Download's card takes over from the Video's.
+            // The Download in the Queue takes over from the Video's card.
             setPreviewHidden(true);
-            setEndedHidden(false);
-            setDownloadsStarted((count) => count + 1);
-            // With no Video to download, its card comes back.
-            downloadVideo(...chosenDownload(probe)).catch(() =>
-              setPreviewHidden(false),
-            );
+            duplicate.clear();
+            // With nothing added, the card comes back.
+            addDownload(...chosenDownload(probe))
+              .then((added) => {
+                if (added.status === "duplicate") {
+                  setPreviewHidden(false);
+                }
+                duplicate.note(added);
+              })
+              .catch(() => setPreviewHidden(false));
           }}
         />
       )}
-      {probe.status === "failed" && (
+      {duplicate.shown && probe.status === "probed" && previewShown && (
         <p role="alert" className="text-sm text-destructive">
-          {errorText(probe.error, probe.signInBrowser)}
+          {strings.download.duplicate}
         </p>
+      )}
+      {probeFailed ? (
+        <p role="alert" className="text-sm text-destructive">
+          {strings.probe.other}
+        </p>
+      ) : (
+        probe.status === "failed" && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorText(probe.error, probe.signInBrowser)}
+          </p>
+        )
       )}
       {/* With a YouTube URL in the field, a chosen browser stays on screen
           so that it can be turned off, except for the URL just submitted. */}
@@ -250,9 +268,7 @@ export function MainScreen({ probe, settings, download }: Props) {
         isYoutube(url) && (
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
-      {download && (isRunning(download) || !endedHidden) && (
-        <DownloadCard key={downloadsStarted} download={download} />
-      )}
+      {queue.length > 0 && <QueueList queue={queue} />}
     </div>
   );
 }

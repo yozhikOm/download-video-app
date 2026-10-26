@@ -193,27 +193,76 @@ impl App {
         self.dir.path().join("partials")
     }
 
-    fn download_states(&self) -> Vec<Option<Download>> {
-        self.events
-            .events()
-            .into_iter()
-            .filter_map(|event| match event {
-                AppEvent::Download(state) => Some(state),
-                _ => None,
-            })
-            .collect()
+    /// Adds a Download to the Queue and runs the Queue until none waits.
+    fn download(&self, video: &Video, content: Content) {
+        download(&self.downloader, video, content);
     }
 
+    /// Retries the Download added last and runs the Queue.
+    fn retry(&self) {
+        let id = self.downloader.state().last().unwrap().id;
+        self.downloader.retry(id);
+        self.downloader.run();
+    }
+
+    /// The Queue as each event sent it.
+    fn queues(&self) -> Vec<Vec<Download>> {
+        queues(&self.events)
+    }
+
+    /// The status of the Download added last, as each event sent it.
     fn download_statuses(&self) -> Vec<DownloadStatus> {
-        self.download_states()
+        self.queues()
             .into_iter()
-            .map(|download| download.unwrap().status)
+            .filter_map(|queue| Some(queue.last()?.status.clone()))
             .collect()
     }
 
+    /// The status of the Download added last.
     fn status(&self) -> Option<DownloadStatus> {
-        self.downloader.state().map(|download| download.status)
+        last_status(&self.downloader)
     }
+}
+
+/// Adds a Download to the Queue and runs the Queue until none waits.
+fn download(downloader: &Downloader, video: &Video, content: Content) {
+    assert_eq!(downloader.add(video, content), Added::Queued);
+    downloader.run();
+}
+
+/// The statuses of the Downloads in the Queue, in order.
+fn statuses(downloader: &Downloader) -> Vec<DownloadStatus> {
+    downloader
+        .state()
+        .into_iter()
+        .map(|download| download.status)
+        .collect()
+}
+
+/// The titles of the Videos of the Downloads in the Queue, in order.
+fn titles(downloader: &Downloader) -> Vec<String> {
+    downloader
+        .state()
+        .into_iter()
+        .map(|download| download.video.title)
+        .collect()
+}
+
+/// The status of the Download added last.
+fn last_status(downloader: &Downloader) -> Option<DownloadStatus> {
+    Some(downloader.state().last()?.status.clone())
+}
+
+/// The Queue as each event sent it.
+fn queues(events: &RecordingSink) -> Vec<Vec<Download>> {
+    events
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            AppEvent::Queue(queue) => Some(queue),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The argument that follows `option`.
@@ -285,8 +334,7 @@ fn a_downloaded_video_is_moved_to_the_save_folder_under_its_title() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let saved = app.save_dir().join("Me at the zoo.mp4");
     assert_eq!(
@@ -313,13 +361,13 @@ fn an_audio_download_goes_through_processing_to_a_file_of_its_format() {
             &[progress_of(AUDIO_ONLY, 1000, 1000, 400.0, 0)],
         );
 
-        app.downloader
-            .download(&video(URL, "Me at the zoo"), preset.into());
+        app.download(&video(URL, "Me at the zoo"), preset.into());
 
         let saved = app.save_dir().join(name);
         assert_eq!(
             app.download_statuses(),
             [
+                DownloadStatus::Queued,
                 DownloadStatus::starting(Receiving::Audio),
                 downloading(Receiving::Audio, 100.0, 400.0, 0),
                 DownloadStatus::Processing,
@@ -398,7 +446,7 @@ fn downloading(receiving: Receiving, percent: f64, speed: f64, eta: u64) -> Down
 }
 
 #[test]
-fn a_download_goes_from_downloading_through_processing_to_done() {
+fn a_download_goes_from_queued_through_downloading_and_processing_to_done() {
     let app = App::start();
     app.ytdlp_downloads(
         ID,
@@ -409,17 +457,12 @@ fn a_download_goes_from_downloading_through_processing_to_done() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-    let statuses: Vec<DownloadStatus> = app
-        .download_states()
-        .into_iter()
-        .map(|download| download.unwrap().status)
-        .collect();
     assert_eq!(
-        statuses,
+        app.download_statuses(),
         [
+            DownloadStatus::Queued,
             DownloadStatus::starting(Receiving::Video),
             downloading(Receiving::Video, 25.0, 100.0, 7),
             downloading(Receiving::Video, 100.0, 400.0, 0),
@@ -429,8 +472,10 @@ fn a_download_goes_from_downloading_through_processing_to_done() {
             },
         ]
     );
-    let card = app.downloader.state().unwrap().video;
-    assert_eq!(card.title, "Me at the zoo");
+    let download = &app.downloader.state()[0];
+    assert_eq!(download.video.title, "Me at the zoo");
+    assert_eq!(download.preset, Some(VideoPreset::P1080.into()));
+    assert_eq!(download.transcript_language, None);
 }
 
 #[test]
@@ -447,13 +492,12 @@ fn a_video_received_as_separate_video_and_audio_shows_one_progress_for_both() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // Of the 2000 bytes of both, the time left is what remains of both at
     // the current speed.
     assert_eq!(
-        app.download_statuses()[1..4],
+        app.download_statuses()[2..5],
         [
             downloading(Receiving::Video, 25.0, 100.0, 15),
             downloading(Receiving::Video, 75.0, 100.0, 5),
@@ -475,12 +519,11 @@ fn the_turn_from_the_video_to_the_audio_shows_at_once() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The clock stands still and the percent stays at half.
     assert_eq!(
-        app.download_statuses()[1..3],
+        app.download_statuses()[2..4],
         [
             downloading(Receiving::Video, 50.0, 100.0, 10),
             downloading(Receiving::Audio, 50.0, 100.0, 10),
@@ -502,11 +545,10 @@ fn a_format_whose_codec_yt_dlp_doesnt_tell_counts_as_what_its_preset_saves() {
         });
         app.ytdlp_downloads(ID, b"the media", &[line.to_string()]);
 
-        app.downloader
-            .download(&video(URL, "Me at the zoo"), preset.into());
+        app.download(&video(URL, "Me at the zoo"), preset.into());
 
         assert_eq!(
-            app.download_statuses()[1],
+            app.download_statuses()[2],
             downloading(receiving, 25.0, 100.0, 7),
             "{preset:?}"
         );
@@ -526,13 +568,12 @@ fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The video's own percent would fall back once the audio's size is
     // known; only its speed and time left are shown.
     assert_eq!(
-        app.download_statuses()[1..3],
+        app.download_statuses()[2..4],
         [
             DownloadStatus::Downloading {
                 receiving: Receiving::Video,
@@ -558,11 +599,10 @@ fn a_received_format_of_approximate_size_counts_with_the_bytes_received() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
-        app.download_statuses()[1..3],
+        app.download_statuses()[2..4],
         [
             downloading(Receiving::Video, 75.0, 100.0, 5),
             downloading(Receiving::Audio, 77.5, 50.0, 9)
@@ -584,8 +624,7 @@ fn the_percent_holds_when_a_format_turns_out_bigger_than_told() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead, as the
     // turn to the audio shows.
@@ -606,12 +645,11 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_stands() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The second line comes 0.6 s after the first, the third 1.2 s.
     assert_eq!(
-        app.download_statuses()[1..3],
+        app.download_statuses()[2..4],
         [
             downloading(Receiving::Video, 25.0, 100.0, 9),
             downloading(Receiving::Video, 25.0, 50.0, 15)
@@ -634,12 +672,11 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_is_unknown() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The second line comes 0.6 s after the first, the third 1.2 s.
     assert_eq!(
-        app.download_statuses()[1..4],
+        app.download_statuses()[2..5],
         [
             DownloadStatus::Downloading {
                 receiving: Receiving::Video,
@@ -667,17 +704,15 @@ fn a_new_download_shows_its_first_progress_at_once() {
         formats(&[(VIDEO_ONLY, Some(1500)), (AUDIO_ONLY, None)]),
         &[progress_of(VIDEO_ONLY, 250, 1500, 100.0, 9)],
     );
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
     let first = app.download_statuses().len();
 
     // The clock stands still, so the line comes at once after the last
     // one of the Download before.
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
-        app.download_statuses()[first + 1],
+        app.download_statuses()[first + 2],
         DownloadStatus::Downloading {
             receiving: Receiving::Video,
             percent: None,
@@ -695,8 +730,7 @@ fn a_taken_name_gets_the_next_free_number_and_nothing_is_overwritten() {
     fs::write(app.save_dir().join("Me at the zoo (1).mp4"), b"second").unwrap();
     app.ytdlp_downloads(ID, b"third", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let saved = app.save_dir().join("Me at the zoo (2).mp4");
     assert_eq!(
@@ -768,7 +802,7 @@ fn characters_windows_forbids_in_a_title_are_replaced_by_lookalikes() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Why? A/B: \"test\" | <1> * \\ end. "),
         VideoPreset::P1080.into(),
     );
@@ -785,8 +819,7 @@ fn a_title_that_cant_be_a_file_name_gives_way_to_the_video_id() {
         let app = App::start();
         app.ytdlp_downloads(ID, b"the video", &[]);
 
-        app.downloader
-            .download(&video(URL, title), VideoPreset::P1080.into());
+        app.download(&video(URL, title), VideoPreset::P1080.into());
 
         assert_eq!(
             file_names(&app.save_dir()),
@@ -811,8 +844,7 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
         }
     });
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
         app.status(),
@@ -842,11 +874,10 @@ fn a_failed_download_is_retried_with_its_own_video_under_the_same_partial_name()
     let app = App::start();
     app.processes
         .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader.retry();
+    app.retry();
 
     assert_eq!(
         app.status(),
@@ -860,35 +891,71 @@ fn a_failed_download_is_retried_with_its_own_video_under_the_same_partial_name()
 }
 
 #[test]
-fn retry_does_nothing_unless_the_download_failed() {
-    let app = App::start();
-    app.ytdlp_downloads(ID, b"the video", &[]);
-
-    app.downloader.retry();
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
-    app.downloader.retry();
-
-    assert_eq!(ytdlp_runs(&app).len(), 1);
-    assert_eq!(file_names(&app.save_dir()), ["Me at the zoo.mp4"]);
-}
-
-#[test]
 fn a_broken_yt_dlp_is_restored_and_the_download_is_dropped() {
     let app = App::start();
     app.processes.break_tool("yt-dlp.exe");
     let fetched_before = app.releases.fetches().len();
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-    assert_eq!(app.downloader.state(), None);
-    assert_eq!(app.download_states().last(), Some(&None));
+    assert_eq!(app.downloader.state(), []);
+    assert_eq!(app.queues().last(), Some(&vec![]));
     assert_eq!(app.toolbox.state(), SetupState::Ready);
     assert_eq!(
         app.releases.fetches()[fetched_before..],
         [crate::releases::fake::YTDLP_URL]
     );
+}
+
+#[test]
+fn the_queue_waits_while_a_broken_yt_dlp_cant_be_restored() {
+    let app = App::start();
+    app.processes.break_tool("yt-dlp.exe");
+    app.releases.set_online(false);
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+
+    app.downloader.run();
+
+    assert!(matches!(app.toolbox.state(), SetupState::Failed { .. }));
+    assert_eq!(ytdlp_runs(&app).len(), 1);
+    assert_eq!(titles(&app.downloader), ["second"]);
+    assert_eq!(statuses(&app.downloader), [DownloadStatus::Queued]);
+}
+
+#[test]
+fn the_queue_goes_on_once_a_setup_already_running_restores_yt_dlp() {
+    let app = App::start();
+    app.ytdlp_downloads("second", b"the video", &[]);
+    fs::remove_file(app.dir.path().join("tools").join("yt-dlp.exe")).unwrap();
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    app.releases.hold_fetches();
+
+    std::thread::scope(|scope| {
+        // A Probe found yt-dlp broken first and restores it.
+        assert!(app.toolbox.run(Tool::YtDlp, &[], None).is_err());
+        scope.spawn(|| app.toolbox.prepare());
+        app.releases.wait_until_fetch_held();
+        let worker = scope.spawn(|| app.downloader.run());
+        // The first Download is dropped once yt-dlp fails to start for it.
+        while app.downloader.state().len() != 1 {
+            std::thread::yield_now();
+        }
+        app.releases.release_fetches();
+        worker.join().unwrap();
+    });
+
+    assert_eq!(app.toolbox.state(), SetupState::Ready);
+    assert_eq!(titles(&app.downloader), ["second"]);
+    assert!(matches!(
+        last_status(&app.downloader),
+        Some(DownloadStatus::Done { .. })
+    ));
 }
 
 #[test]
@@ -899,9 +966,8 @@ fn a_youtube_download_runs_with_the_sign_in_browser_and_another_site_without() {
         .unwrap();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
-    app.downloader.download(
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(
         &video(
             "https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/",
             "Rutube",
@@ -924,16 +990,109 @@ fn a_youtube_download_runs_with_the_sign_in_browser_and_another_site_without() {
     assert_eq!(browsers, [Some("firefox".into()), None]);
 }
 
+/// A Video with its own id, so that its Downloads are no duplicates of
+/// another's.
+fn video_with_id(id: &str, title: &str) -> Video {
+    Video {
+        id: id.into(),
+        url: format!("https://www.youtube.com/watch?v={id}"),
+        ..video(URL, title)
+    }
+}
+
+/// The id of the Video yt-dlp is run for, as [`video_with_id`] puts it at
+/// the end of its URL.
+fn id_of(args: &[OsString]) -> &str {
+    let url = args.last().unwrap().to_str().unwrap();
+    url.rsplit('=').next().unwrap()
+}
+
+/// The ids of the Videos yt-dlp was run for, in order.
+fn ids_received(app: &App) -> Vec<String> {
+    ytdlp_runs(app)
+        .into_iter()
+        .map(|args| id_of(&args).to_owned())
+        .collect()
+}
+
+/// Makes yt-dlp act like it downloads any Video, saving its id as its
+/// content.
+fn ytdlp_downloads_any(app: &App) {
+    ytdlp_fails_for(app, None);
+}
+
+/// Makes yt-dlp fail the Video with the id `failing`, and act like it
+/// downloads any other.
+fn ytdlp_fails_for(app: &App, failing: Option<&'static str>) {
+    app.processes.script("yt-dlp.exe", move |args| {
+        let id = id_of(args);
+        if Some(id) == failing {
+            return Output {
+                status: exit_status(1),
+                stdout: Vec::new(),
+                stderr: b"ERROR: Read timed out.".to_vec(),
+            };
+        }
+        let dir = PathBuf::from(after(args, "-P"));
+        let name = after(args, "-o").to_str().unwrap().replace("%(id)s", id);
+        let file = dir.join(name.replace("%(ext)s", "mp4"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&file, id).unwrap();
+        Output {
+            status: exit_status(0),
+            stdout: format!("{}\n", serde_json::to_string(&file).unwrap()).into_bytes(),
+            stderr: Vec::new(),
+        }
+    });
+}
+
 #[test]
-fn a_download_asked_for_while_another_runs_is_ignored() {
+fn queued_downloads_run_one_at_a_time_in_the_order_added() {
+    let app = App::start();
+    ytdlp_downloads_any(&app);
+
+    for id in ["first", "second", "third"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    let queued = statuses(&app.downloader);
+    app.downloader.run();
+
+    assert_eq!(queued, vec![DownloadStatus::Queued; 3]);
+    assert_eq!(ids_received(&app), ["first", "second", "third"]);
+    let saved: Vec<PathBuf> = app
+        .downloader
+        .state()
+        .into_iter()
+        .map(|download| match download.status {
+            DownloadStatus::Done { file } => file,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        saved,
+        ["first", "second", "third"].map(|title| app.save_dir().join(format!("{title}.mp4")))
+    );
+}
+
+#[test]
+fn a_download_added_while_another_runs_waits_for_it_and_runs_next() {
     let app = App::start();
     let downloader = Arc::downgrade(&app.downloader);
-    let statuses_seen = Arc::new(Mutex::new(Vec::new()));
-    let seen = statuses_seen.clone();
-    app.processes.script("yt-dlp.exe", move |_| {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen_by_ytdlp = seen.clone();
+    app.processes.script("yt-dlp.exe", move |args| {
         let downloader = downloader.upgrade().unwrap();
-        downloader.download(&video(URL, "Another"), VideoPreset::P1080.into());
-        seen.lock().unwrap().push(downloader.state().unwrap());
+        let url = args.last().unwrap().to_str().unwrap().to_owned();
+        if url.ends_with("first") {
+            downloader.add(
+                &video_with_id("second", "second"),
+                VideoPreset::P1080.into(),
+            );
+            // A second worker leaves the Queue to the one running.
+            downloader.run();
+        }
+        seen_by_ytdlp.lock().unwrap().push(statuses(&downloader));
         Output {
             status: exit_status(1),
             stdout: Vec::new(),
@@ -941,12 +1100,223 @@ fn a_download_asked_for_while_another_runs_is_ignored() {
         }
     });
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video_with_id("first", "first"), VideoPreset::P1080.into());
 
-    let seen = statuses_seen.lock().unwrap();
-    assert_eq!(seen.len(), 1, "yt-dlp ran once");
-    assert_eq!(seen[0].video.title, "Me at the zoo");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "yt-dlp ran once for each");
+    assert_eq!(
+        seen[0],
+        [
+            DownloadStatus::starting(Receiving::Video),
+            DownloadStatus::Queued
+        ]
+    );
+    assert!(matches!(seen[1][0], DownloadStatus::Failed { .. }));
+    assert_eq!(seen[1][1], DownloadStatus::starting(Receiving::Video));
+}
+
+#[test]
+fn the_same_video_with_the_same_preset_is_not_added_while_queued() {
+    let app = App::start();
+    let zoo = video(URL, "Me at the zoo");
+    app.downloader.add(&zoo, VideoPreset::P1080.into());
+    let events_before = app.events.events().len();
+
+    let added = app.downloader.add(&zoo, VideoPreset::P1080.into());
+
+    let queued = app.downloader.state()[0].id;
+    assert_eq!(added, Added::Duplicate { of: queued });
+    assert_eq!(statuses(&app.downloader), [DownloadStatus::Queued]);
+    assert_eq!(app.events.events().len(), events_before, "nothing is sent");
+}
+
+#[test]
+fn the_same_video_with_the_same_preset_is_not_added_while_it_downloads() {
+    let app = App::start();
+    let downloader = Arc::downgrade(&app.downloader);
+    let added = Arc::new(Mutex::new(None));
+    let added_by_ytdlp = added.clone();
+    app.processes.script("yt-dlp.exe", move |_| {
+        let downloader = downloader.upgrade().unwrap();
+        *added_by_ytdlp.lock().unwrap() =
+            Some(downloader.add(&video(URL, "Me at the zoo"), VideoPreset::P1080.into()));
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: b"ERROR: stopped".to_vec(),
+        }
+    });
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    let running = app.downloader.state()[0].id;
+    assert_eq!(
+        *added.lock().unwrap(),
+        Some(Added::Duplicate { of: running })
+    );
+    assert_eq!(app.downloader.state().len(), 1);
+}
+
+#[test]
+fn the_same_video_is_added_with_another_preset_or_once_done() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+    let zoo = video(URL, "Me at the zoo");
+    app.download(&zoo, VideoPreset::P1080.into());
+
+    let added = [
+        app.downloader.add(&zoo, VideoPreset::P1080.into()),
+        app.downloader.add(&zoo, VideoPreset::P720.into()),
+        app.downloader.add(&zoo, AudioPreset::Mp3.into()),
+        app.downloader.add(
+            &zoo,
+            Content::MediaWithTranscript(AudioPreset::M4a.into(), manual("en")),
+        ),
+        app.downloader.add(&zoo, Content::Transcript(manual("en"))),
+        app.downloader.add(&zoo, Content::Transcript(manual("ru"))),
+        // The media with another Transcript, or with none, is still the
+        // same Preset.
+        app.downloader.add(
+            &zoo,
+            Content::MediaWithTranscript(VideoPreset::P720.into(), manual("en")),
+        ),
+        app.downloader.add(&zoo, Content::Transcript(manual("en"))),
+    ];
+
+    let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
+    assert_eq!(
+        added,
+        [
+            Added::Queued,
+            Added::Queued,
+            Added::Queued,
+            Added::Queued,
+            Added::Queued,
+            Added::Queued,
+            // The 720p, and the English Transcript alone.
+            Added::Duplicate { of: ids[2] },
+            Added::Duplicate { of: ids[5] },
+        ]
+    );
+}
+
+#[test]
+fn a_failed_download_retried_goes_to_the_end_of_the_queue() {
+    let app = App::start();
+    ytdlp_fails_for(&app, Some("first"));
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    app.downloader.run();
+    let failed = app.downloader.state()[0].id;
+    ytdlp_downloads_any(&app);
+    app.downloader
+        .add(&video_with_id("third", "third"), VideoPreset::P1080.into());
+
+    let retried = app.downloader.retry(failed);
+    let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
+    app.downloader.run();
+
+    assert_eq!(retried, Some(Added::Queued));
+    assert_eq!(ids[2], failed);
+    assert_eq!(ids_received(&app), ["first", "second", "third", "first"]);
+    assert!(
+        statuses(&app.downloader)
+            .iter()
+            .all(|status| matches!(status, DownloadStatus::Done { .. }))
+    );
+}
+
+#[test]
+fn a_failed_download_is_not_retried_while_its_duplicate_is_queued() {
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+    let zoo = video(URL, "Me at the zoo");
+    app.download(&zoo, VideoPreset::P1080.into());
+    let failed = app.downloader.state()[0].id;
+    app.downloader.add(&zoo, VideoPreset::P1080.into());
+    let queued = app.downloader.state()[1].id;
+
+    assert_eq!(
+        app.downloader.retry(failed),
+        Some(Added::Duplicate { of: queued })
+    );
+    assert!(matches!(
+        statuses(&app.downloader)[..],
+        [DownloadStatus::Failed { .. }, DownloadStatus::Queued]
+    ));
+}
+
+#[test]
+fn only_a_failed_download_is_retried() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.downloader
+        .add(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
+
+    for download in app.downloader.state() {
+        assert_eq!(app.downloader.retry(download.id), None);
+    }
+    assert_eq!(app.downloader.retry(99), None);
+}
+
+#[test]
+fn a_done_download_is_removed_and_the_others_stay() {
+    let app = App::start();
+    ytdlp_fails_for(&app, Some("failed"));
+    for id in ["done", "failed"] {
+        app.download(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    app.downloader.add(
+        &video_with_id("queued", "queued"),
+        VideoPreset::P1080.into(),
+    );
+    let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
+
+    for id in &ids {
+        app.downloader.remove(*id);
+    }
+
+    assert_eq!(titles(&app.downloader), ["failed", "queued"]);
+    assert_eq!(app.queues().last().unwrap().len(), 2, "the change is sent");
+}
+
+#[test]
+fn clearing_done_downloads_leaves_the_others() {
+    let app = App::start();
+    ytdlp_fails_for(&app, Some("failed"));
+    for id in ["done", "failed", "also done"] {
+        app.download(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    app.downloader.add(
+        &video_with_id("queued", "queued"),
+        VideoPreset::P1080.into(),
+    );
+
+    app.downloader.clear_done();
+
+    assert_eq!(titles(&app.downloader), ["failed", "queued"]);
+    assert_eq!(app.queues().last().unwrap().len(), 2, "the change is sent");
+}
+
+#[test]
+fn a_removed_download_no_longer_opens_its_file() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    let id = app.downloader.state()[0].id;
+    assert_eq!(
+        app.downloader.saved_file(id),
+        Some(app.save_dir().join("Me at the zoo.mp4"))
+    );
+
+    app.downloader.remove(id);
+
+    assert_eq!(app.downloader.saved_file(id), None);
+    assert!(app.save_dir().join("Me at the zoo.mp4").exists());
 }
 
 #[test]
@@ -955,8 +1325,7 @@ fn a_download_asks_yt_dlp_for_this_one_video_merged_into_an_mp4() {
     let url = "https://www.youtube.com/watch?v=jNQXAC9IVRw&list=PL123";
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader
-        .download(&video(url, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(url, "Me at the zoo"), VideoPreset::P1080.into());
 
     let (_, args) = app.processes.runs().pop().unwrap();
     assert!(args.contains(&"--no-playlist".into()), "{args:?}");
@@ -971,8 +1340,7 @@ fn a_video_preset_limits_the_resolution_and_prefers_h264_and_aac_at_equal_resolu
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     for preset in [VideoPreset::Best, VideoPreset::P1440, VideoPreset::P480] {
-        app.downloader
-            .download(&video(URL, "Me at the zoo"), preset.into());
+        app.download(&video(URL, "Me at the zoo"), preset.into());
     }
 
     let sorts: Vec<OsString> = ytdlp_runs(&app)
@@ -994,8 +1362,7 @@ fn a_download_takes_separate_video_and_audio_over_a_format_with_both() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     // Preferring AAC would otherwise pick a Format with both, which YouTube
     // sends slowly over HLS; a site with only such Formats falls back to one.
@@ -1008,10 +1375,8 @@ fn each_video_preset_of_a_video_keeps_a_partial_of_its_own() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::Best.into());
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::Best.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     let names: Vec<OsString> = ytdlp_runs(&app)
         .iter()
@@ -1025,8 +1390,7 @@ fn m4a_keeps_the_sites_aac_sound_and_encodes_other_sound_at_192k() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the sound", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
+    app.download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
 
     // ffmpeg copies AAC sound into an M4A, where yt-dlp ignores the
     // quality; only a site without AAC gets its sound encoded.
@@ -1044,8 +1408,7 @@ fn mp3_encodes_the_best_sound_as_high_quality_vbr() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the sound", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
+    app.download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
 
     // LAME's VBR quality 1 makes about 190–250 kbit/s.
     let (_, args) = app.processes.runs().pop().unwrap();
@@ -1062,10 +1425,8 @@ fn each_audio_preset_of_a_video_keeps_a_partial_of_its_own() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the sound", &[]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
+    app.download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
+    app.download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
 
     let names: Vec<OsString> = ytdlp_runs(&app)
         .iter()
@@ -1079,11 +1440,10 @@ fn a_failed_audio_download_is_retried_with_its_audio_preset() {
     let app = App::start();
     app.processes
         .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
+    app.download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
     app.ytdlp_downloads(ID, b"the sound", &[]);
 
-    app.downloader.retry();
+    app.retry();
 
     assert_eq!(
         app.status(),
@@ -1113,16 +1473,10 @@ fn a_format_in_fragments_reports_the_share_of_fragments_received() {
     );
     app.ytdlp_downloads(ID, b"the video", &[fragments]);
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-    let statuses: Vec<DownloadStatus> = app
-        .download_states()
-        .into_iter()
-        .map(|download| download.unwrap().status)
-        .collect();
     assert_eq!(
-        statuses[1],
+        app.download_statuses()[2],
         DownloadStatus::Downloading {
             receiving: Receiving::Video,
             percent: Some(25.0),
@@ -1180,8 +1534,7 @@ fn a_format_in_fragments_shows_the_share_of_fragments_rather_than_its_size_estim
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     assert_eq!(
         percents(&app),
@@ -1202,8 +1555,7 @@ fn a_format_in_fragments_among_separate_formats_counts_by_its_fragments() {
         ],
     );
 
-    app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     // Half of the video's fragments are half its told size.
     assert_eq!(
@@ -1262,7 +1614,7 @@ fn a_transcript_alone_is_saved_as_text_under_the_title_without_the_media() {
     let app = App::start();
     app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::Transcript(manual("en")),
     );
@@ -1271,6 +1623,7 @@ fn a_transcript_alone_is_saved_as_text_under_the_title_without_the_media() {
     assert_eq!(
         app.download_statuses(),
         [
+            DownloadStatus::Queued,
             DownloadStatus::starting(Receiving::Transcript),
             DownloadStatus::Done {
                 file: saved.clone()
@@ -1300,8 +1653,7 @@ fn a_transcript_asks_for_the_subtitles_or_for_the_captions_of_what_is_spoken() {
     };
 
     for language in [manual("en"), automatic("en")] {
-        app.downloader
-            .download(&video, Content::Transcript(language));
+        app.download(&video, Content::Transcript(language));
     }
 
     let runs = ytdlp_runs(&app);
@@ -1331,7 +1683,7 @@ fn a_transcript_of_captions_has_neither_their_timing_nor_the_lines_they_repeat()
     let app = App::start();
     app.ytdlp_downloads_with_subtitles(ID, b"the video", YOUTUBE_CAPTIONS);
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::Transcript(automatic("en")),
     );
@@ -1358,7 +1710,7 @@ fn a_transcript_with_the_media_is_saved_next_to_it_under_the_same_name() {
     let app = App::start();
     app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
     );
@@ -1369,6 +1721,7 @@ fn a_transcript_with_the_media_is_saved_next_to_it_under_the_same_name() {
     assert_eq!(
         app.download_statuses(),
         [
+            DownloadStatus::Queued,
             DownloadStatus::starting(Receiving::Transcript),
             DownloadStatus::starting(Receiving::Video),
             DownloadStatus::Processing,
@@ -1400,7 +1753,7 @@ fn the_media_and_its_transcript_take_the_first_number_free_for_both() {
     .unwrap();
     app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::MediaWithTranscript(AudioPreset::Mp3.into(), manual("en")),
     );
@@ -1424,7 +1777,7 @@ fn a_transcript_yt_dlp_doesnt_save_fails_the_download_before_the_media() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
     );
@@ -1443,7 +1796,7 @@ fn a_failed_transcript_is_retried_with_the_media_and_the_transcript() {
     let app = App::start();
     app.processes
         .fail_with("yt-dlp.exe", b"ERROR: Unable to download video subtitles\n");
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
     );
@@ -1455,7 +1808,7 @@ fn a_failed_transcript_is_retried_with_the_media_and_the_transcript() {
     );
     app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
 
-    app.downloader.retry();
+    app.retry();
 
     assert_eq!(
         file_names(&app.save_dir()),
@@ -1468,12 +1821,12 @@ fn a_broken_yt_dlp_is_restored_and_the_transcript_is_dropped() {
     let app = App::start();
     app.processes.break_tool("yt-dlp.exe");
 
-    app.downloader.download(
+    app.download(
         &video(URL, "Me at the zoo"),
         Content::Transcript(manual("en")),
     );
 
-    assert_eq!(app.downloader.state(), None);
+    assert_eq!(app.downloader.state(), []);
     assert_eq!(app.toolbox.state(), SetupState::Ready);
 }
 
@@ -1488,24 +1841,20 @@ fn downloads_a_real_video_with_the_real_yt_dlp() {
     let events = Arc::new(RecordingSink::default());
     let (video, _, downloader) = probe_with_real_tools(dir.path(), URL, events.clone());
 
-    downloader.download(&video, VideoPreset::P1080.into());
+    download(&downloader, &video, VideoPreset::P1080.into());
 
     let saved = dir.path().join("Downloads").join("Me at the zoo.mp4");
     assert_eq!(
-        downloader.state().map(|download| download.status),
+        last_status(&downloader),
         Some(DownloadStatus::Done {
             file: saved.clone()
         })
     );
     assert!(fs::metadata(&saved).unwrap().len() > 100_000);
     assert_eq!(file_names(&dir.path().join("partials")), [] as [String; 0]);
-    let statuses: Vec<DownloadStatus> = events
-        .events()
+    let statuses: Vec<DownloadStatus> = queues(&events)
         .into_iter()
-        .filter_map(|event| match event {
-            AppEvent::Download(Some(download)) => Some(download.status),
-            _ => None,
-        })
+        .filter_map(|queue| Some(queue.last()?.status.clone()))
         .collect();
     // "Me at the zoo" comes as separate video and audio; one progress
     // covers both, so it never goes back.
@@ -1606,9 +1955,9 @@ fn video_presets_pick_the_resolution_then_h264_and_aac_with_the_real_yt_dlp() {
         (VideoPreset::P1440, 1440, None),
         (VideoPreset::P1080, 1080, Some("h264")),
     ] {
-        downloader.download(&video, preset.into());
+        download(&downloader, &video, preset.into());
 
-        let Some(DownloadStatus::Done { file }) = downloader.state().map(|it| it.status) else {
+        let Some(DownloadStatus::Done { file }) = last_status(&downloader) else {
             panic!("{preset:?}: {:?}", downloader.state());
         };
         assert_eq!(file.extension().unwrap(), "mp4", "{preset:?}");
@@ -1638,11 +1987,11 @@ fn audio_presets_save_the_sound_alone_with_the_real_yt_dlp() {
         (AudioPreset::M4a, "Me at the zoo.m4a", "aac"),
         (AudioPreset::Mp3, "Me at the zoo.mp3", "mp3"),
     ] {
-        downloader.download(&video, preset.into());
+        download(&downloader, &video, preset.into());
 
         let saved = dir.path().join("Downloads").join(name);
         assert_eq!(
-            downloader.state().map(|download| download.status),
+            last_status(&downloader),
             Some(DownloadStatus::Done {
                 file: saved.clone()
             }),
@@ -1655,18 +2004,10 @@ fn audio_presets_save_the_sound_alone_with_the_real_yt_dlp() {
         assert_eq!(tracks[0]["codec_name"], codec, "{preset:?}");
     }
     assert_eq!(file_names(&dir.path().join("partials")), [] as [String; 0]);
-    let processed = events
-        .events()
-        .into_iter()
-        .filter(|event| {
-            matches!(
-                event,
-                AppEvent::Download(Some(Download {
-                    status: DownloadStatus::Processing,
-                    ..
-                }))
-            )
-        })
+    let processed = queues(&events)
+        .iter()
+        .flatten()
+        .filter(|download| download.status == DownloadStatus::Processing)
         .count();
     assert_eq!(processed, 2);
 }
@@ -1690,9 +2031,9 @@ fn transcripts_save_text_alone_with_the_real_yt_dlp() {
     // The captions aren't offered beside the subtitles in English, but
     // they are what repeats its lines.
     for language in [manual("en"), automatic("en")] {
-        downloader.download(&video, Content::Transcript(language.clone()));
+        download(&downloader, &video, Content::Transcript(language.clone()));
 
-        let Some(DownloadStatus::Done { file }) = downloader.state().map(|it| it.status) else {
+        let Some(DownloadStatus::Done { file }) = last_status(&downloader) else {
             panic!("{language:?}: {:?}", downloader.state());
         };
         assert_eq!(file.extension().unwrap(), "txt", "{language:?}");

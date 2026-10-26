@@ -97,6 +97,35 @@ fn first_run_installs_all_four_tools_and_becomes_ready() {
 }
 
 #[test]
+fn a_prepare_while_another_prepares_waits_for_it_to_end_without_downloading_again() {
+    let app = App::start();
+    app.releases.hold_fetches();
+
+    std::thread::scope(|scope| {
+        let toolbox = &app.toolbox;
+        scope.spawn(|| toolbox.prepare());
+        app.releases.wait_until_fetch_held();
+        let (ended, state_after) = std::sync::mpsc::channel();
+        scope.spawn(move || {
+            toolbox.prepare();
+            ended.send(toolbox.state()).unwrap();
+        });
+        let returned_early = state_after.recv_timeout(Duration::from_millis(200));
+        // Let the first prepare end before asserting, or a failure would
+        // leave the scope waiting for it.
+        app.releases.release_fetches();
+        assert_eq!(
+            returned_early.ok(),
+            None,
+            "the second prepare returned while the first one ran"
+        );
+        assert_eq!(state_after.recv().unwrap(), SetupState::Ready);
+    });
+
+    assert_eq!(app.releases.fetches().len(), 3);
+}
+
+#[test]
 fn setup_reports_download_progress_up_to_the_total_before_ready() {
     let app = App::start();
 

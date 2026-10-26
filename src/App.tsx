@@ -15,7 +15,7 @@ function App() {
   const [settings, setSettings] = useState<SettingsState>({
     signInBrowser: null,
   });
-  const [download, setDownload] = useState<Download | null>(null);
+  const [queue, setQueue] = useState<Download[]>([]);
 
   useEffect(
     () =>
@@ -30,8 +30,8 @@ function App() {
           case "settings":
             setSettings(event.data);
             break;
-          case "download":
-            setDownload(event.data);
+          case "queue":
+            setQueue(event.data);
             break;
         }
       }),
@@ -44,7 +44,7 @@ function App() {
         <SetupScreen state={setup} />
       )}
       {setup.status === "ready" && (
-        <MainScreen probe={probe} settings={settings} download={download} />
+        <MainScreen probe={probe} settings={settings} queue={queue} />
       )}
     </main>
   );
