@@ -1124,7 +1124,8 @@ fn the_same_video_with_the_same_preset_is_not_added_while_queued() {
 
     let added = app.downloader.add(&zoo, VideoPreset::P1080.into());
 
-    assert_eq!(added, Added::Duplicate);
+    let queued = app.downloader.state()[0].id;
+    assert_eq!(added, Added::Duplicate { of: queued });
     assert_eq!(statuses(&app.downloader), [DownloadStatus::Queued]);
     assert_eq!(app.events.events().len(), events_before, "nothing is sent");
 }
@@ -1148,7 +1149,11 @@ fn the_same_video_with_the_same_preset_is_not_added_while_it_downloads() {
 
     app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-    assert_eq!(*added.lock().unwrap(), Some(Added::Duplicate));
+    let running = app.downloader.state()[0].id;
+    assert_eq!(
+        *added.lock().unwrap(),
+        Some(Added::Duplicate { of: running })
+    );
     assert_eq!(app.downloader.state().len(), 1);
 }
 
@@ -1178,6 +1183,7 @@ fn the_same_video_is_added_with_another_preset_or_once_done() {
         app.downloader.add(&zoo, Content::Transcript(manual("en"))),
     ];
 
+    let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
     assert_eq!(
         added,
         [
@@ -1187,8 +1193,9 @@ fn the_same_video_is_added_with_another_preset_or_once_done() {
             Added::Queued,
             Added::Queued,
             Added::Queued,
-            Added::Duplicate,
-            Added::Duplicate,
+            // The 720p, and the English Transcript alone.
+            Added::Duplicate { of: ids[2] },
+            Added::Duplicate { of: ids[5] },
         ]
     );
 }
@@ -1230,8 +1237,12 @@ fn a_failed_download_is_not_retried_while_its_duplicate_is_queued() {
     app.download(&zoo, VideoPreset::P1080.into());
     let failed = app.downloader.state()[0].id;
     app.downloader.add(&zoo, VideoPreset::P1080.into());
+    let queued = app.downloader.state()[1].id;
 
-    assert_eq!(app.downloader.retry(failed), Some(Added::Duplicate));
+    assert_eq!(
+        app.downloader.retry(failed),
+        Some(Added::Duplicate { of: queued })
+    );
     assert!(matches!(
         statuses(&app.downloader)[..],
         [DownloadStatus::Failed { .. }, DownloadStatus::Queued]

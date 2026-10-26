@@ -15,6 +15,7 @@ import {
   type Download,
   type Preset,
 } from "@/backend";
+import { useDuplicateWarning } from "@/lib/duplicate";
 import { formatDuration } from "@/lib/format";
 import { strings } from "@/strings";
 
@@ -63,11 +64,19 @@ function savesText({ preset, transcriptLanguage }: Download) {
     : strings.queue.withTranscript(name);
 }
 
-/** A Download in the Queue: its Video, what it saves and its status. */
-export function DownloadCard({ download }: { download: Download }) {
+/**
+ * A Download in the `queue`: its Video, what it saves and its status.
+ */
+export function DownloadCard({
+  download,
+  queue,
+}: {
+  download: Download;
+  queue: Download[];
+}) {
   const titleId = useId();
   const [actionFailed, setActionFailed] = useState(false);
-  const [duplicate, setDuplicate] = useState(false);
+  const duplicate = useDuplicateWarning(queue);
 
   function openOrShowFile(action: (id: number) => Promise<void>) {
     setActionFailed(false);
@@ -75,9 +84,11 @@ export function DownloadCard({ download }: { download: Download }) {
   }
 
   function retry() {
-    setDuplicate(false);
+    duplicate.clear();
     retryDownload(download.id)
-      .then((added) => setDuplicate(added === "duplicate"))
+      .then(duplicate.note)
+      // It fails only for a Download no longer Failed, which the Queue's
+      // next event shows.
       .catch(() => {});
   }
 
@@ -167,7 +178,7 @@ export function DownloadCard({ download }: { download: Download }) {
               <div>
                 <Button onClick={retry}>{strings.download.retry}</Button>
               </div>
-              {duplicate && (
+              {duplicate.shown && (
                 <p role="alert" className="text-destructive">
                   {strings.download.duplicate}
                 </p>

@@ -134,9 +134,9 @@ impl Content {
         }
     }
 
-    /// What tells it apart from another Download of the same Video: the
+    /// What a duplicate Download of the same Video shares with it: the
     /// Preset, or the language of the Transcript alone.
-    fn key(&self) -> (Option<Preset>, Option<&str>) {
+    fn duplicate_key(&self) -> (Option<Preset>, Option<&str>) {
         match self {
             Self::Transcript(language) => (None, Some(&language.language)),
             _ => (self.preset(), None),
@@ -173,14 +173,15 @@ impl From<AudioPreset> for Content {
 
 /// What became of a Download asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "status", rename_all = "camelCase")]
 pub enum Added {
     /// It waits in the Queue.
     Queued,
     /// A Download of the same Video with the same Preset, or of its
     /// Transcript alone in the same language, is Queued or running
-    /// already; nothing was added.
-    Duplicate,
+    /// already; nothing was added. `of` is that Download's id, so that the
+    /// UI tells of it only while it is Queued or running.
+    Duplicate { of: u64 },
 }
 
 /// The Downloads in the order they run.
@@ -221,13 +222,17 @@ impl Queue {
             .find(|entry| entry.download.id == id)
     }
 
-    /// Whether a Download of `content` of `video` is Queued or running.
-    fn has_duplicate(&self, video: &Video, content: &Content) -> bool {
-        self.entries.iter().any(|entry| {
-            entry.download.status.is_active()
-                && entry.video.id == video.id
-                && entry.content.key() == content.key()
-        })
+    /// The id of the Queued or running Download that one of `content` of
+    /// `video` would duplicate.
+    fn duplicate_of(&self, video: &Video, content: &Content) -> Option<u64> {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.download.status.is_active()
+                    && entry.video.id == video.id
+                    && entry.content.duplicate_key() == content.duplicate_key()
+            })
+            .map(|entry| entry.download.id)
     }
 
     /// Starts the first Queued Download and returns what it saves of which
@@ -317,8 +322,8 @@ impl Downloader {
     /// Transcript alone in the same language, is Queued or running.
     pub fn add(&self, video: &Video, content: Content) -> Added {
         self.update(|queue| {
-            if queue.has_duplicate(video, &content) {
-                return Added::Duplicate;
+            if let Some(of) = queue.duplicate_of(video, &content) {
+                return Added::Duplicate { of };
             }
             let id = queue.next_id;
             queue.next_id += 1;
@@ -348,8 +353,8 @@ impl Downloader {
                     && matches!(entry.download.status, DownloadStatus::Failed { .. })
             })?;
             let failed = &queue.entries[at];
-            if queue.has_duplicate(&failed.video, &failed.content) {
-                return Some(Added::Duplicate);
+            if let Some(of) = queue.duplicate_of(&failed.video, &failed.content) {
+                return Some(Added::Duplicate { of });
             }
             let mut entry = queue.entries.remove(at);
             entry.download.status = DownloadStatus::Queued;

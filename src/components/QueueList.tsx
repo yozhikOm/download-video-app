@@ -23,7 +23,7 @@ export function QueueList({ queue }: { queue: Download[] }) {
         {queue.map((download) => (
           // Each Download keeps its own card, and with it its own errors.
           <li key={download.id}>
-            <DownloadCard download={download} />
+            <DownloadCard download={download} queue={queue} />
           </li>
         ))}
       </ul>

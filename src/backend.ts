@@ -174,9 +174,9 @@ export type AppEvent =
 /**
  * What became of a Download asked for: it waits in the Queue, or nothing
  * was added since the same Video with the same Preset, or its Transcript
- * alone in the same language, is Queued or running.
+ * alone in the same language, is Queued or running; `of` is that one's id.
  */
-export type Added = "queued" | "duplicate";
+export type Added = { status: "queued" } | { status: "duplicate"; of: number };
 
 export type AppInfo = {
   name: string;

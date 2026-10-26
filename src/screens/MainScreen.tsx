@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
+import { useDuplicateWarning } from "@/lib/duplicate";
 import {
   addDownload,
   appInfo as fetchAppInfo,
@@ -99,8 +100,9 @@ export function MainScreen({ probe, settings, queue }: Props) {
     null,
   );
   // «Скачать» added nothing: the same Download is Queued or running. The
-  // warning stays until the choice, the Video or the URL changes.
-  const [duplicate, setDuplicate] = useState(false);
+  // warning stays while it is, until the choice, the Video or the URL
+  // changes.
+  const duplicate = useDuplicateWarning(queue);
   // The tab, Presets and Transcript the user chose, for the Probe they were
   // chosen in; each Probe starts on the Video tab with its own defaults and
   // without the Transcript, while a card that comes back keeps the choice.
@@ -119,7 +121,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
     setUrl(value);
     // The same URL back in the field brings its Video back.
     setPreviewHidden(value.trim() !== submittedUrl);
-    setDuplicate(false);
+    duplicate.clear();
   }
 
   function submit(event: SubmitEvent<HTMLFormElement>) {
@@ -129,7 +131,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
       setSubmittedUrl(trimmed);
       setPreviewHidden(false);
       setSupersededProbe(probe);
-      setDuplicate(false);
+      duplicate.clear();
       void probeUrl(trimmed);
     }
   }
@@ -222,25 +224,25 @@ export function MainScreen({ probe, settings, queue }: Props) {
           choice={cardChoiceFor(probe)}
           onChoose={(choice) => {
             setCardChoice({ probe, choice });
-            setDuplicate(false);
+            duplicate.clear();
           }}
           onDownload={() => {
             // The Download in the Queue takes over from the Video's card.
             setPreviewHidden(true);
-            setDuplicate(false);
+            duplicate.clear();
             // With nothing added, the card comes back.
             addDownload(...chosenDownload(probe))
               .then((added) => {
-                if (added === "duplicate") {
+                if (added.status === "duplicate") {
                   setPreviewHidden(false);
-                  setDuplicate(true);
                 }
+                duplicate.note(added);
               })
               .catch(() => setPreviewHidden(false));
           }}
         />
       )}
-      {duplicate && probe.status === "probed" && previewShown && (
+      {duplicate.shown && probe.status === "probed" && previewShown && (
         <p role="alert" className="text-sm text-destructive">
           {strings.download.duplicate}
         </p>

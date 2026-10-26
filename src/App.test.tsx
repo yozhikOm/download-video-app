@@ -11,6 +11,7 @@ import {
 import { expect, test } from "vitest";
 import App from "./App";
 import type {
+  Added,
   AppEvent,
   AudioPreset,
   Browser,
@@ -74,15 +75,20 @@ function queued(
 /**
  * Mocks the backend; `setup`, `probe`, `settings` and `queue` push a state
  * to the UI's channel, and `download` pushes a Queue of one Download.
- * Adding or retrying a Download finds a `duplicate` when told.
+ * Adding or retrying a Download finds a duplicate of the Download with id
+ * `duplicateOf` when told.
  */
 function mockBackend({
   appInfoFails = false,
   savingFails = false,
   openingFails = false,
   downloadFails = false,
-  duplicate = false,
+  duplicateOf = null as number | null,
 } = {}) {
+  const added: Added =
+    duplicateOf === null
+      ? { status: "queued" }
+      : { status: "duplicate", of: duplicateOf };
   let channel: Channel<AppEvent> | undefined;
   const commands: string[] = [];
   const probedUrls: string[] = [];
@@ -115,9 +121,9 @@ function mockBackend({
         downloadedTranscripts.push(
           (args as { transcript: string | null }).transcript,
         );
-        return duplicate ? "duplicate" : "queued";
+        return added;
       case "retry_download":
-        return duplicate ? "duplicate" : "queued";
+        return added;
       case "open_downloaded_file":
         if (openingFails) {
           throw new Error("file is gone");
@@ -1093,7 +1099,8 @@ test("the Queue shows each Download's thumbnail, title, Preset and status in ord
 });
 
 test("a duplicate of a Queued or running Download gets a warning and the Video's card stays", async () => {
-  const backend = await startReady({ duplicate: true });
+  const backend = await startReady({ duplicateOf: 1 });
+  await backend.download({ video: zoo, status: "queued" });
   await backend.probe(probed(zoo));
 
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
@@ -1101,18 +1108,33 @@ test("a duplicate of a Queued or running Download gets a warning and the Video's
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "уже скачивается или ждёт в очереди",
   );
-  expect(
-    screen.getByRole("heading", { name: "Me at the zoo" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Скачать" })).toBeInTheDocument();
 });
 
 test("the duplicate warning goes once another Preset is chosen", async () => {
-  const backend = await startReady({ duplicate: true });
+  const backend = await startReady({ duplicateOf: 1 });
+  await backend.download({ video: zoo, status: "queued" });
   await backend.probe(probed(zoo));
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
   await screen.findByRole("alert");
 
   fireEvent.click(screen.getByRole("radio", { name: "720p" }));
+
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("the duplicate warning goes once the Download it duplicates is Done", async () => {
+  const backend = await startReady({ duplicateOf: 1 });
+  await backend.download({ video: zoo, status: "processing" });
+  await backend.probe(probed(zoo));
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await screen.findByRole("alert");
+
+  await backend.download({
+    video: zoo,
+    status: "done",
+    file: "C:\\Downloads\\Me at the zoo.mp4",
+  });
 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
@@ -1222,21 +1244,40 @@ test("a Failed Download is retried from its card", async () => {
   );
 });
 
+const failedZoo = queued(1, {
+  video: zoo,
+  status: "failed",
+  message: "ERROR: unable to download video data",
+});
+
 test("a Failed Download whose duplicate is in the Queue says so on retry", async () => {
-  const backend = await startReady({ duplicate: true });
-  await backend.download({
-    video: zoo,
-    status: "failed",
-    message: "ERROR: unable to download video data",
-  });
+  const backend = await startReady({ duplicateOf: 2 });
+  await backend.queue(failedZoo, queued(2, { video: zoo, status: "queued" }));
 
   fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
 
   await waitFor(() =>
     expect(
-      screen.getByRole("region", { name: "Me at the zoo" }),
+      screen.getAllByRole("region", { name: "Me at the zoo" })[0],
     ).toHaveTextContent("уже скачивается или ждёт в очереди"),
   );
+});
+
+test("a Failed Download's duplicate warning goes once its duplicate is Done", async () => {
+  const backend = await startReady({ duplicateOf: 2 });
+  await backend.queue(failedZoo, queued(2, { video: zoo, status: "queued" }));
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  const failed = screen.getAllByRole("region", { name: "Me at the zoo" })[0];
+  await waitFor(() =>
+    expect(failed).toHaveTextContent("уже скачивается или ждёт в очереди"),
+  );
+
+  await backend.queue(
+    failedZoo,
+    queued(2, { video: zoo, status: "done", file: "C:\\Downloads\\a.mp4" }),
+  );
+
+  expect(failed).not.toHaveTextContent("уже скачивается или ждёт в очереди");
 });
 
 const nextUrl = "https://www.youtube.com/watch?v=-moW9jvvMr4";
