@@ -85,6 +85,8 @@ export const strings = {
       m4a: "M4A (оригинал)",
       mp3: "MP3",
     } satisfies Record<AudioPreset, string>,
+    /** M4A for a Video whose sound it encodes again. */
+    m4aEncoded: "M4A",
   },
   download: {
     start: "Скачать",

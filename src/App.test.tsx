@@ -31,6 +31,7 @@ function probed(
   videoPresets: VideoPreset[] = ["1080p", "720p", "480p", "360p"],
   defaultVideoPreset: VideoPreset = "1080p",
   audioPresets: AudioPreset[] = ["m4a", "mp3"],
+  m4aKeepsSound = true,
 ): ProbeState {
   return {
     status: "probed",
@@ -38,6 +39,7 @@ function probed(
     videoPresets,
     defaultVideoPreset,
     audioPresets,
+    m4aKeepsSound,
   };
 }
 
@@ -715,6 +717,18 @@ test("a Video with sound offers M4A and MP3 on the Audio tab", async () => {
   expect(radios[0]).toHaveAccessibleName("M4A (оригинал)");
   expect(radios[1]).toHaveAccessibleName("MP3");
   expect(radios[0]).toBeChecked();
+});
+
+test("M4A isn't called original for a Video whose sound it encodes again", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], false));
+
+  openTab("Аудио");
+
+  const presets = screen.getByRole("radiogroup", { name: "Формат" });
+  const radios = within(presets).getAllByRole("radio");
+  expect(radios[0]).toHaveAccessibleName("M4A");
+  expect(radios[1]).toHaveAccessibleName("MP3");
 });
 
 test("the Audio tab downloads M4A unless MP3 is chosen", async () => {

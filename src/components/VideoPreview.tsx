@@ -58,6 +58,7 @@ export function VideoPreview({
   video,
   videoPresets,
   audioPresets,
+  m4aKeepsSound,
   choice,
   onChoose,
   canDownload,
@@ -66,6 +67,7 @@ export function VideoPreview({
   video: VideoCard;
   videoPresets: VideoPreset[];
   audioPresets: AudioPreset[];
+  m4aKeepsSound: boolean;
   choice: PresetChoice;
   onChoose: (choice: PresetChoice) => void;
   canDownload: boolean;
@@ -122,7 +124,14 @@ export function VideoPreview({
               <PresetPicker
                 label={strings.presets.format}
                 presets={audioPresets}
-                names={strings.presets.audio}
+                names={
+                  m4aKeepsSound
+                    ? strings.presets.audio
+                    : {
+                        ...strings.presets.audio,
+                        m4a: strings.presets.m4aEncoded,
+                      }
+                }
                 chosen={choice.audio}
                 onChoose={(preset) => onChoose({ ...choice, audio: preset })}
               />

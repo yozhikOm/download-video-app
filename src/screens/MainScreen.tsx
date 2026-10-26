@@ -210,6 +210,7 @@ export function MainScreen({ probe, settings, download }: Props) {
           video={probe.video}
           videoPresets={probe.videoPresets}
           audioPresets={probe.audioPresets}
+          m4aKeepsSound={probe.m4aKeepsSound}
           choice={presetChoiceFor(probe)}
           onChoose={(choice) => setPresetChoice({ probe, choice })}
           canDownload={!isRunning(download)}

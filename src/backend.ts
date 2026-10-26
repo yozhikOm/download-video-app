@@ -95,6 +95,8 @@ export type ProbeState =
       defaultVideoPreset: VideoPreset;
       /** The Audio presets the Video has; none when it has no sound. */
       audioPresets: AudioPreset[];
+      /** Whether M4A saves the Video's sound as it is, without encoding it again. */
+      m4aKeepsSound: boolean;
     }
   | {
       status: "failed";
