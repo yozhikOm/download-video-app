@@ -1,4 +1,10 @@
-import type { Browser, Package, Tool, VideoPreset } from "@/backend";
+import type {
+  AudioPreset,
+  Browser,
+  Package,
+  Tool,
+  VideoPreset,
+} from "@/backend";
 
 /** Every piece of UI text. */
 export const strings = {
@@ -63,7 +69,9 @@ export const strings = {
   },
   presets: {
     videoTab: "Видео",
+    audioTab: "Аудио",
     quality: "Качество",
+    audioFormat: "Формат",
     video: {
       best: "Лучшее",
       "2160p": "2160p",
@@ -73,6 +81,12 @@ export const strings = {
       "480p": "480p",
       "360p": "360p",
     } satisfies Record<VideoPreset, string>,
+    audio: {
+      m4a: "M4A (оригинал)",
+      mp3: "MP3",
+    } satisfies Record<AudioPreset, string>,
+    /** M4A for a Video whose sound it encodes again. */
+    m4aEncoded: "M4A",
   },
   download: {
     start: "Скачать",
@@ -80,7 +94,7 @@ export const strings = {
     percent: (percent: string) => `${percent}%`,
     speed: (mbPerSecond: string) => `${mbPerSecond} МБ/с`,
     eta: (time: string) => `осталось ${time}`,
-    processing: "Обработка видео…",
+    processing: "Обработка…",
     done: "Готово",
     openFile: "Открыть файл",
     showInFolder: "Показать в папке",

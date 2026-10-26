@@ -38,6 +38,15 @@ export type VideoCard = {
 export type VideoPreset =
   "best" | "2160p" | "1440p" | "1080p" | "720p" | "480p" | "360p";
 
+/**
+ * An Audio preset: the format of the saved sound, without the picture;
+ * `m4a` keeps the site's AAC sound as it is, `mp3` encodes it as VBR.
+ */
+export type AudioPreset = "m4a" | "mp3";
+
+/** A Preset of either group, as the backend knows it by its name. */
+export type Preset = VideoPreset | AudioPreset;
+
 /** A browser yt-dlp can read the YouTube sign-in from. */
 export type Browser =
   | "brave"
@@ -84,6 +93,10 @@ export type ProbeState =
       videoPresets: VideoPreset[];
       /** The Video preset chosen at first. */
       defaultVideoPreset: VideoPreset;
+      /** The Audio presets the Video has; none when it has no sound. */
+      audioPresets: AudioPreset[];
+      /** Whether M4A saves the Video's sound as it is, without encoding it again. */
+      m4aKeepsSound: boolean;
     }
   | {
       status: "failed";
@@ -106,7 +119,7 @@ export type Download = { video: VideoCard } & (
       /** Seconds left. */
       eta: number | null;
     }
-  /** ffmpeg merges the received Formats into the MP4. */
+  /** ffmpeg merges the received Formats into the MP4, or extracts the sound. */
   | { status: "processing" }
   /** `file` is the saved file's full path. */
   | { status: "done"; file: string }
@@ -151,11 +164,11 @@ export function probe(url: string): Promise<void> {
 }
 
 /**
- * Downloads the probed Video with a Video preset; its progress arrives as
- * download events. Rejects when no Probe found a Video or the Video lacks
- * the Preset.
+ * Downloads the probed Video with a Video or Audio preset; its progress
+ * arrives as download events. Rejects when no Probe found a Video or the
+ * Video lacks the Preset.
  */
-export function download(preset: VideoPreset): Promise<void> {
+export function download(preset: Preset): Promise<void> {
   return invoke("download", { preset });
 }
 

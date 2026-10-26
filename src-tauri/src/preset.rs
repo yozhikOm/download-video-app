@@ -5,6 +5,55 @@ use serde::{Deserialize, Serialize};
 
 use crate::probe::Format;
 
+/// A Preset of either group, as the UI names it when it asks for a
+/// Download.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "&'static str", try_from = "String")]
+pub enum Preset {
+    Video(VideoPreset),
+    Audio(AudioPreset),
+}
+
+impl Preset {
+    /// The name of this Preset in the UI and in a Partial's name, such as
+    /// `1080p` or `mp3`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Video(preset) => preset.name(),
+            Self::Audio(preset) => preset.name(),
+        }
+    }
+}
+
+impl From<VideoPreset> for Preset {
+    fn from(preset: VideoPreset) -> Self {
+        Self::Video(preset)
+    }
+}
+
+impl From<AudioPreset> for Preset {
+    fn from(preset: AudioPreset) -> Self {
+        Self::Audio(preset)
+    }
+}
+
+impl From<Preset> for &'static str {
+    fn from(preset: Preset) -> Self {
+        preset.name()
+    }
+}
+
+impl TryFrom<String> for Preset {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        VideoPreset::try_from(name.clone())
+            .map(Self::Video)
+            .or_else(|_| AudioPreset::try_from(name.clone()).map(Self::Audio))
+            .map_err(|_| format!("no Preset is named {name}"))
+    }
+}
+
 /// A Video preset: the quality of the saved MP4. The UI knows it by its
 /// [`name`](VideoPreset::name).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +139,7 @@ impl TryFrom<String> for VideoPreset {
 pub fn video_presets(formats: &[Format]) -> Vec<VideoPreset> {
     let without_sound: Vec<u32> = formats
         .iter()
-        .filter(|format| format.audio_codec.as_deref() == Some("none"))
+        .filter(|format| !format.has_sound())
         .filter_map(Format::resolution)
         .collect();
     let resolutions = if without_sound.is_empty() {
@@ -134,4 +183,65 @@ pub fn default_video_preset(presets: &[VideoPreset]) -> VideoPreset {
         .find(|(_, resolution)| *resolution <= PREFERRED_RESOLUTION)
         .or_else(|| with_resolution().next_back())
         .map_or(VideoPreset::Best, |(preset, _)| preset)
+}
+
+/// An Audio preset: the format of the saved sound, without the picture. The
+/// UI knows it by its [`name`](AudioPreset::name).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "&'static str", try_from = "String")]
+pub enum AudioPreset {
+    /// The site's AAC sound as it is, without encoding it again; other
+    /// sound encoded as AAC.
+    M4a,
+    /// The sound encoded as a high-quality VBR MP3.
+    Mp3,
+}
+
+/// The Audio presets in the order the UI offers them.
+const AUDIO_PRESETS: [AudioPreset; 2] = [AudioPreset::M4a, AudioPreset::Mp3];
+
+impl AudioPreset {
+    /// The name of this Preset in the UI and in a Partial's name, and the
+    /// extension of the saved file.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::M4a => "m4a",
+            Self::Mp3 => "mp3",
+        }
+    }
+}
+
+impl From<AudioPreset> for &'static str {
+    fn from(preset: AudioPreset) -> Self {
+        preset.name()
+    }
+}
+
+impl TryFrom<String> for AudioPreset {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        AUDIO_PRESETS
+            .into_iter()
+            .find(|preset| preset.name() == name)
+            .ok_or_else(|| format!("no Audio preset is named {name}"))
+    }
+}
+
+/// The Audio presets a Video with these Formats has: all of them when some
+/// Format has sound or doesn't tell, or when the site lists no Formats; none
+/// when every Format is without sound.
+pub fn audio_presets(formats: &[Format]) -> Vec<AudioPreset> {
+    if formats.is_empty() || formats.iter().any(Format::has_sound) {
+        AUDIO_PRESETS.to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Whether M4A saves the sound of a Video with these Formats as it is: when
+/// some Format has AAC sound, which ffmpeg copies into the M4A without
+/// encoding it again.
+pub fn m4a_keeps_sound(formats: &[Format]) -> bool {
+    formats.iter().any(Format::has_aac_sound)
 }

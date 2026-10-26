@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
-use crate::preset::VideoPreset;
+use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::{Video, VideoCard, error_line};
 use crate::settings::Settings;
 use crate::toolbox::{Tool, Toolbox};
@@ -41,7 +41,8 @@ pub enum DownloadStatus {
         /// Seconds left.
         eta: Option<u64>,
     },
-    /// ffmpeg merges the received Formats into the MP4.
+    /// ffmpeg merges the received Formats into the MP4, or extracts the
+    /// sound into its own file.
     Processing,
     Done {
         file: PathBuf,
@@ -66,7 +67,7 @@ pub struct Downloader {
     current: Mutex<Option<Download>>,
     /// The current Download's Video and Preset, for retrying it once it is
     /// Failed.
-    to_retry: Mutex<Option<(Video, VideoPreset)>>,
+    to_retry: Mutex<Option<(Video, Preset)>>,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -126,25 +127,18 @@ impl Downloader {
         }
     }
 
-    /// Downloads `video` as an MP4 in the resolution of `preset`. Blocks
-    /// until the Download ends. Returns at once if another Download is
-    /// running.
-    pub fn download(&self, video: &Video, preset: VideoPreset) {
+    /// Downloads `video` with `preset`: as an MP4 in the resolution of a
+    /// Video preset, or as the sound alone in the format of an Audio
+    /// preset. Blocks until the Download ends. Returns at once if another
+    /// Download is running.
+    pub fn download(&self, video: &Video, preset: Preset) {
         if !self.start(video, preset) {
             return;
         }
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
-        let mut args: Vec<OsString> = vec![
-            "--no-playlist".into(),
-            // Separate video and audio: preferring AAC would otherwise pick
-            // a Format with both, which YouTube sends slowly over HLS. A
-            // site with only such Formats falls back to the best of them.
-            "-f".into(),
-            "bv+ba/b".into(),
-            "-S".into(),
-            format_sort(preset).into(),
-            "--merge-output-format".into(),
-            "mp4".into(),
+        let mut args: Vec<OsString> = vec!["--no-playlist".into()];
+        args.extend(preset_args(preset));
+        args.extend::<[OsString; _]>([
             "-P".into(),
             self.partials_dir.clone().into_os_string(),
             "-o".into(),
@@ -161,14 +155,15 @@ impl Downloader {
             // Format.
             "--print".into(),
             r#"before_dl:{"formats": %(requested_formats.:.{format_id,filesize,filesize_approx}|null)j}"#.into(),
-            // Printed right before ffmpeg merges the video and audio.
+            // Printed right before ffmpeg merges the video and audio or
+            // extracts the sound.
             "--print".into(),
             "post_process:[processing]".into(),
             // A JSON string, so that a path with non-ASCII letters survives
             // the console's code page.
             "--print".into(),
             "after_move:%(filepath)j".into(),
-        ];
+        ]);
         args.extend(["--".into(), video.url.clone().into()]);
         let mut formats = Vec::new();
         let mut final_file = None;
@@ -219,7 +214,7 @@ impl Downloader {
     }
 
     /// Makes `video` the current Download, unless one is running.
-    fn start(&self, video: &Video, preset: VideoPreset) -> bool {
+    fn start(&self, video: &Video, preset: Preset) -> bool {
         let _sending = self.sending.lock().unwrap();
         let download = Download {
             video: video.card(),
@@ -325,6 +320,48 @@ impl Downloader {
         // while holding the subscribers' lock.
         self.events.send(AppEvent::Download(state));
     }
+}
+
+/// What yt-dlp receives for `preset` and how it makes the final file of it.
+fn preset_args(preset: Preset) -> Vec<OsString> {
+    let args = match preset {
+        Preset::Video(preset) => vec![
+            // Separate video and audio: preferring AAC would otherwise pick
+            // a Format with both, which YouTube sends slowly over HLS. A
+            // site with only such Formats falls back to the best of them.
+            "-f".into(),
+            "bv+ba/b".into(),
+            "-S".into(),
+            format_sort(preset),
+            "--merge-output-format".into(),
+            "mp4".into(),
+        ],
+        // The best sound alone, or a Format with both on a site without
+        // one, extracted by ffmpeg into a file of the Preset's format.
+        Preset::Audio(preset) => {
+            let mut args = vec![
+                "-f".into(),
+                "ba/b".into(),
+                "-x".into(),
+                "--audio-format".into(),
+                preset.name().into(),
+            ];
+            args.extend(match preset {
+                // ffmpeg copies AAC sound into an M4A as it is; only a site
+                // without AAC gets its sound encoded, as AAC at 192 kbit/s.
+                AudioPreset::M4a => vec![
+                    "-S".into(),
+                    "acodec:aac".into(),
+                    "--audio-quality".into(),
+                    "192K".into(),
+                ],
+                // LAME's VBR quality 1: about 190–250 kbit/s.
+                AudioPreset::Mp3 => vec!["--audio-quality".into(), "1".into()],
+            });
+            args
+        }
+    };
+    args.into_iter().map(OsString::from).collect()
 }
 
 /// yt-dlp's order of the Formats for `preset`: the highest resolution up to

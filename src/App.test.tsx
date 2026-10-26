@@ -12,8 +12,10 @@ import { expect, test } from "vitest";
 import App from "./App";
 import type {
   AppEvent,
+  AudioPreset,
   Browser,
   Download,
+  Preset,
   ProbeState,
   SettingsState,
   SetupState,
@@ -23,13 +25,22 @@ import type {
 
 const MB = 1024 * 1024;
 
-/** A Probe that found `video`, with the Video presets of a 1080p Video. */
+/** A Probe that found `video`, with the Presets of a 1080p Video with sound. */
 function probed(
   video: VideoCard,
   videoPresets: VideoPreset[] = ["1080p", "720p", "480p", "360p"],
   defaultVideoPreset: VideoPreset = "1080p",
+  audioPresets: AudioPreset[] = ["m4a", "mp3"],
+  m4aKeepsSound = true,
 ): ProbeState {
-  return { status: "probed", video, videoPresets, defaultVideoPreset };
+  return {
+    status: "probed",
+    video,
+    videoPresets,
+    defaultVideoPreset,
+    audioPresets,
+    m4aKeepsSound,
+  };
 }
 
 /**
@@ -46,7 +57,7 @@ function mockBackend({
   const commands: string[] = [];
   const probedUrls: string[] = [];
   const signInBrowsers: (Browser | null)[] = [];
-  const downloadedPresets: VideoPreset[] = [];
+  const downloadedPresets: Preset[] = [];
   mockIPC((cmd, args) => {
     commands.push(cmd);
     switch (cmd) {
@@ -63,7 +74,7 @@ function mockBackend({
         if (downloadFails) {
           throw new Error("no probed Video");
         }
-        downloadedPresets.push((args as { preset: VideoPreset }).preset);
+        downloadedPresets.push((args as { preset: Preset }).preset);
         return null;
       case "open_downloaded_file":
         if (openingFails) {
@@ -685,6 +696,85 @@ test("a new Probe chooses its own default Video preset again", async () => {
   expect(screen.getByRole("radio", { name: "1080p" })).toBeChecked();
 });
 
+/** Opens a tab of the Video's card; Radix switches tabs on mouse down. */
+function openTab(name: string) {
+  fireEvent.mouseDown(screen.getByRole("tab", { name }));
+}
+
+test("a Video with sound offers M4A and MP3 on the Audio tab", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+
+  openTab("Аудио");
+
+  expect(screen.getByRole("tab", { name: "Аудио" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const presets = screen.getByRole("radiogroup", { name: "Формат" });
+  const radios = within(presets).getAllByRole("radio");
+  expect(radios).toHaveLength(2);
+  expect(radios[0]).toHaveAccessibleName("M4A (оригинал)");
+  expect(radios[1]).toHaveAccessibleName("MP3");
+  expect(radios[0]).toBeChecked();
+});
+
+test("M4A isn't called original for a Video whose sound it encodes again", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], false));
+
+  openTab("Аудио");
+
+  const presets = screen.getByRole("radiogroup", { name: "Формат" });
+  const radios = within(presets).getAllByRole("radio");
+  expect(radios[0]).toHaveAccessibleName("M4A");
+  expect(radios[1]).toHaveAccessibleName("MP3");
+});
+
+test("the Audio tab downloads M4A unless MP3 is chosen", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  openTab("Аудио");
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["m4a"]));
+});
+
+test("an Audio preset can be chosen before downloading", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  openTab("Аудио");
+
+  fireEvent.click(screen.getByRole("radio", { name: "MP3" }));
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["mp3"]));
+});
+
+test("back on the Video tab the chosen Video preset is downloaded", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  fireEvent.click(screen.getByRole("radio", { name: "720p" }));
+  openTab("Аудио");
+  fireEvent.click(screen.getByRole("radio", { name: "MP3" }));
+
+  openTab("Видео");
+  expect(screen.getByRole("radio", { name: "720p" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["720p"]));
+});
+
+test("a Video without sound has no Audio tab", async () => {
+  const backend = await startReady();
+
+  await backend.probe(probed(zoo, ["1080p"], "1080p", []));
+
+  expect(screen.getByRole("tab", { name: "Видео" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Аудио" })).not.toBeInTheDocument();
+});
+
 test("a Download shows its percent, speed and time left while downloading", async () => {
   const backend = await startReady();
 
@@ -928,6 +1018,30 @@ test("a Video's card that comes back keeps the chosen Video preset", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
 
   expect(await screen.findByRole("radio", { name: "720p" })).toBeChecked();
+});
+
+test("a Video's card that comes back keeps the Audio tab and its preset", async () => {
+  const backend = await startReady({ downloadFails: true });
+  await backend.probe(probed(zoo));
+  openTab("Аудио");
+  fireEvent.click(screen.getByRole("radio", { name: "MP3" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  expect(await screen.findByRole("radio", { name: "MP3" })).toBeChecked();
+});
+
+test("a new Probe opens on the Video tab again", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  openTab("Аудио");
+
+  await backend.probe(probed(zoo));
+
+  expect(screen.getByRole("tab", { name: "Видео" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("a Video probed again without probing in between gets its default Video preset", async () => {

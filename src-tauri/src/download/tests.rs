@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::clock::{Clock, FixedClock};
 use crate::events::{AppEvent, RecordingSink};
-use crate::preset::VideoPreset;
+use crate::preset::{AudioPreset, VideoPreset};
 use crate::probe::{TranscriptLanguages, Video};
 use crate::processes::fake::{FakeProcesses, exit_status};
 use crate::releases::fake::FakeReleases;
@@ -118,11 +118,15 @@ impl App {
         let (id, content, progress) = (id.to_owned(), content.to_owned(), progress.to_owned());
         self.processes.script("yt-dlp.exe", move |args| {
             let dir = PathBuf::from(after(args, "-P"));
+            // The sound alone is saved in the format it was extracted to.
+            let extension = values_of(args, "--audio-format")
+                .first()
+                .map_or("mp4".into(), |format| format.to_string_lossy().into_owned());
             let name = after(args, "-o")
                 .to_str()
                 .unwrap()
                 .replace("%(id)s", &id)
-                .replace("%(ext)s", "mp4");
+                .replace("%(ext)s", &extension);
             fs::create_dir_all(&dir).unwrap();
             let file = dir.join(name);
             fs::write(&file, &content).unwrap();
@@ -233,7 +237,7 @@ fn a_downloaded_video_is_moved_to_the_save_folder_under_its_title() {
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let saved = app.save_dir().join("Me at the zoo.mp4");
     assert_eq!(
@@ -245,6 +249,35 @@ fn a_downloaded_video_is_moved_to_the_save_folder_under_its_title() {
     assert_eq!(file_names(&app.save_dir()), ["Me at the zoo.mp4"]);
     assert_eq!(fs::read(&saved).unwrap(), b"the video");
     assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+}
+
+#[test]
+fn an_audio_download_goes_through_processing_to_a_file_of_its_format() {
+    for (preset, name) in [
+        (AudioPreset::M4a, "Me at the zoo.m4a"),
+        (AudioPreset::Mp3, "Me at the zoo.mp3"),
+    ] {
+        let app = App::start();
+        app.ytdlp_downloads(ID, b"the sound", &[progress(1000, 1000, 400.0, 0)]);
+
+        app.downloader
+            .download(&video(URL, "Me at the zoo"), preset.into());
+
+        let saved = app.save_dir().join(name);
+        assert_eq!(
+            app.download_statuses()[1..],
+            [
+                downloading(100.0, 400.0, 0),
+                DownloadStatus::Processing,
+                DownloadStatus::Done {
+                    file: saved.clone()
+                },
+            ],
+            "{preset:?}"
+        );
+        assert_eq!(fs::read(&saved).unwrap(), b"the sound");
+        assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+    }
 }
 
 /// Format ids as YouTube's.
@@ -320,7 +353,7 @@ fn a_download_goes_from_downloading_through_processing_to_done() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let statuses: Vec<DownloadStatus> = app
         .download_states()
@@ -362,7 +395,7 @@ fn a_video_received_as_separate_video_and_audio_shows_one_progress_for_both() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // Of the 2000 bytes of both, the time left is what remains of both at
     // the current speed.
@@ -390,7 +423,7 @@ fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The video's own percent would fall back once the audio's size is
     // known; only its speed and time left are shown.
@@ -421,7 +454,7 @@ fn a_received_format_of_approximate_size_counts_with_the_bytes_received() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
         app.download_statuses()[1..3],
@@ -444,7 +477,7 @@ fn the_percent_holds_when_a_format_turns_out_bigger_than_told() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead.
     let percents: Vec<Option<f64>> = app
@@ -473,7 +506,7 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_stands() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The second line comes 0.6 s after the first, the third 1.2 s.
     assert_eq!(
@@ -498,7 +531,7 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_is_unknown() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     // The second line comes 0.6 s after the first, the third 1.2 s.
     assert_eq!(
@@ -529,13 +562,13 @@ fn a_new_download_shows_its_first_progress_at_once() {
         &[progress_of(VIDEO_ONLY, 250, 1500, 100.0, 9)],
     );
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
     let first = app.download_statuses().len();
 
     // The clock stands still, so the line comes at once after the last
     // one of the Download before.
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
         app.download_statuses()[first + 1],
@@ -556,7 +589,7 @@ fn a_taken_name_gets_the_next_free_number_and_nothing_is_overwritten() {
     app.ytdlp_downloads(ID, b"third", &[]);
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let saved = app.save_dir().join("Me at the zoo (2).mp4");
     assert_eq!(
@@ -630,7 +663,7 @@ fn characters_windows_forbids_in_a_title_are_replaced_by_lookalikes() {
 
     app.downloader.download(
         &video(URL, "Why? A/B: \"test\" | <1> * \\ end. "),
-        VideoPreset::P1080,
+        VideoPreset::P1080.into(),
     );
 
     assert_eq!(
@@ -646,7 +679,7 @@ fn a_title_that_cant_be_a_file_name_gives_way_to_the_video_id() {
         app.ytdlp_downloads(ID, b"the video", &[]);
 
         app.downloader
-            .download(&video(URL, title), VideoPreset::P1080);
+            .download(&video(URL, title), VideoPreset::P1080.into());
 
         assert_eq!(
             file_names(&app.save_dir()),
@@ -672,7 +705,7 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
     });
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
         app.status(),
@@ -703,7 +736,7 @@ fn a_failed_download_is_retried_with_its_own_video_under_the_same_partial_name()
     app.processes
         .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     app.downloader.retry();
@@ -726,7 +759,7 @@ fn retry_does_nothing_unless_the_download_failed() {
 
     app.downloader.retry();
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
     app.downloader.retry();
 
     assert_eq!(ytdlp_runs(&app).len(), 1);
@@ -740,7 +773,7 @@ fn a_broken_yt_dlp_is_restored_and_the_download_is_dropped() {
     let fetched_before = app.releases.fetches().len();
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(app.downloader.state(), None);
     assert_eq!(app.download_states().last(), Some(&None));
@@ -760,13 +793,13 @@ fn a_youtube_download_runs_with_the_sign_in_browser_and_another_site_without() {
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
     app.downloader.download(
         &video(
             "https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/",
             "Rutube",
         ),
-        VideoPreset::P1080,
+        VideoPreset::P1080.into(),
     );
 
     let browsers: Vec<Option<OsString>> = app
@@ -792,7 +825,7 @@ fn a_download_asked_for_while_another_runs_is_ignored() {
     let seen = statuses_seen.clone();
     app.processes.script("yt-dlp.exe", move |_| {
         let downloader = downloader.upgrade().unwrap();
-        downloader.download(&video(URL, "Another"), VideoPreset::P1080);
+        downloader.download(&video(URL, "Another"), VideoPreset::P1080.into());
         seen.lock().unwrap().push(downloader.state().unwrap());
         Output {
             status: exit_status(1),
@@ -802,7 +835,7 @@ fn a_download_asked_for_while_another_runs_is_ignored() {
     });
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let seen = statuses_seen.lock().unwrap();
     assert_eq!(seen.len(), 1, "yt-dlp ran once");
@@ -816,7 +849,7 @@ fn a_download_asks_yt_dlp_for_this_one_video_merged_into_an_mp4() {
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     app.downloader
-        .download(&video(url, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(url, "Me at the zoo"), VideoPreset::P1080.into());
 
     let (_, args) = app.processes.runs().pop().unwrap();
     assert!(args.contains(&"--no-playlist".into()), "{args:?}");
@@ -832,7 +865,7 @@ fn a_video_preset_limits_the_resolution_and_prefers_h264_and_aac_at_equal_resolu
 
     for preset in [VideoPreset::Best, VideoPreset::P1440, VideoPreset::P480] {
         app.downloader
-            .download(&video(URL, "Me at the zoo"), preset);
+            .download(&video(URL, "Me at the zoo"), preset.into());
     }
 
     let sorts: Vec<OsString> = ytdlp_runs(&app)
@@ -855,7 +888,7 @@ fn a_download_takes_separate_video_and_audio_over_a_format_with_both() {
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     // Preferring AAC would otherwise pick a Format with both, which YouTube
     // sends slowly over HLS; a site with only such Formats falls back to one.
@@ -869,15 +902,91 @@ fn each_video_preset_of_a_video_keeps_a_partial_of_its_own() {
     app.ytdlp_downloads(ID, b"the video", &[]);
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::Best);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::Best.into());
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     let names: Vec<OsString> = ytdlp_runs(&app)
         .iter()
         .map(|args| after(args, "-o").clone())
         .collect();
     assert_eq!(names, ["%(id)s.best.%(ext)s", "%(id)s.720p.%(ext)s"]);
+}
+
+#[test]
+fn m4a_keeps_the_sites_aac_sound_and_encodes_other_sound_at_192k() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the sound", &[]);
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
+
+    // ffmpeg copies AAC sound into an M4A, where yt-dlp ignores the
+    // quality; only a site without AAC gets its sound encoded.
+    let (_, args) = app.processes.runs().pop().unwrap();
+    assert_eq!(after(&args, "-f"), "ba/b");
+    assert_eq!(after(&args, "-S"), "acodec:aac");
+    assert!(args.contains(&"-x".into()), "{args:?}");
+    assert_eq!(after(&args, "--audio-format"), "m4a");
+    assert_eq!(after(&args, "--audio-quality"), "192K");
+    assert!(!args.contains(&"--merge-output-format".into()), "{args:?}");
+}
+
+#[test]
+fn mp3_encodes_the_best_sound_as_high_quality_vbr() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the sound", &[]);
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
+
+    // LAME's VBR quality 1 makes about 190–250 kbit/s.
+    let (_, args) = app.processes.runs().pop().unwrap();
+    assert_eq!(after(&args, "-f"), "ba/b");
+    assert!(!args.contains(&"-S".into()), "{args:?}");
+    assert!(args.contains(&"-x".into()), "{args:?}");
+    assert_eq!(after(&args, "--audio-format"), "mp3");
+    assert_eq!(after(&args, "--audio-quality"), "1");
+    assert!(!args.contains(&"--merge-output-format".into()), "{args:?}");
+}
+
+#[test]
+fn each_audio_preset_of_a_video_keeps_a_partial_of_its_own() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the sound", &[]);
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
+
+    let names: Vec<OsString> = ytdlp_runs(&app)
+        .iter()
+        .map(|args| after(args, "-o").clone())
+        .collect();
+    assert_eq!(names, ["%(id)s.m4a.%(ext)s", "%(id)s.mp3.%(ext)s"]);
+}
+
+#[test]
+fn a_failed_audio_download_is_retried_with_its_audio_preset() {
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), AudioPreset::Mp3.into());
+    app.ytdlp_downloads(ID, b"the sound", &[]);
+
+    app.downloader.retry();
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("Me at the zoo.mp3")
+        })
+    );
+    let runs = ytdlp_runs(&app);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0], runs[1]);
 }
 
 #[test]
@@ -898,7 +1007,7 @@ fn a_format_in_fragments_reports_the_share_of_fragments_received() {
     app.ytdlp_downloads(ID, b"the video", &[fragments]);
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     let statuses: Vec<DownloadStatus> = app
         .download_states()
@@ -964,7 +1073,7 @@ fn a_format_in_fragments_shows_the_share_of_fragments_rather_than_its_size_estim
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     assert_eq!(
         percents(&app),
@@ -986,7 +1095,7 @@ fn a_format_in_fragments_among_separate_formats_counts_by_its_fragments() {
     );
 
     app.downloader
-        .download(&video(URL, "Me at the zoo"), VideoPreset::P720);
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P720.into());
 
     // Half of the video's fragments are half its told size.
     assert_eq!(
@@ -1006,7 +1115,7 @@ fn downloads_a_real_video_with_the_real_yt_dlp() {
     let events = Arc::new(RecordingSink::default());
     let (video, _, downloader) = probe_with_real_tools(dir.path(), URL, events.clone());
 
-    downloader.download(&video, VideoPreset::P1080);
+    downloader.download(&video, VideoPreset::P1080.into());
 
     let saved = dir.path().join("Downloads").join("Me at the zoo.mp4");
     assert_eq!(
@@ -1112,7 +1221,7 @@ fn video_presets_pick_the_resolution_then_h264_and_aac_with_the_real_yt_dlp() {
         (VideoPreset::P1440, 1440, None),
         (VideoPreset::P1080, 1080, Some("h264")),
     ] {
-        downloader.download(&video, preset);
+        downloader.download(&video, preset.into());
 
         let Some(DownloadStatus::Done { file }) = downloader.state().map(|it| it.status) else {
             panic!("{preset:?}: {:?}", downloader.state());
@@ -1129,6 +1238,54 @@ fn video_presets_pick_the_resolution_then_h264_and_aac_with_the_real_yt_dlp() {
     }
 }
 
+/// Downloads "Me at the zoo" with each Audio preset:
+/// `cargo test --lib -- --ignored audio_presets_save`. See
+/// [`probe_with_real_tools`] for `SMOKE_SIGN_IN_BROWSER`.
+#[test]
+#[ignore = "downloads the real tools and a real Video"]
+fn audio_presets_save_the_sound_alone_with_the_real_yt_dlp() {
+    let dir = TempDir::new().unwrap();
+    let events = Arc::new(RecordingSink::default());
+    let (video, toolbox, downloader) = probe_with_real_tools(dir.path(), URL, events.clone());
+    assert_eq!(video.audio_presets(), [AudioPreset::M4a, AudioPreset::Mp3]);
+
+    for (preset, name, codec) in [
+        (AudioPreset::M4a, "Me at the zoo.m4a", "aac"),
+        (AudioPreset::Mp3, "Me at the zoo.mp3", "mp3"),
+    ] {
+        downloader.download(&video, preset.into());
+
+        let saved = dir.path().join("Downloads").join(name);
+        assert_eq!(
+            downloader.state().map(|download| download.status),
+            Some(DownloadStatus::Done {
+                file: saved.clone()
+            }),
+            "{preset:?}"
+        );
+        let tracks = track_entries(&toolbox, &saved);
+        let kinds: Vec<&serde_json::Value> =
+            tracks.iter().map(|track| &track["codec_type"]).collect();
+        assert_eq!(kinds, ["audio"], "{preset:?}");
+        assert_eq!(tracks[0]["codec_name"], codec, "{preset:?}");
+    }
+    assert_eq!(file_names(&dir.path().join("partials")), [] as [String; 0]);
+    let processed = events
+        .events()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AppEvent::Download(Some(Download {
+                    status: DownloadStatus::Processing,
+                    ..
+                }))
+            )
+        })
+        .count();
+    assert_eq!(processed, 2);
+}
+
 /// What ffprobe tells of a saved file's video and audio tracks.
 struct Tracks {
     video_codec: String,
@@ -1138,6 +1295,27 @@ struct Tracks {
 }
 
 fn tracks(toolbox: &Toolbox, file: &Path) -> Tracks {
+    let entries = track_entries(toolbox, file);
+    let of_type = |kind: &str| {
+        entries
+            .iter()
+            .find(|track| track["codec_type"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} in {entries:?}"))
+    };
+    let (video, audio) = (of_type("video"), of_type("audio"));
+    Tracks {
+        video_codec: video["codec_name"].as_str().unwrap().into(),
+        resolution: video["width"]
+            .as_u64()
+            .unwrap()
+            .min(video["height"].as_u64().unwrap()),
+        audio_codec: audio["codec_name"].as_str().unwrap().into(),
+    }
+}
+
+/// The tracks of a saved file as ffprobe tells them, each with its
+/// `codec_type`, `codec_name`, `width` and `height`.
+fn track_entries(toolbox: &Toolbox, file: &Path) -> Vec<serde_json::Value> {
     let args: Vec<OsString> = [
         "-v",
         "error",
@@ -1152,20 +1330,5 @@ fn tracks(toolbox: &Toolbox, file: &Path) -> Tracks {
     .collect();
     let output = toolbox.run(Tool::Ffprobe, &args, None).unwrap();
     let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let streams = answer["streams"].as_array().unwrap();
-    let of_type = |kind: &str| {
-        streams
-            .iter()
-            .find(|stream| stream["codec_type"] == kind)
-            .unwrap_or_else(|| panic!("no {kind} in {answer}"))
-    };
-    let (video, audio) = (of_type("video"), of_type("audio"));
-    Tracks {
-        video_codec: video["codec_name"].as_str().unwrap().into(),
-        resolution: video["width"]
-            .as_u64()
-            .unwrap()
-            .min(video["height"].as_u64().unwrap()),
-        audio_codec: audio["codec_name"].as_str().unwrap().into(),
-    }
+    answer["streams"].as_array().unwrap().clone()
 }
