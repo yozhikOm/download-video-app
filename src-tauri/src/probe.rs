@@ -33,6 +33,9 @@ pub enum ProbeState {
         default_video_preset: VideoPreset,
         /// The Audio presets the Video has; none when it has no sound.
         audio_presets: Vec<AudioPreset>,
+        /// Whether M4A saves the Video's sound as it is, without encoding
+        /// it again.
+        m4a_keeps_sound: bool,
     },
     #[serde(rename_all = "camelCase")]
     Failed {
@@ -148,6 +151,14 @@ impl Format {
     pub fn has_sound(&self) -> bool {
         self.audio_codec.as_deref() != Some("none")
     }
+
+    /// Whether this Format's sound is AAC, which yt-dlp reports as
+    /// `mp4a.40.2` and the like.
+    pub fn has_aac_sound(&self) -> bool {
+        self.audio_codec
+            .as_deref()
+            .is_some_and(|codec| codec == "aac" || codec.starts_with("mp4a"))
+    }
 }
 
 /// The languages a Transcript can be saved in, by the source of the text.
@@ -186,6 +197,12 @@ impl Video {
     /// The Audio presets this Video has: none when it has no sound.
     pub fn audio_presets(&self) -> Vec<AudioPreset> {
         preset::audio_presets(&self.formats)
+    }
+
+    /// Whether M4A saves this Video's sound as it is, without encoding it
+    /// again.
+    pub fn m4a_keeps_sound(&self) -> bool {
+        preset::m4a_keeps_sound(&self.formats)
     }
 
     /// Whether this Video has `preset`.
@@ -257,6 +274,7 @@ impl Prober {
                         default_video_preset: preset::default_video_preset(&video_presets),
                         video_presets,
                         audio_presets: video.audio_presets(),
+                        m4a_keeps_sound: video.m4a_keeps_sound(),
                     };
                     self.finish(generation, state, Some(video));
                 }

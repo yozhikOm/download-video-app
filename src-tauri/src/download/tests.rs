@@ -914,21 +914,21 @@ fn each_video_preset_of_a_video_keeps_a_partial_of_its_own() {
 }
 
 #[test]
-fn m4a_keeps_the_sites_aac_sound_without_encoding_it_again() {
+fn m4a_keeps_the_sites_aac_sound_and_encodes_other_sound_at_192k() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the sound", &[]);
 
     app.downloader
         .download(&video(URL, "Me at the zoo"), AudioPreset::M4a.into());
 
-    // ffmpeg copies AAC sound into an M4A; only a site without AAC gets its
-    // sound encoded.
+    // ffmpeg copies AAC sound into an M4A, where yt-dlp ignores the
+    // quality; only a site without AAC gets its sound encoded.
     let (_, args) = app.processes.runs().pop().unwrap();
     assert_eq!(after(&args, "-f"), "ba/b");
     assert_eq!(after(&args, "-S"), "acodec:aac");
     assert!(args.contains(&"-x".into()), "{args:?}");
     assert_eq!(after(&args, "--audio-format"), "m4a");
-    assert!(!args.contains(&"--audio-quality".into()), "{args:?}");
+    assert_eq!(after(&args, "--audio-quality"), "192K");
     assert!(!args.contains(&"--merge-output-format".into()), "{args:?}");
 }
 

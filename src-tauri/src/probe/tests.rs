@@ -117,6 +117,7 @@ fn a_video_url_shows_the_video_card() {
         ],
         default_video_preset: VideoPreset::P1080,
         audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
+        m4a_keeps_sound: true,
     };
     assert_eq!(app.probe_states(), [ProbeState::Probing, probed.clone()]);
     assert_eq!(app.prober.state(), probed);
@@ -410,6 +411,52 @@ fn a_video_that_lists_no_formats_offers_m4a_and_mp3() {
     );
 }
 
+/// Whether the latest Probe says M4A saves the Video's sound as it is.
+fn m4a_keeps_sound(app: &App) -> bool {
+    match app.prober.state() {
+        ProbeState::Probed {
+            m4a_keeps_sound, ..
+        } => m4a_keeps_sound,
+        state => panic!("not probed: {state:?}"),
+    }
+}
+
+#[test]
+fn m4a_keeps_the_sound_of_a_video_with_aac() {
+    for (url, answer) in [
+        ("https://www.youtube.com/watch?v=-moW9jvvMr4", VIDEO),
+        (
+            "https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/",
+            include_bytes!("fixtures/rutube-video.json"),
+        ),
+    ] {
+        let app = App::start();
+        app.ytdlp_prints(answer);
+
+        app.prober.probe(url);
+
+        assert!(m4a_keeps_sound(&app), "{url}");
+    }
+}
+
+#[test]
+fn m4a_encodes_the_sound_of_a_video_without_aac() {
+    for answer in [
+        video_with_formats(|formats| {
+            formats.retain(|format| !format["acodec"].as_str().unwrap().starts_with("mp4a"))
+        }),
+        video_with_formats(Vec::clear),
+    ] {
+        let app = App::start();
+        app.ytdlp_prints(&answer);
+
+        app.prober
+            .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+        assert!(!m4a_keeps_sound(&app));
+    }
+}
+
 #[test]
 fn a_preset_comes_from_the_ui_by_its_name() {
     for (name, preset) in [
@@ -532,6 +579,7 @@ fn a_finished_stream_is_an_ordinary_video() {
             ],
             default_video_preset: VideoPreset::P1080,
             audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
+            m4a_keeps_sound: true,
         }
     );
 }

@@ -190,7 +190,8 @@ pub fn default_video_preset(presets: &[VideoPreset]) -> VideoPreset {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "&'static str", try_from = "String")]
 pub enum AudioPreset {
-    /// The site's AAC sound as it is, without encoding it again.
+    /// The site's AAC sound as it is, without encoding it again; other
+    /// sound encoded as AAC.
     M4a,
     /// The sound encoded as a high-quality VBR MP3.
     Mp3,
@@ -236,4 +237,11 @@ pub fn audio_presets(formats: &[Format]) -> Vec<AudioPreset> {
     } else {
         Vec::new()
     }
+}
+
+/// Whether M4A saves the sound of a Video with these Formats as it is: when
+/// some Format has AAC sound, which ffmpeg copies into the M4A without
+/// encoding it again.
+pub fn m4a_keeps_sound(formats: &[Format]) -> bool {
+    formats.iter().any(Format::has_aac_sound)
 }

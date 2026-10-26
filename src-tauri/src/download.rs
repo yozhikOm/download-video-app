@@ -348,10 +348,15 @@ fn preset_args(preset: Preset) -> Vec<OsString> {
             ];
             args.extend(match preset {
                 // ffmpeg copies AAC sound into an M4A as it is; only a site
-                // without AAC gets its sound encoded.
-                AudioPreset::M4a => ["-S".into(), "acodec:aac".into()],
+                // without AAC gets its sound encoded, as AAC at 192 kbit/s.
+                AudioPreset::M4a => vec![
+                    "-S".into(),
+                    "acodec:aac".into(),
+                    "--audio-quality".into(),
+                    "192K".into(),
+                ],
                 // LAME's VBR quality 1: about 190–250 kbit/s.
-                AudioPreset::Mp3 => ["--audio-quality".into(), "1".into()],
+                AudioPreset::Mp3 => vec!["--audio-quality".into(), "1".into()],
             });
             args
         }
