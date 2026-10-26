@@ -84,9 +84,20 @@ impl TryFrom<String> for VideoPreset {
 /// when it saves more than the highest of them or there is none. A Format
 /// falls under the Preset whose resolution it reaches without reaching the
 /// next one up, so that a widescreen 1920×800 counts as 1080p, and so does
-/// a vertical 1080×1920. 360p takes all below it.
+/// a vertical 1080×1920. 360p takes all below it. Only video-only Formats
+/// count when the Video has any, since a Download takes one of them
+/// (`bv`) rather than a Format with video and sound together.
 pub fn video_presets(formats: &[Format]) -> Vec<VideoPreset> {
-    let resolutions: Vec<u32> = formats.iter().filter_map(Format::resolution).collect();
+    let without_sound: Vec<u32> = formats
+        .iter()
+        .filter(|format| format.audio_codec.as_deref() == Some("none"))
+        .filter_map(Format::resolution)
+        .collect();
+    let resolutions = if without_sound.is_empty() {
+        formats.iter().filter_map(Format::resolution).collect()
+    } else {
+        without_sound
+    };
     let lower_bounds = RESOLUTIONS
         .iter()
         .skip(1)

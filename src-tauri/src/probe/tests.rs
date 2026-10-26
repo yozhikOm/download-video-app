@@ -322,6 +322,24 @@ fn a_widescreen_or_vertical_video_offers_presets_by_the_smaller_side() {
 }
 
 #[test]
+fn a_video_with_video_without_sound_offers_presets_only_from_it() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        // Its 720p comes only with sound, which a Download doesn't take.
+        formats.retain(|format| format["height"].as_u64() != Some(720));
+        formats.push(serde_json::json!({"format_id": "22", "ext": "mp4", "vcodec": "avc1.64001F", "acodec": "mp4a.40.2", "width": 1280, "height": 720}));
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(
+        offered_presets(&app).0,
+        vec![VideoPreset::P1080, VideoPreset::P480, VideoPreset::P360]
+    );
+}
+
+#[test]
 fn a_video_preset_goes_to_the_ui_and_back_by_its_name() {
     for (preset, name) in [(VideoPreset::Best, "best"), (VideoPreset::P360, "360p")] {
         assert_eq!(serde_json::to_value(preset).unwrap(), name);
