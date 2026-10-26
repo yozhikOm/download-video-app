@@ -1281,14 +1281,19 @@ fn a_transcript_of_captions_has_neither_their_timing_nor_the_lines_they_repeat()
         Content::Transcript(automatic("en")),
     );
 
+    // YouTube writes a word it bleeps out as `[&nbsp;__&nbsp;]`.
     assert_eq!(
         fs::read_to_string(app.save_dir().join("Me at the zoo.txt")).unwrap(),
         "\
-when I was first learning to
-meditate the instruction was to
-simply pay attention to my breath
-[Music]
->> it sounded simple enough
+when I was first learning to meditate
+the instruction was to Simply pay
+attention to my breath and when my mind
+just by being curiously aware when she
+smoked was that smoking tastes like
+[ __ ] now she moved from knowledge to to
+wisdom she moved from knowing in her
+curious feel the joy of Letting Go and
+repeat thank you
 "
     );
 }
