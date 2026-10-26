@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
+  cancelDownload,
   openDownloadedFile,
   removeDownload,
   retryDownload,
@@ -92,6 +93,33 @@ export function DownloadCard({
       .catch(() => {});
   }
 
+  function cancel() {
+    // It fails only for a Download no longer Queued or Downloading, which
+    // the Queue's next event shows.
+    cancelDownload(download.id).catch(() => {});
+  }
+
+  const cancelButton = (
+    <div>
+      <Button variant="outline" onClick={cancel}>
+        {strings.download.cancel}
+      </Button>
+    </div>
+  );
+
+  const retryButton = (
+    <>
+      <div>
+        <Button onClick={retry}>{strings.download.retry}</Button>
+      </div>
+      {duplicate.shown && (
+        <p role="alert" className="text-destructive">
+          {strings.download.duplicate}
+        </p>
+      )}
+    </>
+  );
+
   return (
     <Card size="sm" role="region" aria-labelledby={titleId}>
       <CardContent className="flex gap-3">
@@ -112,7 +140,10 @@ export function DownloadCard({
             <CardDescription>{savesText(download)}</CardDescription>
           </div>
           {download.status === "queued" && (
-            <p className="text-muted-foreground">{strings.download.queued}</p>
+            <>
+              <p className="text-muted-foreground">{strings.download.queued}</p>
+              {cancelButton}
+            </>
           )}
           {download.status === "downloading" && (
             <>
@@ -129,6 +160,7 @@ export function DownloadCard({
                   {progressText(download)}
                 </span>
               </p>
+              {cancelButton}
             </>
           )}
           {download.status === "processing" && (
@@ -175,14 +207,15 @@ export function DownloadCard({
               <p role="alert" className="text-destructive">
                 {strings.download.failed}
               </p>
-              <div>
-                <Button onClick={retry}>{strings.download.retry}</Button>
-              </div>
-              {duplicate.shown && (
-                <p role="alert" className="text-destructive">
-                  {strings.download.duplicate}
-                </p>
-              )}
+              {retryButton}
+            </>
+          )}
+          {download.status === "cancelled" && (
+            <>
+              <p className="text-muted-foreground">
+                {strings.download.cancelled}
+              </p>
+              {retryButton}
             </>
           )}
         </div>
