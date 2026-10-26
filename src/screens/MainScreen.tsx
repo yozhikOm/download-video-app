@@ -4,7 +4,7 @@ import { SignInBrowserPicker } from "@/components/SignInBrowserPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { VideoPreview, type PresetChoice } from "@/components/VideoPreview";
+import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
 import {
   appInfo as fetchAppInfo,
   download as downloadVideo,
@@ -105,12 +105,12 @@ export function MainScreen({ probe, settings, download }: Props) {
   // Each «Скачать» gets a card of its own, so that the previous Download's
   // failure to open its file doesn't carry over to the next one.
   const [downloadsStarted, setDownloadsStarted] = useState(0);
-  // The tab and Presets the user chose, for the Probe they were chosen in;
-  // each Probe starts on the Video tab with its own defaults, while a card
-  // that comes back keeps the choice.
-  const [presetChoice, setPresetChoice] = useState<{
+  // The tab, Presets and Transcript the user chose, for the Probe they were
+  // chosen in; each Probe starts on the Video tab with its own defaults and
+  // without the Transcript, while a card that comes back keeps the choice.
+  const [cardChoice, setCardChoice] = useState<{
     probe: ProbeState;
-    choice: PresetChoice;
+    choice: CardChoice;
   } | null>(null);
 
   useEffect(() => {
@@ -139,24 +139,37 @@ export function MainScreen({ probe, settings, download }: Props) {
     }
   }
 
-  function presetChoiceFor(
+  function cardChoiceFor(
     probed: Extract<ProbeState, { status: "probed" }>,
-  ): PresetChoice {
-    return presetChoice?.probe === probed
-      ? presetChoice.choice
+  ): CardChoice {
+    return cardChoice?.probe === probed
+      ? cardChoice.choice
       : {
           group: "video",
           video: probed.defaultVideoPreset,
           audio: probed.audioPresets[0] ?? "m4a",
+          withTranscript: false,
+          transcriptLanguage: probed.defaultTranscriptLanguage,
         };
   }
 
-  /** The Preset on the chosen tab. */
-  function chosenPreset(
+  /**
+   * The Preset on the chosen tab, `null` on the Transcript tab, and the
+   * Transcript language when the Transcript is saved.
+   */
+  function chosenDownload(
     probed: Extract<ProbeState, { status: "probed" }>,
-  ): Preset {
-    const choice = presetChoiceFor(probed);
-    return choice.group === "audio" ? choice.audio : choice.video;
+  ): [Preset | null, string | null] {
+    const choice = cardChoiceFor(probed);
+    const transcript = choice.withTranscript ? choice.transcriptLanguage : null;
+    switch (choice.group) {
+      case "video":
+        return [choice.video, transcript];
+      case "audio":
+        return [choice.audio, transcript];
+      case "transcript":
+        return [null, choice.transcriptLanguage];
+    }
   }
 
   // Signing in steps aside for the URL just submitted, unless its Probe
@@ -209,8 +222,9 @@ export function MainScreen({ probe, settings, download }: Props) {
           videoPresets={probe.videoPresets}
           audioPresets={probe.audioPresets}
           m4aKeepsSound={probe.m4aKeepsSound}
-          choice={presetChoiceFor(probe)}
-          onChoose={(choice) => setPresetChoice({ probe, choice })}
+          transcriptLanguages={probe.transcriptLanguages}
+          choice={cardChoiceFor(probe)}
+          onChoose={(choice) => setCardChoice({ probe, choice })}
           canDownload={!isRunning(download)}
           onDownload={() => {
             // The Download's card takes over from the Video's.
@@ -218,7 +232,7 @@ export function MainScreen({ probe, settings, download }: Props) {
             setEndedHidden(false);
             setDownloadsStarted((count) => count + 1);
             // With no Video to download, its card comes back.
-            downloadVideo(chosenPreset(probe)).catch(() =>
+            downloadVideo(...chosenDownload(probe)).catch(() =>
               setPreviewHidden(false),
             );
           }}

@@ -19,19 +19,28 @@ import type {
   ProbeState,
   SettingsState,
   SetupState,
+  TranscriptLanguage,
   VideoCard,
   VideoPreset,
 } from "./backend";
 
 const MB = 1024 * 1024;
 
-/** A Probe that found `video`, with the Presets of a 1080p Video with sound. */
+/**
+ * A Probe that found `video`, with the Presets of a 1080p Video with sound
+ * and its Transcript in English and Russian.
+ */
 function probed(
   video: VideoCard,
   videoPresets: VideoPreset[] = ["1080p", "720p", "480p", "360p"],
   defaultVideoPreset: VideoPreset = "1080p",
   audioPresets: AudioPreset[] = ["m4a", "mp3"],
   m4aKeepsSound = true,
+  transcriptLanguages: TranscriptLanguage[] = [
+    { language: "ru", automatic: false },
+    { language: "en", automatic: false },
+  ],
+  defaultTranscriptLanguage: string | null = "en",
 ): ProbeState {
   return {
     status: "probed",
@@ -40,6 +49,8 @@ function probed(
     defaultVideoPreset,
     audioPresets,
     m4aKeepsSound,
+    transcriptLanguages,
+    defaultTranscriptLanguage,
   };
 }
 
@@ -57,7 +68,8 @@ function mockBackend({
   const commands: string[] = [];
   const probedUrls: string[] = [];
   const signInBrowsers: (Browser | null)[] = [];
-  const downloadedPresets: Preset[] = [];
+  const downloadedPresets: (Preset | null)[] = [];
+  const downloadedTranscripts: (string | null)[] = [];
   mockIPC((cmd, args) => {
     commands.push(cmd);
     switch (cmd) {
@@ -74,7 +86,10 @@ function mockBackend({
         if (downloadFails) {
           throw new Error("no probed Video");
         }
-        downloadedPresets.push((args as { preset: Preset }).preset);
+        downloadedPresets.push((args as { preset: Preset | null }).preset);
+        downloadedTranscripts.push(
+          (args as { transcript: string | null }).transcript,
+        );
         return null;
       case "open_downloaded_file":
         if (openingFails) {
@@ -102,6 +117,7 @@ function mockBackend({
     probedUrls,
     signInBrowsers,
     downloadedPresets,
+    downloadedTranscripts,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
     settings: (state: SettingsState) => send({ type: "settings", data: state }),
@@ -773,6 +789,147 @@ test("a Video without sound has no Audio tab", async () => {
 
   expect(screen.getByRole("tab", { name: "Видео" })).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Аудио" })).not.toBeInTheDocument();
+});
+
+test("a Download without the transcript checkbox saves no Transcript", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+
+  expect(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  ).not.toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["1080p"]));
+  expect(backend.downloadedTranscripts).toEqual([null]);
+});
+
+test("the transcript checkbox saves the Transcript in the Video's own language with the media", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Язык транскрипта" }),
+  ).toHaveDisplayValue("Английский");
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["1080p"]));
+  expect(backend.downloadedTranscripts).toEqual(["en"]);
+});
+
+test("the transcript checkbox saves the Transcript with the sound on the Audio tab", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  openTab("Аудио");
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "Язык транскрипта" }), {
+    target: { value: "ru" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["m4a"]));
+  expect(backend.downloadedTranscripts).toEqual(["ru"]);
+});
+
+test("the Transcript tab saves the Transcript alone in the Video's own language", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+
+  openTab("Транскрипт");
+  expect(
+    screen.getByRole("combobox", { name: "Язык транскрипта" }),
+  ).toHaveDisplayValue("Английский");
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual([null]));
+  expect(backend.downloadedTranscripts).toEqual(["en"]);
+});
+
+test("the Transcript tab lists the Video's languages by name, captions marked", async () => {
+  const backend = await startReady();
+  await backend.probe(
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], true, [
+      { language: "ru", automatic: false },
+      { language: "de", automatic: false },
+      { language: "en", automatic: true },
+    ]),
+  );
+  openTab("Транскрипт");
+
+  const languages = screen.getByRole("combobox", { name: "Язык транскрипта" });
+  expect(
+    within(languages)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual(["Английский (автосубтитры)", "Немецкий", "Русский"]);
+  fireEvent.change(languages, { target: { value: "de" } });
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedTranscripts).toEqual(["de"]));
+});
+
+test("two Transcripts of one language are told apart by their codes", async () => {
+  const backend = await startReady();
+  await backend.probe(
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], true, [
+      { language: "en", automatic: false },
+      { language: "en-nP7-2PuUl7o", automatic: false },
+      { language: "ru", automatic: false },
+    ]),
+  );
+  openTab("Транскрипт");
+
+  const languages = screen.getByRole("combobox", { name: "Язык транскрипта" });
+  expect(
+    within(languages)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual(["Английский (en)", "Английский (en-nP7-2PuUl7o)", "Русский"]);
+});
+
+test("a Video without a Transcript says so on its tab and can't save one", async () => {
+  const backend = await startReady();
+  await backend.probe(
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], true, [], null),
+  );
+
+  expect(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  ).toBeDisabled();
+  openTab("Транскрипт");
+
+  expect(
+    screen.getByText("У этого видео нет транскрипта."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Скачать" })).toBeDisabled();
+});
+
+test("a new Probe takes its own Transcript language and unchecks the checkbox", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "Язык транскрипта" }), {
+    target: { value: "ru" },
+  });
+
+  await backend.probe({ status: "probing" });
+  await backend.probe(probed(zoo));
+
+  expect(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  ).not.toBeChecked();
+  openTab("Транскрипт");
+  expect(
+    screen.getByRole("combobox", { name: "Язык транскрипта" }),
+  ).toHaveDisplayValue("Английский");
 });
 
 test("a Download shows its percent, speed and time left while downloading", async () => {

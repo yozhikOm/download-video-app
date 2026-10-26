@@ -88,6 +88,14 @@ export const strings = {
     /** M4A for a Video whose sound it encodes again. */
     m4aEncoded: "M4A",
   },
+  transcript: {
+    tab: "Транскрипт",
+    save: "Сохранить транскрипт",
+    language: "Язык транскрипта",
+    /** A language whose text comes from the site's captions. */
+    automatic: (language: string) => `${language} (автосубтитры)`,
+    none: "У этого видео нет транскрипта.",
+  },
   download: {
     start: "Скачать",
     downloading: "Скачивание…",
