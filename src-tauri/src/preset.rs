@@ -211,10 +211,10 @@ impl TryFrom<String> for AudioPreset {
 }
 
 /// The Audio presets a Video with these Formats has: all of them when some
-/// Format has sound or doesn't tell, none when every Format is without
-/// sound.
+/// Format has sound or doesn't tell, or when the site lists no Formats; none
+/// when every Format is without sound.
 pub fn audio_presets(formats: &[Format]) -> Vec<AudioPreset> {
-    if formats.iter().any(Format::has_sound) {
+    if formats.is_empty() || formats.iter().any(Format::has_sound) {
         AUDIO_PRESETS.to_vec()
     } else {
         Vec::new()

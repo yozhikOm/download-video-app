@@ -397,6 +397,20 @@ fn a_video_without_sound_offers_no_audio_presets() {
 }
 
 #[test]
+fn a_video_that_lists_no_formats_offers_m4a_and_mp3() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with_formats(Vec::clear));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(
+        offered_audio_presets(&app),
+        vec![AudioPreset::M4a, AudioPreset::Mp3]
+    );
+}
+
+#[test]
 fn a_preset_comes_from_the_ui_by_its_name() {
     for (name, preset) in [
         ("1080p", Preset::Video(VideoPreset::P1080)),
