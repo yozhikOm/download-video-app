@@ -1,5 +1,6 @@
 //! Downloading a probed Video: yt-dlp works in the Partials folder, and the
-//! final file is moved to the save folder under the Video's title.
+//! final files, the media and its Transcript, are moved to the save folder
+//! under the Video's title.
 
 #[cfg(test)]
 mod tests;
@@ -8,6 +9,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Output;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -17,8 +19,9 @@ use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::{Video, VideoCard, error_line};
-use crate::settings::Settings;
+use crate::settings::{Browser, Settings};
 use crate::toolbox::{Tool, Toolbox};
+use crate::transcript::{self, TranscriptLanguage};
 
 /// The Download the main screen shows.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -53,6 +56,60 @@ pub enum DownloadStatus {
     },
 }
 
+/// What a Download saves of its Video.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Content {
+    /// The media in a Video or Audio preset.
+    Media(Preset),
+    /// The media in a Preset, and its Transcript next to it under the same
+    /// name.
+    MediaWithTranscript(Preset, TranscriptLanguage),
+    /// The Transcript alone, without the media.
+    Transcript(TranscriptLanguage),
+}
+
+impl Content {
+    fn preset(&self) -> Option<Preset> {
+        match self {
+            Self::Media(preset) | Self::MediaWithTranscript(preset, _) => Some(*preset),
+            Self::Transcript(_) => None,
+        }
+    }
+
+    fn transcript(&self) -> Option<&TranscriptLanguage> {
+        match self {
+            Self::Media(_) => None,
+            Self::MediaWithTranscript(_, language) | Self::Transcript(language) => Some(language),
+        }
+    }
+}
+
+impl From<Preset> for Content {
+    fn from(preset: Preset) -> Self {
+        Self::Media(preset)
+    }
+}
+
+impl From<VideoPreset> for Content {
+    fn from(preset: VideoPreset) -> Self {
+        Self::Media(preset.into())
+    }
+}
+
+impl From<AudioPreset> for Content {
+    fn from(preset: AudioPreset) -> Self {
+        Self::Media(preset.into())
+    }
+}
+
+/// Why a Download ended before its files were received.
+enum Stopped {
+    /// yt-dlp failed to start; the setup screen is up now.
+    ToolBroken,
+    /// The message is for the log.
+    Failed(String),
+}
+
 /// How often the UI gets the speed and time left while the percent stands.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -65,9 +122,9 @@ pub struct Downloader {
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     current: Mutex<Option<Download>>,
-    /// The current Download's Video and Preset, for retrying it once it is
-    /// Failed.
-    to_retry: Mutex<Option<(Video, Preset)>>,
+    /// The current Download's Video and what it saves, for retrying it once
+    /// it is Failed.
+    to_retry: Mutex<Option<(Video, Content)>>,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -110,9 +167,9 @@ impl Downloader {
         }
     }
 
-    /// Downloads the current Download's Video again with its Preset if it is
-    /// Failed; yt-dlp resumes from its Partial. Blocks until the Download
-    /// ends.
+    /// Downloads the current Download's Video again with its Preset and
+    /// Transcript if it is Failed; yt-dlp resumes from its Partial. Blocks
+    /// until the Download ends.
     pub fn retry(&self) {
         let failed = matches!(
             self.state(),
@@ -122,20 +179,72 @@ impl Downloader {
             })
         );
         let video = self.to_retry.lock().unwrap().clone();
-        if let (true, Some((video, preset))) = (failed, video) {
-            self.download(&video, preset);
+        if let (true, Some((video, content))) = (failed, video) {
+            self.download(&video, content);
         }
     }
 
-    /// Downloads `video` with `preset`: as an MP4 in the resolution of a
-    /// Video preset, or as the sound alone in the format of an Audio
-    /// preset. Blocks until the Download ends. Returns at once if another
-    /// Download is running.
-    pub fn download(&self, video: &Video, preset: Preset) {
-        if !self.start(video, preset) {
+    /// Downloads `content` of `video`: the media as an MP4 in the
+    /// resolution of a Video preset, or as the sound alone in the format of
+    /// an Audio preset, and its Transcript as text. Blocks until the
+    /// Download ends. Returns at once if another Download is running.
+    pub fn download(&self, video: &Video, content: Content) {
+        if !self.start(video, &content) {
             return;
         }
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
+        let status = match self.receive(video, &content, sign_in_browser) {
+            // The setup screen is up now; once yt-dlp is restored, the user
+            // starts the Download again.
+            Err(Stopped::ToolBroken) => {
+                self.set_state(None);
+                self.toolbox.prepare();
+                return;
+            }
+            Err(Stopped::Failed(message)) => DownloadStatus::Failed { message },
+            Ok(partials) => match self.save(&partials, &file_name(video)) {
+                Ok(files) => DownloadStatus::Done {
+                    file: files[0].clone(),
+                },
+                Err(error) => DownloadStatus::Failed {
+                    message: format!("can't save {}: {error}", partials[0].display()),
+                },
+            },
+        };
+        if let DownloadStatus::Failed { message } = &status {
+            eprintln!("can't download {}: {message}", video.url);
+        }
+        self.set_status(status);
+    }
+
+    /// Receives `content` of `video` into the Partials folder and returns
+    /// its files, the media first. The Transcript comes first, as yt-dlp
+    /// takes subtitles before the media, so that a Download whose
+    /// Transcript fails doesn't receive the media for nothing.
+    fn receive(
+        &self,
+        video: &Video,
+        content: &Content,
+        sign_in_browser: Option<Browser>,
+    ) -> Result<Vec<PathBuf>, Stopped> {
+        let transcript = content
+            .transcript()
+            .map(|language| self.receive_transcript(video, language, sign_in_browser))
+            .transpose()?;
+        let media = content
+            .preset()
+            .map(|preset| self.receive_media(video, preset, sign_in_browser))
+            .transpose()?;
+        Ok(media.into_iter().chain(transcript).collect())
+    }
+
+    /// Has yt-dlp download the media and returns its final file.
+    fn receive_media(
+        &self,
+        video: &Video,
+        preset: Preset,
+        sign_in_browser: Option<Browser>,
+    ) -> Result<PathBuf, Stopped> {
         let mut args: Vec<OsString> = vec!["--no-playlist".into()];
         args.extend(preset_args(preset));
         args.extend::<[OsString; _]>([
@@ -167,7 +276,7 @@ impl Downloader {
         args.extend(["--".into(), video.url.clone().into()]);
         let mut formats = Vec::new();
         let mut final_file = None;
-        let result = self
+        let output = self
             .toolbox
             .run_streaming(
                 Tool::YtDlp,
@@ -183,38 +292,77 @@ impl Downloader {
                     Line::FinalFile(path) => final_file = Some(path),
                     Line::Other => {}
                 },
-            );
-        let status = match result {
-            // The setup screen is up now; once yt-dlp is restored, the user
-            // starts the Download again.
-            Err(_) => {
-                self.set_state(None);
-                self.toolbox.prepare();
-                return;
-            }
-            Ok(output) if !output.status.success() => DownloadStatus::Failed {
-                message: error_line(&String::from_utf8_lossy(&output.stderr)),
-            },
-            Ok(_) => match final_file {
-                Some(partial) => match self.save(&partial, &file_name(video)) {
-                    Ok(file) => DownloadStatus::Done { file },
-                    Err(error) => DownloadStatus::Failed {
-                        message: format!("can't save {}: {error}", partial.display()),
-                    },
-                },
-                None => DownloadStatus::Failed {
-                    message: "yt-dlp didn't tell where the file is".into(),
-                },
-            },
+            )
+            .map_err(|_| Stopped::ToolBroken)?;
+        failure(&output)?;
+        final_file.ok_or_else(|| Stopped::Failed("yt-dlp didn't tell where the file is".into()))
+    }
+
+    /// Has yt-dlp download the subtitles or captions of `language` alone,
+    /// and returns their text in a file of its own.
+    fn receive_transcript(
+        &self,
+        video: &Video,
+        language: &TranscriptLanguage,
+        sign_in_browser: Option<Browser>,
+    ) -> Result<PathBuf, Stopped> {
+        let name = transcript::ytdlp_name(language, &video.transcripts);
+        let write = if language.automatic {
+            "--write-auto-subs"
+        } else {
+            "--write-subs"
         };
-        if let DownloadStatus::Failed { message } = &status {
-            eprintln!("can't download {}: {message}", video.url);
+        let mut args: Vec<OsString> = [
+            "--no-playlist",
+            "--skip-download",
+            write,
+            "--sub-langs",
+            &name,
+            // yt-dlp takes another format when the site has no WebVTT, and
+            // ffmpeg converts it.
+            "--sub-format",
+            "vtt",
+            "--convert-subs",
+            "vtt",
+            "-o",
+            "subtitle:%(id)s.transcript.%(ext)s",
+            "-P",
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+        args.extend([
+            self.partials_dir.clone().into_os_string(),
+            "--".into(),
+            video.url.clone().into(),
+        ]);
+        let output = self
+            .toolbox
+            .run(Tool::YtDlp, &args, sign_in_browser)
+            .map_err(|_| Stopped::ToolBroken)?;
+        failure(&output)?;
+        // yt-dlp prints no path without the media, and succeeds without a
+        // file when the site has no subtitles in the language; it puts the
+        // language before the extension.
+        let subtitles = self
+            .partials_dir
+            .join(format!("{}.transcript.{name}.vtt", video.id));
+        let text = fs::read(&subtitles)
+            .map(|bytes| transcript::text(&String::from_utf8_lossy(&bytes)))
+            .map_err(|error| {
+                Stopped::Failed(format!("no subtitles at {}: {error}", subtitles.display()))
+            })?;
+        let file = subtitles.with_extension("txt");
+        fs::write(&file, text)
+            .map_err(|error| Stopped::Failed(format!("can't write {}: {error}", file.display())))?;
+        if let Err(error) = fs::remove_file(&subtitles) {
+            eprintln!("can't remove {}: {error}", subtitles.display());
         }
-        self.set_status(status);
+        Ok(file)
     }
 
     /// Makes `video` the current Download, unless one is running.
-    fn start(&self, video: &Video, preset: Preset) -> bool {
+    fn start(&self, video: &Video, content: &Content) -> bool {
         let _sending = self.sending.lock().unwrap();
         let download = Download {
             video: video.card(),
@@ -234,7 +382,7 @@ impl Downloader {
                 return false;
             }
             *current = Some(download.clone());
-            *self.to_retry.lock().unwrap() = Some((video.clone(), preset));
+            *self.to_retry.lock().unwrap() = Some((video.clone(), content.clone()));
         }
         // The new Download's first progress goes out at once.
         *self.progress_sent.lock().unwrap() = None;
@@ -242,29 +390,47 @@ impl Downloader {
         true
     }
 
-    /// Moves the final file out of the Partials folder under the first
-    /// free name: the title, then the title with " (1)", " (2)"…
-    fn save(&self, partial: &Path, name: &str) -> io::Result<PathBuf> {
+    /// Moves the final files out of the Partials folder under the first
+    /// name free for all of them, each with its own extension: the title,
+    /// then the title with " (1)", " (2)"…
+    fn save(&self, partials: &[PathBuf], name: &str) -> io::Result<Vec<PathBuf>> {
         fs::create_dir_all(&self.save_dir)?;
-        let extension = partial.extension().unwrap_or_default().to_string_lossy();
         for number in 0.. {
             let name = match number {
-                0 => format!("{name}.{extension}"),
-                _ => format!("{name} ({number}).{extension}"),
+                0 => name.to_owned(),
+                _ => format!("{name} ({number})"),
             };
-            let file = self.save_dir.join(name);
-            // Creating the file takes the name, so that another program
-            // can't take it before the move.
-            if create_new(&file)?.is_none() {
+            let files: Vec<PathBuf> = partials
+                .iter()
+                .map(|partial| {
+                    let extension = partial.extension().unwrap_or_default().to_string_lossy();
+                    self.save_dir.join(format!("{name}.{extension}"))
+                })
+                .collect();
+            // Creating the files takes the names, so that another program
+            // can't take them before the move.
+            let mut taken = Vec::new();
+            for file in &files {
+                match create_new(file) {
+                    Ok(Some(_)) => taken.push(file),
+                    Ok(None) => break,
+                    Err(error) => {
+                        remove_all(&taken);
+                        return Err(error);
+                    }
+                }
+            }
+            if taken.len() < files.len() {
+                remove_all(&taken);
                 continue;
             }
-            return match move_file(partial, &file) {
-                Ok(()) => Ok(file),
-                Err(error) => {
-                    let _ = fs::remove_file(&file);
-                    Err(error)
+            for (at, (partial, file)) in partials.iter().zip(&files).enumerate() {
+                if let Err(error) = move_file(partial, file) {
+                    remove_all(&taken[at..]);
+                    return Err(error);
                 }
-            };
+            }
+            return Ok(files);
         }
         unreachable!("some number is free")
     }
@@ -319,6 +485,17 @@ impl Downloader {
         // Sent outside the state lock: a new subscriber reads the state
         // while holding the subscribers' lock.
         self.events.send(AppEvent::Download(state));
+    }
+}
+
+/// The line of yt-dlp's stderr that tells why it failed, when it did.
+fn failure(output: &Output) -> Result<(), Stopped> {
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(Stopped::Failed(error_line(&String::from_utf8_lossy(
+            &output.stderr,
+        ))))
     }
 }
 
@@ -423,6 +600,13 @@ fn is_reserved(name: &str) -> bool {
         || ((upper.starts_with("COM") || upper.starts_with("LPT"))
             && upper.len() == 4
             && upper[3..].chars().all(|c| ('1'..='9').contains(&c)))
+}
+
+/// Removes the empty files taken for a save that won't happen.
+fn remove_all(files: &[&PathBuf]) {
+    for file in files {
+        let _ = fs::remove_file(file);
+    }
 }
 
 /// Moves `from` over the empty file `to`. The save folder may be on another

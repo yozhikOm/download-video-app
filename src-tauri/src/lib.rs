@@ -7,6 +7,7 @@ pub mod processes;
 pub mod releases;
 pub mod settings;
 pub mod toolbox;
+pub mod transcript;
 
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +16,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Builder, Manager, Runtime, State};
 
 use crate::clock::SystemClock;
-use crate::download::Downloader;
+use crate::download::{Content, Downloader};
 use crate::events::{AppEvent, EventSink};
 use crate::preset::Preset;
 use crate::probe::Prober;
@@ -96,21 +97,40 @@ fn probe(url: String, prober: State<'_, Arc<Prober>>) {
     std::thread::spawn(move || prober.probe(url.trim()));
 }
 
-/// Downloads the Video the latest Probe found with a Video or Audio preset
-/// in the background; the UI follows along through events. Fails when no
-/// Probe found a Video or the Video lacks the Preset.
+/// Downloads the Video the latest Probe found in the background: its media
+/// in a Video or Audio preset, its Transcript in a language, or both; the UI
+/// follows along through events. Fails when no Probe found a Video, when
+/// neither is asked for, or when the Video lacks the Preset or the language.
 #[tauri::command]
 fn download(
-    preset: Preset,
+    preset: Option<Preset>,
+    transcript: Option<String>,
     prober: State<'_, Arc<Prober>>,
     downloader: State<'_, Arc<Downloader>>,
 ) -> Result<(), String> {
     let video = prober.video().ok_or("no probed Video")?;
-    if !video.has_preset(preset) {
+    if let Some(preset) = preset
+        && !video.has_preset(preset)
+    {
         return Err(format!("the Video has no {} Preset", preset.name()));
     }
+    let transcript = transcript
+        .map(|language| {
+            video
+                .transcript_languages()
+                .into_iter()
+                .find(|offered| offered.language == language)
+                .ok_or(format!("the Video has no Transcript in {language}"))
+        })
+        .transpose()?;
+    let content = match (preset, transcript) {
+        (Some(preset), None) => Content::Media(preset),
+        (Some(preset), Some(language)) => Content::MediaWithTranscript(preset, language),
+        (None, Some(language)) => Content::Transcript(language),
+        (None, None) => return Err("neither a Preset nor a Transcript asked for".into()),
+    };
     let downloader = downloader.inner().clone();
-    std::thread::spawn(move || downloader.download(&video, preset));
+    std::thread::spawn(move || downloader.download(&video, content));
     Ok(())
 }
 

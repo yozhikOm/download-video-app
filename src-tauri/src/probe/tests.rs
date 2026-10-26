@@ -118,6 +118,9 @@ fn a_video_url_shows_the_video_card() {
         default_video_preset: VideoPreset::P1080,
         audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
         m4a_keeps_sound: true,
+        // Which ones, the Transcript tests tell.
+        transcript_languages: offered_transcripts(&app).0,
+        default_transcript_language: Some("en".into()),
     };
     assert_eq!(app.probe_states(), [ProbeState::Probing, probed.clone()]);
     assert_eq!(app.prober.state(), probed);
@@ -500,6 +503,162 @@ fn a_video_from_another_site_offers_presets_from_its_formats_with_sound() {
     );
 }
 
+/// The Transcript languages the latest Probe offers, and the one chosen at
+/// first.
+fn offered_transcripts(app: &App) -> (Vec<TranscriptLanguage>, Option<String>) {
+    match app.prober.state() {
+        ProbeState::Probed {
+            transcript_languages,
+            default_transcript_language,
+            ..
+        } => (transcript_languages, default_transcript_language),
+        state => panic!("not probed: {state:?}"),
+    }
+}
+
+fn manual(language: &str) -> TranscriptLanguage {
+    TranscriptLanguage {
+        language: language.into(),
+        automatic: false,
+    }
+}
+
+fn automatic(language: &str) -> TranscriptLanguage {
+    TranscriptLanguage {
+        language: language.into(),
+        automatic: true,
+    }
+}
+
+#[test]
+fn a_video_with_subtitles_offers_them_over_captions_with_its_own_language_chosen() {
+    let app = App::start();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    let (transcripts, chosen) = offered_transcripts(&app);
+    // English has both; its subtitles stand in for the captions.
+    assert_eq!(transcripts.len(), 43);
+    assert!(
+        transcripts.iter().all(|it| !it.automatic),
+        "{transcripts:?}"
+    );
+    assert!(transcripts.contains(&manual("ru")));
+    assert!(transcripts.contains(&manual("en")));
+    assert_eq!(chosen.as_deref(), Some("en"));
+}
+
+#[test]
+fn a_video_with_captions_alone_offers_its_own_language_without_machine_translations() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/youtube-finished-stream.json"));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=pZMrdjuU-CY");
+
+    assert_eq!(
+        offered_transcripts(&app),
+        (vec![automatic("en")], Some("en".into()))
+    );
+}
+
+#[test]
+fn a_video_without_subtitles_or_captions_offers_no_transcript() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/rutube-video.json"));
+
+    app.prober
+        .probe("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+    assert_eq!(offered_transcripts(&app), (vec![], None));
+}
+
+/// The `-J` answer of `youtube-video.json` changed by `edit`.
+fn video_with(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut answer: serde_json::Value = serde_json::from_slice(VIDEO).unwrap();
+    edit(&mut answer);
+    serde_json::to_vec(&answer).unwrap()
+}
+
+#[test]
+fn without_subtitles_in_its_own_language_the_captions_of_it_are_chosen() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with(|answer| {
+        answer["subtitles"].as_object_mut().unwrap().remove("en");
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    let (transcripts, chosen) = offered_transcripts(&app);
+    assert_eq!(transcripts.len(), 43);
+    assert!(transcripts.contains(&automatic("en")));
+    assert!(!transcripts.contains(&manual("en")));
+    assert_eq!(chosen.as_deref(), Some("en"));
+}
+
+#[test]
+fn subtitles_of_a_regional_variant_count_as_the_videos_own_language() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with(|answer| {
+        let subtitles = answer["subtitles"].as_object_mut().unwrap();
+        let english = subtitles.remove("en").unwrap();
+        subtitles.insert("en-GB".into(), english);
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    let (transcripts, chosen) = offered_transcripts(&app);
+    // The captions are in plain English, which the subtitles don't have.
+    assert!(transcripts.contains(&manual("en-GB")));
+    assert!(transcripts.contains(&automatic("en")));
+    assert_eq!(chosen.as_deref(), Some("en-GB"));
+}
+
+#[test]
+fn a_video_of_unknown_language_gets_the_language_of_its_captions_chosen() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with(|answer| {
+        answer.as_object_mut().unwrap().remove("language");
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    // The captions are of what is spoken.
+    assert_eq!(offered_transcripts(&app).1.as_deref(), Some("en"));
+}
+
+#[test]
+fn a_video_of_unknown_language_without_captions_gets_its_first_subtitles_chosen() {
+    let app = App::start();
+    app.ytdlp_prints(&video_with(|answer| {
+        let answer = answer.as_object_mut().unwrap();
+        answer.remove("language");
+        answer.remove("automatic_captions");
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    let (transcripts, chosen) = offered_transcripts(&app);
+    assert_eq!(chosen, Some(transcripts[0].language.clone()));
+}
+
+#[test]
+fn the_chat_replay_of_a_stream_is_not_offered_as_a_transcript() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/youtube-stream-with-chat.json"));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=fp_7X3VWIuA");
+
+    assert_eq!(offered_transcripts(&app).0, [automatic("en")]);
+}
+
 #[test]
 fn a_url_of_a_video_in_a_playlist_probes_only_that_video() {
     let app = App::start();
@@ -580,6 +739,8 @@ fn a_finished_stream_is_an_ordinary_video() {
             default_video_preset: VideoPreset::P1080,
             audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
             m4a_keeps_sound: true,
+            transcript_languages: vec![automatic("en")],
+            default_transcript_language: Some("en".into()),
         }
     );
 }
