@@ -13,13 +13,13 @@ import { formatDuration } from "@/lib/format";
 import { strings } from "@/strings";
 
 /**
- * What the user chose on the Video's card: the tab, and the Preset on each;
- * `audio` is `null` for a Video without sound, which has no Audio tab.
+ * What the user chose on the Video's card: the tab, and the Preset on each.
+ * A Video without sound has no Audio tab, so its `audio` is never shown.
  */
 export type PresetChoice = {
   group: "video" | "audio";
   video: VideoPreset;
-  audio: AudioPreset | null;
+  audio: AudioPreset;
 };
 
 /** The Presets of one group the Video has, to choose one from. */
@@ -104,7 +104,7 @@ export function VideoPreview({
         >
           <TabsList>
             <TabsTrigger value="video">{strings.presets.videoTab}</TabsTrigger>
-            {choice.audio && (
+            {audioPresets.length > 0 && (
               <TabsTrigger value="audio">
                 {strings.presets.audioTab}
               </TabsTrigger>
@@ -119,10 +119,10 @@ export function VideoPreview({
               onChoose={(preset) => onChoose({ ...choice, video: preset })}
             />
           </TabsContent>
-          {choice.audio && (
+          {audioPresets.length > 0 && (
             <TabsContent value="audio">
               <PresetPicker
-                label={strings.presets.format}
+                label={strings.presets.audioFormat}
                 presets={audioPresets}
                 names={
                   m4aKeepsSound

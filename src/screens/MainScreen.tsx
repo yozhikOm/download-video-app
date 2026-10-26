@@ -147,7 +147,7 @@ export function MainScreen({ probe, settings, download }: Props) {
       : {
           group: "video",
           video: probed.defaultVideoPreset,
-          audio: probed.audioPresets[0] ?? null,
+          audio: probed.audioPresets[0] ?? "m4a",
         };
   }
 
@@ -156,9 +156,7 @@ export function MainScreen({ probe, settings, download }: Props) {
     probed: Extract<ProbeState, { status: "probed" }>,
   ): Preset {
     const choice = presetChoiceFor(probed);
-    return choice.group === "audio" && choice.audio
-      ? choice.audio
-      : choice.video;
+    return choice.group === "audio" ? choice.audio : choice.video;
   }
 
   // Signing in steps aside for the URL just submitted, unless its Probe

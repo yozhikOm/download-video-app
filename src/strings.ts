@@ -71,7 +71,7 @@ export const strings = {
     videoTab: "Видео",
     audioTab: "Аудио",
     quality: "Качество",
-    format: "Формат",
+    audioFormat: "Формат",
     video: {
       best: "Лучшее",
       "2160p": "2160p",
