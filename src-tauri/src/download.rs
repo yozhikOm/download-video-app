@@ -440,26 +440,16 @@ impl Downloader {
     /// Removes the Partials untouched for longer than [`PARTIAL_LIFETIME`].
     /// Called at launch, before any Download is received.
     pub fn discard_old_partials(&self) {
-        let Ok(entries) = fs::read_dir(&self.partials_dir) else {
-            return;
-        };
         let now = self.clock.now();
-        for entry in entries.flatten() {
-            let untouched = entry
+        remove_partials_where(&self.partials_dir, |entry| {
+            entry
                 .metadata()
                 .ok()
                 .filter(|metadata| metadata.is_file())
                 .and_then(|metadata| metadata.modified().ok())
-                .and_then(|modified| now.duration_since(modified).ok());
-            if untouched.is_some_and(|untouched| untouched > PARTIAL_LIFETIME)
-                && let Err(error) = fs::remove_file(entry.path())
-            {
-                eprintln!(
-                    "can't remove the Partial {}: {error}",
-                    entry.path().display()
-                );
-            }
-        }
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|untouched| untouched > PARTIAL_LIFETIME)
+        });
     }
 
     /// Takes a Done Download out of the Queue; its files stay.
@@ -511,7 +501,10 @@ impl Downloader {
     /// does, the user adds the Download again.
     fn download(&self, video: &Video, content: &Content, stopper: &Stopper) -> bool {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
-        let status = match self.receive(video, content, sign_in_browser, stopper) {
+        let received = self.receive(video, content, sign_in_browser, stopper);
+        // Once yt-dlp has ended, the Download can no longer be cancelled.
+        let cancelled = stopper.finish();
+        let status = match received {
             Err(Stopped::ToolBroken) => {
                 self.update(|queue| {
                     let running = queue.running.take();
@@ -522,9 +515,8 @@ impl Downloader {
                 self.toolbox.prepare();
                 return false;
             }
-            // Once yt-dlp has ended, the Download can no longer be
-            // cancelled; when it was, nothing uses its files now.
-            _ if stopper.finish() => {
+            // Nothing uses its files now.
+            _ if cancelled => {
                 remove_partial(&self.partials_dir, &partial_prefixes(video, content));
                 self.update(|queue| queue.running = None);
                 return true;
@@ -913,15 +905,22 @@ fn partial_prefixes(video: &Video, content: &Content) -> Vec<String> {
 /// Removes the files in the Partials folder whose names begin with one of
 /// `prefixes`.
 fn remove_partial(partials_dir: &Path, prefixes: &[String]) {
+    remove_partials_where(partials_dir, |entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        prefixes
+            .iter()
+            .any(|prefix| name.starts_with(prefix.as_str()))
+    });
+}
+
+/// Removes the files in the Partials folder that `remove` picks.
+fn remove_partials_where(partials_dir: &Path, remove: impl Fn(&fs::DirEntry) -> bool) {
     let Ok(entries) = fs::read_dir(partials_dir) else {
         return;
     };
     for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if prefixes
-            .iter()
-            .any(|prefix| name.starts_with(prefix.as_str()))
+        if remove(&entry)
             && let Err(error) = fs::remove_file(entry.path())
         {
             eprintln!(
