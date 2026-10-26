@@ -47,6 +47,17 @@ export type AudioPreset = "m4a" | "mp3";
 /** A Preset of either group, as the backend knows it by its name. */
 export type Preset = VideoPreset | AudioPreset;
 
+/** A language a Transcript can be saved in, and its source. */
+export type TranscriptLanguage = {
+  /** The site's code of the language, such as `en` or `pt-BR`. */
+  language: string;
+  /**
+   * The text comes from captions the site generated rather than from
+   * subtitles the author added.
+   */
+  automatic: boolean;
+};
+
 /** A browser yt-dlp can read the YouTube sign-in from. */
 export type Browser =
   | "brave"
@@ -97,6 +108,13 @@ export type ProbeState =
       audioPresets: AudioPreset[];
       /** Whether M4A saves the Video's sound as it is, without encoding it again. */
       m4aKeepsSound: boolean;
+      /**
+       * The languages a Transcript can be saved in, subtitles over captions,
+       * without machine translations; none when the Video has no Transcript.
+       */
+      transcriptLanguages: TranscriptLanguage[];
+      /** The Transcript language chosen at first. */
+      defaultTranscriptLanguage: string | null;
     }
   | {
       status: "failed";
@@ -105,10 +123,17 @@ export type ProbeState =
       signInBrowser: Browser | null;
     };
 
+/**
+ * What a Downloading Download receives now: its Transcript, a Format with
+ * the picture (with or without the sound), or one with the sound alone.
+ */
+export type Receiving = "transcript" | "video" | "audio";
+
 /** The Download the main screen shows. */
 export type Download = { video: VideoCard } & (
   | {
       status: "downloading";
+      receiving: Receiving;
       /**
        * 0 to 100, of all the Formats yt-dlp receives; `null` while the size
        * of one is unknown. Never goes down during a Download.
@@ -121,7 +146,7 @@ export type Download = { video: VideoCard } & (
     }
   /** ffmpeg merges the received Formats into the MP4, or extracts the sound. */
   | { status: "processing" }
-  /** `file` is the saved file's full path. */
+  /** `file` is the saved file's full path: the media, or the Transcript alone. */
   | { status: "done"; file: string }
   /** `message` is for the log; the UI shows a generic text. */
   | { status: "failed"; message: string }
@@ -164,12 +189,17 @@ export function probe(url: string): Promise<void> {
 }
 
 /**
- * Downloads the probed Video with a Video or Audio preset; its progress
- * arrives as download events. Rejects when no Probe found a Video or the
- * Video lacks the Preset.
+ * Downloads the probed Video: its media with a Video or Audio preset, its
+ * Transcript in a language next to it under the same name, or the
+ * Transcript alone without a Preset; its progress arrives as download
+ * events. Rejects when no Probe found a Video, when neither is asked for,
+ * or when the Video lacks the Preset or the language.
  */
-export function download(preset: Preset): Promise<void> {
-  return invoke("download", { preset });
+export function download(
+  preset: Preset | null,
+  transcript: string | null,
+): Promise<void> {
+  return invoke("download", { preset, transcript });
 }
 
 /** Downloads the Failed Download's Video again, resuming from its Partial. */

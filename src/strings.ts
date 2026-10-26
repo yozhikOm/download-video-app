@@ -2,6 +2,7 @@ import type {
   AudioPreset,
   Browser,
   Package,
+  Receiving,
   Tool,
   VideoPreset,
 } from "@/backend";
@@ -88,9 +89,21 @@ export const strings = {
     /** M4A for a Video whose sound it encodes again. */
     m4aEncoded: "M4A",
   },
+  transcript: {
+    tab: "Транскрипт",
+    save: "Сохранить транскрипт",
+    language: "Язык транскрипта",
+    /** A language whose text comes from the site's captions. */
+    automatic: (language: string) => `${language} (автосубтитры)`,
+    none: "У этого видео нет транскрипта.",
+  },
   download: {
     start: "Скачать",
-    downloading: "Скачивание…",
+    downloading: {
+      transcript: "Скачивание транскрипта…",
+      video: "Скачивание видео…",
+      audio: "Скачивание аудио…",
+    } satisfies Record<Receiving, string>,
     percent: (percent: string) => `${percent}%`,
     speed: (mbPerSecond: string) => `${mbPerSecond} МБ/с`,
     eta: (time: string) => `осталось ${time}`,

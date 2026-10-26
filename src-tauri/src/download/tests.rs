@@ -16,6 +16,7 @@ use crate::processes::fake::{FakeProcesses, exit_status};
 use crate::releases::fake::FakeReleases;
 use crate::settings::{Browser, Settings};
 use crate::toolbox::SetupState;
+use crate::transcript::TranscriptLanguage;
 
 const URL: &str = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 const ID: &str = "jNQXAC9IVRw";
@@ -115,8 +116,32 @@ impl App {
         formats: serde_json::Value,
         progress: &[String],
     ) {
+        self.ytdlp_acts(id, content, formats, progress, None);
+    }
+
+    /// Like [`App::ytdlp_downloads`], and asked for the subtitles alone,
+    /// yt-dlp writes `subtitles` where it is told.
+    fn ytdlp_downloads_with_subtitles(&self, id: &str, content: &[u8], subtitles: &[u8]) {
+        self.ytdlp_acts(id, content, serde_json::Value::Null, &[], Some(subtitles));
+    }
+
+    /// Makes yt-dlp act like it downloads the Video with this id; asked for
+    /// the subtitles alone, it writes `subtitles`, or nothing as when the
+    /// site has none in the language asked for.
+    fn ytdlp_acts(
+        &self,
+        id: &str,
+        content: &[u8],
+        formats: serde_json::Value,
+        progress: &[String],
+        subtitles: Option<&[u8]>,
+    ) {
         let (id, content, progress) = (id.to_owned(), content.to_owned(), progress.to_owned());
+        let subtitles = subtitles.map(<[u8]>::to_vec);
         self.processes.script("yt-dlp.exe", move |args| {
+            if args.contains(&"--skip-download".into()) {
+                return write_subtitles(args, &id, subtitles.as_deref());
+            }
             let dir = PathBuf::from(after(args, "-P"));
             // The sound alone is saved in the format it was extracted to.
             let extension = values_of(args, "--audio-format")
@@ -205,6 +230,30 @@ fn values_of<'a>(args: &'a [OsString], option: &str) -> Vec<&'a OsString> {
         .collect()
 }
 
+/// Acts like yt-dlp asked for the subtitles alone: writes `subtitles` in
+/// the `-P` folder under the `subtitle:` template, with the language
+/// before the extension, or nothing when `subtitles` is `None`.
+fn write_subtitles(args: &[OsString], id: &str, subtitles: Option<&[u8]>) -> Output {
+    if let Some(subtitles) = subtitles {
+        let dir = PathBuf::from(after(args, "-P"));
+        let language = after(args, "--sub-langs").to_str().unwrap();
+        let template = values_of(args, "-o")
+            .into_iter()
+            .find_map(|template| template.to_str().unwrap().strip_prefix("subtitle:"))
+            .unwrap();
+        let name = template
+            .replace("%(id)s", id)
+            .replace("%(ext)s", &format!("{language}.vtt"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(name), subtitles).unwrap();
+    }
+    Output {
+        status: exit_status(0),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    }
+}
+
 fn video(url: &str, title: &str) -> Video {
     Video {
         id: ID.into(),
@@ -258,16 +307,21 @@ fn an_audio_download_goes_through_processing_to_a_file_of_its_format() {
         (AudioPreset::Mp3, "Me at the zoo.mp3"),
     ] {
         let app = App::start();
-        app.ytdlp_downloads(ID, b"the sound", &[progress(1000, 1000, 400.0, 0)]);
+        app.ytdlp_downloads(
+            ID,
+            b"the sound",
+            &[progress_of(AUDIO_ONLY, 1000, 1000, 400.0, 0)],
+        );
 
         app.downloader
             .download(&video(URL, "Me at the zoo"), preset.into());
 
         let saved = app.save_dir().join(name);
         assert_eq!(
-            app.download_statuses()[1..],
+            app.download_statuses(),
             [
-                downloading(100.0, 400.0, 0),
+                DownloadStatus::starting(Receiving::Audio),
+                downloading(Receiving::Audio, 100.0, 400.0, 0),
                 DownloadStatus::Processing,
                 DownloadStatus::Done {
                     file: saved.clone()
@@ -306,9 +360,11 @@ fn progress_of(format: &str, downloaded: u64, total: u64, speed: f64, eta: u64) 
     )
 }
 
-/// A line as yt-dlp prints it with the app's `--progress-template`.
+/// A line as yt-dlp prints it with the app's `--progress-template`; only
+/// [`AUDIO_ONLY`] has no picture.
 fn progress_line(format: &str, progress: serde_json::Value) -> String {
-    serde_json::json!({ "progress": progress, "format": format }).to_string()
+    let vcodec = if format == AUDIO_ONLY { "none" } else { "avc1" };
+    serde_json::json!({ "progress": progress, "format": format, "vcodec": vcodec }).to_string()
 }
 
 /// The separate Formats yt-dlp names before receiving them, with their
@@ -332,8 +388,9 @@ fn approx_formats(sizes: &[(&str, u64)]) -> serde_json::Value {
         .collect()
 }
 
-fn downloading(percent: f64, speed: f64, eta: u64) -> DownloadStatus {
+fn downloading(receiving: Receiving, percent: f64, speed: f64, eta: u64) -> DownloadStatus {
     DownloadStatus::Downloading {
+        receiving,
         percent: Some(percent),
         speed: Some(speed),
         eta: Some(eta),
@@ -363,13 +420,9 @@ fn a_download_goes_from_downloading_through_processing_to_done() {
     assert_eq!(
         statuses,
         [
-            DownloadStatus::Downloading {
-                percent: None,
-                speed: None,
-                eta: None
-            },
-            downloading(25.0, 100.0, 7),
-            downloading(100.0, 400.0, 0),
+            DownloadStatus::starting(Receiving::Video),
+            downloading(Receiving::Video, 25.0, 100.0, 7),
+            downloading(Receiving::Video, 100.0, 400.0, 0),
             DownloadStatus::Processing,
             DownloadStatus::Done {
                 file: app.save_dir().join("Me at the zoo.mp4")
@@ -402,11 +455,62 @@ fn a_video_received_as_separate_video_and_audio_shows_one_progress_for_both() {
     assert_eq!(
         app.download_statuses()[1..4],
         [
-            downloading(25.0, 100.0, 15),
-            downloading(75.0, 100.0, 5),
-            downloading(87.5, 50.0, 5),
+            downloading(Receiving::Video, 25.0, 100.0, 15),
+            downloading(Receiving::Video, 75.0, 100.0, 5),
+            downloading(Receiving::Audio, 87.5, 50.0, 5),
         ]
     );
+}
+
+#[test]
+fn the_turn_from_the_video_to_the_audio_shows_at_once() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1000)), (AUDIO_ONLY, Some(1000))]),
+        &[
+            progress_of(VIDEO_ONLY, 1000, 1000, 100.0, 0),
+            progress_of(AUDIO_ONLY, 0, 1000, 100.0, 10),
+        ],
+    );
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    // The clock stands still and the percent stays at half.
+    assert_eq!(
+        app.download_statuses()[1..3],
+        [
+            downloading(Receiving::Video, 50.0, 100.0, 10),
+            downloading(Receiving::Audio, 50.0, 100.0, 10),
+        ]
+    );
+}
+
+#[test]
+fn a_format_whose_codec_yt_dlp_doesnt_tell_counts_as_what_its_preset_saves() {
+    for (preset, receiving) in [
+        (Preset::from(VideoPreset::P1080), Receiving::Video),
+        (AudioPreset::Mp3.into(), Receiving::Audio),
+    ] {
+        let app = App::start();
+        let line = serde_json::json!({
+            "progress": { "downloaded_bytes": 250, "total_bytes": 1000, "speed": 100.0, "eta": 7 },
+            "format": "http-0",
+            "vcodec": null,
+        });
+        app.ytdlp_downloads(ID, b"the media", &[line.to_string()]);
+
+        app.downloader
+            .download(&video(URL, "Me at the zoo"), preset.into());
+
+        assert_eq!(
+            app.download_statuses()[1],
+            downloading(receiving, 25.0, 100.0, 7),
+            "{preset:?}"
+        );
+    }
 }
 
 #[test]
@@ -431,11 +535,12 @@ fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
         app.download_statuses()[1..3],
         [
             DownloadStatus::Downloading {
+                receiving: Receiving::Video,
                 percent: None,
                 speed: Some(100.0),
                 eta: Some(8)
             },
-            downloading(87.5, 50.0, 5),
+            downloading(Receiving::Audio, 87.5, 50.0, 5),
         ]
     );
 }
@@ -458,7 +563,10 @@ fn a_received_format_of_approximate_size_counts_with_the_bytes_received() {
 
     assert_eq!(
         app.download_statuses()[1..3],
-        [downloading(75.0, 100.0, 5), downloading(77.5, 50.0, 9)]
+        [
+            downloading(Receiving::Video, 75.0, 100.0, 5),
+            downloading(Receiving::Audio, 77.5, 50.0, 9)
+        ]
     );
 }
 
@@ -479,16 +587,9 @@ fn the_percent_holds_when_a_format_turns_out_bigger_than_told() {
     app.downloader
         .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-    // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead.
-    let percents: Vec<Option<f64>> = app
-        .download_statuses()
-        .into_iter()
-        .filter_map(|status| match status {
-            DownloadStatus::Downloading { percent, .. } => Some(percent),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(percents, [None, Some(75.0), Some(100.0)]);
+    // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead, as the
+    // turn to the audio shows.
+    assert_eq!(percents(&app), [None, Some(75.0), Some(75.0), Some(100.0)]);
 }
 
 #[test]
@@ -511,7 +612,10 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_stands() {
     // The second line comes 0.6 s after the first, the third 1.2 s.
     assert_eq!(
         app.download_statuses()[1..3],
-        [downloading(25.0, 100.0, 9), downloading(25.0, 50.0, 15)]
+        [
+            downloading(Receiving::Video, 25.0, 100.0, 9),
+            downloading(Receiving::Video, 25.0, 50.0, 15)
+        ]
     );
 }
 
@@ -538,11 +642,13 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_is_unknown() {
         app.download_statuses()[1..4],
         [
             DownloadStatus::Downloading {
+                receiving: Receiving::Video,
                 percent: None,
                 speed: Some(100.0),
                 eta: Some(9)
             },
             DownloadStatus::Downloading {
+                receiving: Receiving::Video,
                 percent: None,
                 speed: Some(50.0),
                 eta: Some(15)
@@ -573,6 +679,7 @@ fn a_new_download_shows_its_first_progress_at_once() {
     assert_eq!(
         app.download_statuses()[first + 1],
         DownloadStatus::Downloading {
+            receiving: Receiving::Video,
             percent: None,
             speed: Some(100.0),
             eta: Some(9)
@@ -1017,6 +1124,7 @@ fn a_format_in_fragments_reports_the_share_of_fragments_received() {
     assert_eq!(
         statuses[1],
         DownloadStatus::Downloading {
+            receiving: Receiving::Video,
             percent: Some(25.0),
             speed: None,
             eta: None
@@ -1104,6 +1212,271 @@ fn a_format_in_fragments_among_separate_formats_counts_by_its_fragments() {
     );
 }
 
+/// Real subtitles of a TED talk from ted.com, cut down; see
+/// `fixtures/README.md`.
+const TED_SUBTITLES: &[u8] = include_bytes!("fixtures/ted-talk.en.vtt");
+
+/// The text of [`TED_SUBTITLES`].
+const TED_TEXT: &str = "\
+When I was first learning to meditate,
+the instruction was to simply
+pay attention to my breath,
+and when my mind wandered,
+to bring it back.
+Sounded simple enough.
+Yet I'd sit on these silent retreats,
+sweating through T-shirts
+in the middle of winter.
+I'd take naps every chance I got
+because it was really hard work.
+Actually, it was exhausting.
+The instruction was simple enough
+but I was missing something
+really important.
+So why is it so hard to pay attention?
+and repeat.
+Thank you.
+(Applause)
+";
+
+/// YouTube's captions of what is spoken, which repeat each line in the next
+/// caption; see `fixtures/README.md`.
+const YOUTUBE_CAPTIONS: &[u8] = include_bytes!("fixtures/youtube-automatic.en-orig.vtt");
+
+fn manual(language: &str) -> TranscriptLanguage {
+    TranscriptLanguage {
+        language: language.into(),
+        automatic: false,
+    }
+}
+
+fn automatic(language: &str) -> TranscriptLanguage {
+    TranscriptLanguage {
+        language: language.into(),
+        automatic: true,
+    }
+}
+
+#[test]
+fn a_transcript_alone_is_saved_as_text_under_the_title_without_the_media() {
+    let app = App::start();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::Transcript(manual("en")),
+    );
+
+    let saved = app.save_dir().join("Me at the zoo.txt");
+    assert_eq!(
+        app.download_statuses(),
+        [
+            DownloadStatus::starting(Receiving::Transcript),
+            DownloadStatus::Done {
+                file: saved.clone()
+            },
+        ]
+    );
+    assert_eq!(file_names(&app.save_dir()), ["Me at the zoo.txt"]);
+    assert_eq!(fs::read_to_string(&saved).unwrap(), TED_TEXT);
+    assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+    let runs = ytdlp_runs(&app);
+    assert_eq!(runs.len(), 1);
+    assert!(runs[0].contains(&"--skip-download".into()), "{runs:?}");
+}
+
+#[test]
+fn a_transcript_asks_for_the_subtitles_or_for_the_captions_of_what_is_spoken() {
+    let app = App::start();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+    // As YouTube lists them: the captions of what is spoken, and their
+    // machine translations.
+    let video = Video {
+        transcripts: TranscriptLanguages {
+            manual: vec!["en".into()],
+            automatic: vec!["de".into(), "en".into(), "en-orig".into()],
+        },
+        ..video(URL, "Me at the zoo")
+    };
+
+    for language in [manual("en"), automatic("en")] {
+        app.downloader
+            .download(&video, Content::Transcript(language));
+    }
+
+    let runs = ytdlp_runs(&app);
+    let asked: Vec<(bool, bool, &OsString)> = runs
+        .iter()
+        .map(|args| {
+            (
+                args.contains(&"--write-subs".into()),
+                args.contains(&"--write-auto-subs".into()),
+                after(args, "--sub-langs"),
+            )
+        })
+        .collect();
+    // YouTube's captions in `en` may be a machine translation of the
+    // captions in another language; `en-orig` never is.
+    assert_eq!(
+        asked,
+        [
+            (true, false, &"en".into()),
+            (false, true, &"en-orig".into())
+        ]
+    );
+}
+
+#[test]
+fn a_transcript_of_captions_has_neither_their_timing_nor_the_lines_they_repeat() {
+    let app = App::start();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", YOUTUBE_CAPTIONS);
+
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::Transcript(automatic("en")),
+    );
+
+    // YouTube writes a word it bleeps out as `[&nbsp;__&nbsp;]`.
+    assert_eq!(
+        fs::read_to_string(app.save_dir().join("Me at the zoo.txt")).unwrap(),
+        "\
+when I was first learning to meditate
+the instruction was to Simply pay
+attention to my breath and when my mind
+just by being curiously aware when she
+smoked was that smoking tastes like
+[ __ ] now she moved from knowledge to to
+wisdom she moved from knowing in her
+curious feel the joy of Letting Go and
+repeat thank you
+"
+    );
+}
+
+#[test]
+fn a_transcript_with_the_media_is_saved_next_to_it_under_the_same_name() {
+    let app = App::start();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+
+    let saved = app.save_dir().join("Me at the zoo.mp4");
+    // The Transcript comes first, then the media before yt-dlp tells its
+    // progress.
+    assert_eq!(
+        app.download_statuses(),
+        [
+            DownloadStatus::starting(Receiving::Transcript),
+            DownloadStatus::starting(Receiving::Video),
+            DownloadStatus::Processing,
+            DownloadStatus::Done {
+                file: saved.clone()
+            },
+        ]
+    );
+    assert_eq!(
+        file_names(&app.save_dir()),
+        ["Me at the zoo.mp4", "Me at the zoo.txt"]
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the video");
+    assert_eq!(
+        fs::read_to_string(app.save_dir().join("Me at the zoo.txt")).unwrap(),
+        TED_TEXT
+    );
+    assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+}
+
+#[test]
+fn the_media_and_its_transcript_take_the_first_number_free_for_both() {
+    let app = App::start();
+    fs::create_dir_all(app.save_dir()).unwrap();
+    fs::write(
+        app.save_dir().join("Me at the zoo.txt"),
+        b"the user's notes",
+    )
+    .unwrap();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(AudioPreset::Mp3.into(), manual("en")),
+    );
+
+    assert_eq!(
+        file_names(&app.save_dir()),
+        [
+            "Me at the zoo (1).mp3",
+            "Me at the zoo (1).txt",
+            "Me at the zoo.txt"
+        ]
+    );
+    assert_eq!(
+        fs::read(app.save_dir().join("Me at the zoo.txt")).unwrap(),
+        b"the user's notes"
+    );
+}
+
+#[test]
+fn a_transcript_yt_dlp_doesnt_save_fails_the_download_before_the_media() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+
+    assert!(
+        matches!(app.status(), Some(DownloadStatus::Failed { .. })),
+        "{:?}",
+        app.status()
+    );
+    assert_eq!(ytdlp_runs(&app).len(), 1, "the media isn't downloaded");
+    assert!(!app.save_dir().exists());
+}
+
+#[test]
+fn a_failed_transcript_is_retried_with_the_media_and_the_transcript() {
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Unable to download video subtitles\n");
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Failed {
+            message: "ERROR: Unable to download video subtitles".into()
+        })
+    );
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
+    app.downloader.retry();
+
+    assert_eq!(
+        file_names(&app.save_dir()),
+        ["Me at the zoo.mp4", "Me at the zoo.txt"]
+    );
+}
+
+#[test]
+fn a_broken_yt_dlp_is_restored_and_the_transcript_is_dropped() {
+    let app = App::start();
+    app.processes.break_tool("yt-dlp.exe");
+
+    app.downloader.download(
+        &video(URL, "Me at the zoo"),
+        Content::Transcript(manual("en")),
+    );
+
+    assert_eq!(app.downloader.state(), None);
+    assert_eq!(app.toolbox.state(), SetupState::Ready);
+}
+
 /// Probes and downloads a short public Video with the real tools:
 /// `cargo test --lib -- --ignored downloads_a_real_video`. YouTube may ask
 /// to prove the user isn't a bot; then name a browser signed in to YouTube
@@ -1148,6 +1521,18 @@ fn downloads_a_real_video_with_the_real_yt_dlp() {
         "{percents:?}"
     );
     assert_eq!(percents.last(), Some(&100.0), "{percents:?}");
+    // yt-dlp tells the codec of each, so the video turns to the audio.
+    let receiving: Vec<Receiving> = statuses
+        .iter()
+        .filter_map(|status| match status {
+            DownloadStatus::Downloading { receiving, .. } => Some(*receiving),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        receiving.contains(&Receiving::Video) && receiving.last() == Some(&Receiving::Audio),
+        "{receiving:?}"
+    );
     assert!(statuses.contains(&DownloadStatus::Processing));
 }
 
@@ -1284,6 +1669,47 @@ fn audio_presets_save_the_sound_alone_with_the_real_yt_dlp() {
         })
         .count();
     assert_eq!(processed, 2);
+}
+
+/// A TED talk with subtitles in English and YouTube's captions of it, as
+/// in `probe/fixtures/youtube-video.json`.
+const TRANSCRIPT_URL: &str = "https://www.youtube.com/watch?v=-moW9jvvMr4";
+
+/// Saves the Transcript alone of a Video with subtitles and captions, from
+/// each: `cargo test --lib -- --ignored transcripts_save`. See
+/// [`probe_with_real_tools`] for `SMOKE_SIGN_IN_BROWSER`.
+#[test]
+#[ignore = "downloads the real tools and a real Transcript"]
+fn transcripts_save_text_alone_with_the_real_yt_dlp() {
+    let dir = TempDir::new().unwrap();
+    let events = Arc::new(RecordingSink::default());
+    let (video, _, downloader) = probe_with_real_tools(dir.path(), TRANSCRIPT_URL, events);
+    let languages = video.transcript_languages();
+    assert!(languages.contains(&manual("en")), "{languages:?}");
+
+    // The captions aren't offered beside the subtitles in English, but
+    // they are what repeats its lines.
+    for language in [manual("en"), automatic("en")] {
+        downloader.download(&video, Content::Transcript(language.clone()));
+
+        let Some(DownloadStatus::Done { file }) = downloader.state().map(|it| it.status) else {
+            panic!("{language:?}: {:?}", downloader.state());
+        };
+        assert_eq!(file.extension().unwrap(), "txt", "{language:?}");
+        let text = fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.len() > 50, "{language:?}: {text}");
+        assert!(
+            !text.contains("-->") && !text.contains('<'),
+            "{language:?}: {text}"
+        );
+        assert!(
+            lines.windows(2).all(|pair| pair[0] != pair[1]),
+            "{language:?}: {text}"
+        );
+        fs::remove_file(&file).unwrap();
+    }
+    assert_eq!(file_names(&dir.path().join("partials")), [] as [String; 0]);
 }
 
 /// What ffprobe tells of a saved file's video and audio tracks.

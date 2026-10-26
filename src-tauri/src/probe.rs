@@ -16,6 +16,7 @@ use crate::events::{AppEvent, EventSink};
 use crate::preset::{self, AudioPreset, Preset, VideoPreset};
 use crate::settings::{Browser, Settings};
 use crate::toolbox::{Tool, Toolbox};
+use crate::transcript::{self, TranscriptLanguage};
 
 /// What the main screen shows about the current Probe.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -36,6 +37,11 @@ pub enum ProbeState {
         /// Whether M4A saves the Video's sound as it is, without encoding
         /// it again.
         m4a_keeps_sound: bool,
+        /// The languages a Transcript can be saved in; none when the Video
+        /// has no Transcript.
+        transcript_languages: Vec<TranscriptLanguage>,
+        /// The Transcript language chosen at first.
+        default_transcript_language: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Failed {
@@ -205,6 +211,18 @@ impl Video {
         preset::m4a_keeps_sound(&self.formats)
     }
 
+    /// The languages a Transcript of this Video can be saved in: subtitles
+    /// over captions, without machine translations.
+    pub fn transcript_languages(&self) -> Vec<TranscriptLanguage> {
+        transcript::languages(&self.transcripts)
+    }
+
+    /// The Transcript language chosen at first: the Video's own, by
+    /// subtitles over captions.
+    pub fn default_transcript_language(&self) -> Option<String> {
+        transcript::default_language(&self.transcripts, self.original_language.as_deref())
+    }
+
     /// Whether this Video has `preset`.
     pub fn has_preset(&self, preset: Preset) -> bool {
         match preset {
@@ -269,12 +287,15 @@ impl Prober {
             Ok(output) => match read_answer(&output, url) {
                 Ok(video) => {
                     let video_presets = video.video_presets();
+                    let transcript_languages = video.transcript_languages();
                     let state = ProbeState::Probed {
                         video: video.card(),
                         default_video_preset: preset::default_video_preset(&video_presets),
                         video_presets,
                         audio_presets: video.audio_presets(),
                         m4a_keeps_sound: video.m4a_keeps_sound(),
+                        default_transcript_language: video.default_transcript_language(),
+                        transcript_languages,
                     };
                     self.finish(generation, state, Some(video));
                 }

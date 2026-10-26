@@ -17,7 +17,7 @@ _Avoid_: Fetch info, analyze, scan
 ### What the user asks for
 
 **Download**:
-One request in the Queue to save a Video to disk with a chosen Preset.
+One request in the Queue to save a Video to disk: its media with a chosen Preset, its Transcript, or both.
 _Avoid_: Job, task
 
 **Queue**:
@@ -48,14 +48,14 @@ A Download is in exactly one status at a time.
 Waiting in the Queue for the Download ahead of it to finish.
 
 **Downloading**:
-Receiving the Video's data from the site.
+Receiving the Video's data from the site, one part after another: the Transcript, then the video and the audio, which may come as separate Formats.
 
 **Processing**:
 Turning the received data into the final file, such as merging video and audio or converting to MP3.
 _Avoid_: Converting, merging, post-processing
 
 **Done**:
-The final file is on disk.
+The final files are on disk: the media, the Transcript, or both.
 _Avoid_: Completed, finished
 
 **Failed**:
