@@ -1,6 +1,6 @@
-//! Downloading a probed Video: yt-dlp works in the Partials folder, and the
-//! final files, the media and its Transcript, are moved to the save folder
-//! under the Video's title.
+//! The Queue of Downloads of probed Videos, received one at a time: yt-dlp
+//! works in the Partials folder, and the final files, the media and its
+//! Transcript, are moved to the save folder under the Video's title.
 
 #[cfg(test)]
 mod tests;
@@ -20,13 +20,20 @@ use crate::events::{AppEvent, EventSink};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::{Video, VideoCard, error_line};
 use crate::settings::{Browser, Settings};
-use crate::toolbox::{Tool, Toolbox};
+use crate::toolbox::{SetupState, Tool, Toolbox};
 use crate::transcript::{self, TranscriptLanguage};
 
-/// The Download the main screen shows.
+/// A Download in the Queue, as the main screen shows it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Download {
+    /// Tells the Download apart from the others in the Queue.
+    pub id: u64,
     pub video: VideoCard,
+    /// `None` for the Transcript alone.
+    pub preset: Option<Preset>,
+    /// The language of the Transcript, when it is saved.
+    pub transcript_language: Option<String>,
     #[serde(flatten)]
     pub status: DownloadStatus,
 }
@@ -34,6 +41,8 @@ pub struct Download {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum DownloadStatus {
+    /// Waits for the Downloads ahead of it in the Queue.
+    Queued,
     /// Each field but `receiving` is `None` while yt-dlp doesn't tell it.
     Downloading {
         receiving: Receiving,
@@ -58,6 +67,14 @@ pub enum DownloadStatus {
 }
 
 impl DownloadStatus {
+    /// Queued, Downloading or Processing.
+    fn is_active(&self) -> bool {
+        matches!(
+            self,
+            Self::Queued | Self::Downloading { .. } | Self::Processing
+        )
+    }
+
     /// Downloading `receiving`, before yt-dlp tells its progress.
     fn starting(receiving: Receiving) -> Self {
         Self::Downloading {
@@ -117,6 +134,15 @@ impl Content {
         }
     }
 
+    /// What tells it apart from another Download of the same Video: the
+    /// Preset, or the language of the Transcript alone.
+    fn key(&self) -> (Option<Preset>, Option<&str>) {
+        match self {
+            Self::Transcript(language) => (None, Some(&language.language)),
+            _ => (self.preset(), None),
+        }
+    }
+
     /// What the Download receives first: the Transcript comes before the
     /// media.
     fn first(&self) -> Receiving {
@@ -145,6 +171,82 @@ impl From<AudioPreset> for Content {
     }
 }
 
+/// What became of a Download asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Added {
+    /// It waits in the Queue.
+    Queued,
+    /// A Download of the same Video with the same Preset, or of its
+    /// Transcript alone in the same language, is Queued or running
+    /// already; nothing was added.
+    Duplicate,
+}
+
+/// The Downloads in the order they run.
+#[derive(Default)]
+struct Queue {
+    entries: Vec<Entry>,
+    /// A call of [`Downloader::run`] receives the Queued Downloads.
+    has_worker: bool,
+    /// The id of the Download being received.
+    running: Option<u64>,
+    next_id: u64,
+}
+
+struct Entry {
+    download: Download,
+    video: Video,
+    content: Content,
+}
+
+impl Entry {
+    fn is_done(&self) -> bool {
+        matches!(self.download.status, DownloadStatus::Done { .. })
+    }
+}
+
+impl Queue {
+    fn shown(&self) -> Vec<Download> {
+        self.entries
+            .iter()
+            .map(|entry| entry.download.clone())
+            .collect()
+    }
+
+    fn running_mut(&mut self) -> Option<&mut Entry> {
+        let id = self.running?;
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.download.id == id)
+    }
+
+    /// Whether a Download of `content` of `video` is Queued or running.
+    fn has_duplicate(&self, video: &Video, content: &Content) -> bool {
+        self.entries.iter().any(|entry| {
+            entry.download.status.is_active()
+                && entry.video.id == video.id
+                && entry.content.key() == content.key()
+        })
+    }
+
+    /// Starts the first Queued Download and returns what it saves of which
+    /// Video; when none waits, the worker stops.
+    fn start_next(&mut self) -> Option<(Video, Content)> {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.download.status == DownloadStatus::Queued)
+        else {
+            self.has_worker = false;
+            return None;
+        };
+        entry.download.status = DownloadStatus::starting(entry.content.first());
+        self.running = Some(entry.download.id);
+        Some((entry.video.clone(), entry.content.clone()))
+    }
+}
+
 /// Why a Download ended before its files were received.
 enum Stopped {
     /// yt-dlp failed to start; the setup screen is up now.
@@ -156,7 +258,7 @@ enum Stopped {
 /// How often the UI gets the speed and time left while the percent stands.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Downloads Videos with yt-dlp.
+/// Keeps the Queue and downloads its Videos with yt-dlp.
 pub struct Downloader {
     toolbox: Arc<Toolbox>,
     settings: Arc<Settings>,
@@ -164,10 +266,7 @@ pub struct Downloader {
     save_dir: PathBuf,
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
-    current: Mutex<Option<Download>>,
-    /// The current Download's Video and what it saves, for retrying it once
-    /// it is Failed.
-    to_retry: Mutex<Option<(Video, Content)>>,
+    queue: Mutex<Queue>,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -191,58 +290,132 @@ impl Downloader {
             save_dir,
             clock,
             events,
-            current: Mutex::new(None),
-            to_retry: Mutex::new(None),
+            queue: Mutex::new(Queue::default()),
             progress_sent: Mutex::new(None),
             sending: Mutex::new(()),
         }
     }
 
-    pub fn state(&self) -> Option<Download> {
-        self.current.lock().unwrap().clone()
+    pub fn state(&self) -> Vec<Download> {
+        self.queue.lock().unwrap().shown()
     }
 
-    /// The saved file of the current Download, once it is Done.
-    pub fn saved_file(&self) -> Option<PathBuf> {
-        match self.state()?.status {
-            DownloadStatus::Done { file } => Some(file),
+    /// The saved file of the Download, once it is Done.
+    pub fn saved_file(&self, id: u64) -> Option<PathBuf> {
+        let queue = self.queue.lock().unwrap();
+        let entry = queue.entries.iter().find(|entry| entry.download.id == id)?;
+        match &entry.download.status {
+            DownloadStatus::Done { file } => Some(file.clone()),
             _ => None,
         }
     }
 
-    /// Downloads the current Download's Video again with its Preset and
-    /// Transcript if it is Failed; yt-dlp resumes from its Partial. Blocks
-    /// until the Download ends.
-    pub fn retry(&self) {
-        let failed = matches!(
-            self.state(),
-            Some(Download {
-                status: DownloadStatus::Failed { .. },
-                ..
-            })
-        );
-        let video = self.to_retry.lock().unwrap().clone();
-        if let (true, Some((video, content))) = (failed, video) {
-            self.download(&video, content);
+    /// Adds a Download of `content` of `video` to the end of the Queue: the
+    /// media as an MP4 in the resolution of a Video preset, or as the sound
+    /// alone in the format of an Audio preset, and its Transcript as text.
+    /// Nothing is added while the same Video with the same Preset, or its
+    /// Transcript alone in the same language, is Queued or running.
+    pub fn add(&self, video: &Video, content: Content) -> Added {
+        self.update(|queue| {
+            if queue.has_duplicate(video, &content) {
+                return Added::Duplicate;
+            }
+            let id = queue.next_id;
+            queue.next_id += 1;
+            queue.entries.push(Entry {
+                download: Download {
+                    id,
+                    video: video.card(),
+                    preset: content.preset(),
+                    transcript_language: content.transcript().map(|it| it.language.clone()),
+                    status: DownloadStatus::Queued,
+                },
+                video: video.clone(),
+                content,
+            });
+            Added::Queued
+        })
+    }
+
+    /// Puts a Failed Download back at the end of the Queue, to download its
+    /// Video with its Preset and Transcript again; yt-dlp resumes from its
+    /// Partial. `None` when it isn't Failed; nothing changes for a duplicate
+    /// of a Queued or running Download, as with [`Downloader::add`].
+    pub fn retry(&self, id: u64) -> Option<Added> {
+        self.update(|queue| {
+            let at = queue.entries.iter().position(|entry| {
+                entry.download.id == id
+                    && matches!(entry.download.status, DownloadStatus::Failed { .. })
+            })?;
+            let failed = &queue.entries[at];
+            if queue.has_duplicate(&failed.video, &failed.content) {
+                return Some(Added::Duplicate);
+            }
+            let mut entry = queue.entries.remove(at);
+            entry.download.status = DownloadStatus::Queued;
+            queue.entries.push(entry);
+            Some(Added::Queued)
+        })
+    }
+
+    /// Takes a Done Download out of the Queue; its files stay.
+    pub fn remove(&self, id: u64) {
+        self.update(|queue| {
+            queue
+                .entries
+                .retain(|entry| entry.download.id != id || !entry.is_done());
+        });
+    }
+
+    /// Takes every Done Download out of the Queue; their files stay.
+    pub fn clear_done(&self) {
+        self.update(|queue| queue.entries.retain(|entry| !entry.is_done()));
+    }
+
+    /// Receives the Queued Downloads one at a time, in the order of the
+    /// Queue, until none waits. Returns at once while another call receives
+    /// them; a Download added meanwhile is received by that one.
+    pub fn run(&self) {
+        {
+            let mut queue = self.queue.lock().unwrap();
+            if queue.has_worker {
+                return;
+            }
+            queue.has_worker = true;
+        }
+        while let Some((video, content)) = self.update(Queue::start_next) {
+            // Each Download's first progress goes out at once.
+            *self.progress_sent.lock().unwrap() = None;
+            if !self.download(&video, &content) {
+                // The rest wait until Setup is retried and runs the Queue.
+                // Setup's state is read under the Queue's lock, so that a
+                // `run` after a Setup that ends Ready meanwhile either
+                // finds the worker gone or leaves the Queue to it.
+                let mut queue = self.queue.lock().unwrap();
+                if self.toolbox.state() != SetupState::Ready {
+                    queue.has_worker = false;
+                    return;
+                }
+            }
         }
     }
 
-    /// Downloads `content` of `video`: the media as an MP4 in the
-    /// resolution of a Video preset, or as the sound alone in the format of
-    /// an Audio preset, and its Transcript as text. Blocks until the
-    /// Download ends. Returns at once if another Download is running.
-    pub fn download(&self, video: &Video, content: Content) {
-        if !self.start(video, &content) {
-            return;
-        }
+    /// Receives `content` of `video` for the running Download and saves its
+    /// files. `false` when yt-dlp failed to start: the Download is dropped
+    /// and Setup restores yt-dlp; once it does, the user adds the Download
+    /// again.
+    fn download(&self, video: &Video, content: &Content) -> bool {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
-        let status = match self.receive(video, &content, sign_in_browser) {
-            // The setup screen is up now; once yt-dlp is restored, the user
-            // starts the Download again.
+        let status = match self.receive(video, content, sign_in_browser) {
             Err(Stopped::ToolBroken) => {
-                self.set_state(None);
+                self.update(|queue| {
+                    let running = queue.running.take();
+                    queue
+                        .entries
+                        .retain(|entry| Some(entry.download.id) != running);
+                });
                 self.toolbox.prepare();
-                return;
+                return false;
             }
             Err(Stopped::Failed(message)) => DownloadStatus::Failed { message },
             Ok(partials) => match self.save(&partials, &file_name(video)) {
@@ -257,7 +430,13 @@ impl Downloader {
         if let DownloadStatus::Failed { message } = &status {
             eprintln!("can't download {}: {message}", video.url);
         }
-        self.set_status(status);
+        self.update(|queue| {
+            if let Some(entry) = queue.running_mut() {
+                entry.download.status = status;
+            }
+            queue.running = None;
+        });
+        true
     }
 
     /// Receives `content` of `video` into the Partials folder and returns
@@ -412,31 +591,6 @@ impl Downloader {
         Ok(file)
     }
 
-    /// Makes `video` the current Download, unless one is running.
-    fn start(&self, video: &Video, content: &Content) -> bool {
-        let _sending = self.sending.lock().unwrap();
-        let download = Download {
-            video: video.card(),
-            status: DownloadStatus::starting(content.first()),
-        };
-        {
-            let mut current = self.current.lock().unwrap();
-            if let Some(Download {
-                status: DownloadStatus::Downloading { .. } | DownloadStatus::Processing,
-                ..
-            }) = *current
-            {
-                return false;
-            }
-            *current = Some(download.clone());
-            *self.to_retry.lock().unwrap() = Some((video.clone(), content.clone()));
-        }
-        // The new Download's first progress goes out at once.
-        *self.progress_sent.lock().unwrap() = None;
-        self.events.send(AppEvent::Download(Some(download)));
-        true
-    }
-
     /// Moves the final files out of the Partials folder under the first
     /// name free for all of them, each with its own extension: the title,
     /// then the title with " (1)", " (2)"…
@@ -484,7 +638,7 @@ impl Downloader {
 
     fn report_progress(&self, mut status: DownloadStatus) {
         let now = self.clock.now();
-        let Some(shown) = self.state() else {
+        let Some(shown) = self.running_status() else {
             return self.set_status(status);
         };
         // A size that turns out bigger than told would take the percent
@@ -492,7 +646,7 @@ impl Downloader {
         if let DownloadStatus::Downloading {
             percent: Some(shown),
             ..
-        } = shown.status
+        } = shown
             && let DownloadStatus::Downloading { percent, .. } = &mut status
         {
             *percent = Some(percent.map_or(shown, |percent| percent.max(shown)));
@@ -507,8 +661,8 @@ impl Downloader {
             } => Some((*receiving, percent.map(|percent| (percent * 10.0) as u64))),
             _ => None,
         };
-        if let DownloadStatus::Downloading { .. } = shown.status
-            && step(&shown.status) == step(&status)
+        if let DownloadStatus::Downloading { .. } = shown
+            && step(&shown) == step(&status)
             && self.progress_sent.lock().unwrap().is_some_and(|sent| {
                 // A clock set back counts as the interval gone.
                 now.duration_since(sent)
@@ -521,17 +675,38 @@ impl Downloader {
         self.set_status(status);
     }
 
-    fn set_status(&self, status: DownloadStatus) {
-        let download = self.state().map(|download| Download { status, ..download });
-        self.set_state(download);
+    fn running_status(&self) -> Option<DownloadStatus> {
+        let mut queue = self.queue.lock().unwrap();
+        Some(queue.running_mut()?.download.status.clone())
     }
 
-    fn set_state(&self, state: Option<Download>) {
+    /// Sets the status of the running Download.
+    fn set_status(&self, status: DownloadStatus) {
+        self.update(|queue| {
+            if let Some(entry) = queue.running_mut() {
+                entry.download.status = status;
+            }
+        });
+    }
+
+    /// Changes the Queue and, when the UI would see the change, sends it;
+    /// `sending` is held throughout, so that the UI gets the changes in the
+    /// same order.
+    fn update<T>(&self, change: impl FnOnce(&mut Queue) -> T) -> T {
         let _sending = self.sending.lock().unwrap();
-        *self.current.lock().unwrap() = state.clone();
-        // Sent outside the state lock: a new subscriber reads the state
+        let (result, changed) = {
+            let mut queue = self.queue.lock().unwrap();
+            let before = queue.shown();
+            let result = change(&mut queue);
+            let after = queue.shown();
+            (result, (after != before).then_some(after))
+        };
+        // Sent outside the Queue's lock: a new subscriber reads the Queue
         // while holding the subscribers' lock.
-        self.events.send(AppEvent::Download(state));
+        if let Some(queue) = changed {
+            self.events.send(AppEvent::Queue(queue));
+        }
+        result
     }
 }
 

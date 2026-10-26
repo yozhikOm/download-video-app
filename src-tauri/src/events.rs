@@ -14,8 +14,8 @@ pub enum AppEvent {
     Setup(SetupState),
     Probe(ProbeState),
     Settings(SettingsState),
-    /// `None` before the first Download.
-    Download(Option<Download>),
+    /// The Downloads in the Queue, in the order they run.
+    Queue(Vec<Download>),
 }
 
 pub trait EventSink: Send + Sync {

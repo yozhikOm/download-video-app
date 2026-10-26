@@ -16,14 +16,14 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Builder, Manager, Runtime, State};
 
 use crate::clock::SystemClock;
-use crate::download::{Content, Downloader};
+use crate::download::{Added, Content, Downloader};
 use crate::events::{AppEvent, EventSink};
 use crate::preset::Preset;
 use crate::probe::Prober;
 use crate::processes::SystemProcesses;
 use crate::releases::github::GithubReleases;
 use crate::settings::{Browser, Settings};
-use crate::toolbox::Toolbox;
+use crate::toolbox::{SetupState, Toolbox};
 
 #[derive(Serialize)]
 struct AppInfo {
@@ -80,14 +80,24 @@ fn subscribe(
             AppEvent::Setup(toolbox.state()),
             AppEvent::Probe(prober.state()),
             AppEvent::Settings(settings.state()),
-            AppEvent::Download(downloader.state()),
+            AppEvent::Queue(downloader.state()),
         ]
     });
 }
 
+/// Prepares the tools in the background, then, once they are ready,
+/// receives the Queued Downloads that waited for them; the UI follows along
+/// through events.
 #[tauri::command]
-fn retry_setup(toolbox: State<'_, Arc<Toolbox>>) {
-    spawn_prepare(toolbox.inner().clone());
+fn retry_setup(toolbox: State<'_, Arc<Toolbox>>, downloader: State<'_, Arc<Downloader>>) {
+    let (toolbox, downloader) = (toolbox.inner().clone(), downloader.inner().clone());
+    std::thread::spawn(move || {
+        toolbox.prepare();
+        // A Queued Download would only find yt-dlp missing and be dropped.
+        if toolbox.state() == SetupState::Ready {
+            downloader.run();
+        }
+    });
 }
 
 /// Probes a URL in the background; the UI follows along through events.
@@ -97,17 +107,19 @@ fn probe(url: String, prober: State<'_, Arc<Prober>>) {
     std::thread::spawn(move || prober.probe(url.trim()));
 }
 
-/// Downloads the Video the latest Probe found in the background: its media
-/// in a Video or Audio preset, its Transcript in a language, or both; the UI
-/// follows along through events. Fails when no Probe found a Video, when
-/// neither is asked for, or when the Video lacks the Preset or the language.
+/// Adds a Download of the Video the latest Probe found to the Queue: its
+/// media in a Video or Audio preset, its Transcript in a language, or both;
+/// the Queue runs in the background and the UI follows along through
+/// events. Nothing is added for a duplicate of a Queued or running
+/// Download. Fails when no Probe found a Video, when neither is asked for,
+/// or when the Video lacks the Preset or the language.
 #[tauri::command]
-fn download(
+fn add_download(
     preset: Option<Preset>,
     transcript: Option<String>,
     prober: State<'_, Arc<Prober>>,
     downloader: State<'_, Arc<Downloader>>,
-) -> Result<(), String> {
+) -> Result<Added, String> {
     let video = prober.video().ok_or("no probed Video")?;
     if let Some(preset) = preset
         && !video.has_preset(preset)
@@ -129,23 +141,38 @@ fn download(
         (None, Some(language)) => Content::Transcript(language),
         (None, None) => return Err("neither a Preset nor a Transcript asked for".into()),
     };
-    let downloader = downloader.inner().clone();
-    std::thread::spawn(move || downloader.download(&video, content));
-    Ok(())
+    let added = downloader.add(&video, content);
+    spawn_run(downloader.inner().clone());
+    Ok(added)
 }
 
-/// Downloads the Failed Download's Video again in the background; the UI
-/// follows along through events.
+/// Puts the Failed Download back in the Queue to download its Video again,
+/// resuming from its Partial; the UI follows along through events.
 #[tauri::command]
-fn retry_download(downloader: State<'_, Arc<Downloader>>) {
-    let downloader = downloader.inner().clone();
-    std::thread::spawn(move || downloader.retry());
+fn retry_download(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<Added, String> {
+    let added = downloader
+        .retry(id)
+        .ok_or(format!("no Failed Download {id}"))?;
+    spawn_run(downloader.inner().clone());
+    Ok(added)
+}
+
+/// Takes the Done Download out of the Queue.
+#[tauri::command]
+fn remove_download(id: u64, downloader: State<'_, Arc<Downloader>>) {
+    downloader.remove(id);
+}
+
+/// Takes every Done Download out of the Queue.
+#[tauri::command]
+fn clear_done_downloads(downloader: State<'_, Arc<Downloader>>) {
+    downloader.clear_done();
 }
 
 /// Opens the Done Download's file in its default program.
 #[tauri::command]
-fn open_downloaded_file(downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
-    let file = downloader.saved_file().ok_or("no Done Download")?;
+fn open_downloaded_file(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
+    let file = downloader.saved_file(id).ok_or("no Done Download")?;
     tauri_plugin_opener::open_path(&file, None::<&str>).map_err(|error| {
         eprintln!("can't open {}: {error}", file.display());
         error.to_string()
@@ -154,8 +181,8 @@ fn open_downloaded_file(downloader: State<'_, Arc<Downloader>>) -> Result<(), St
 
 /// Shows the Done Download's file selected in its folder.
 #[tauri::command]
-fn show_downloaded_file(downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
-    let file = downloader.saved_file().ok_or("no Done Download")?;
+fn show_downloaded_file(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
+    let file = downloader.saved_file(id).ok_or("no Done Download")?;
     tauri_plugin_opener::reveal_item_in_dir(&file).map_err(|error| {
         eprintln!("can't show {}: {error}", file.display());
         error.to_string()
@@ -180,6 +207,12 @@ fn spawn_prepare(toolbox: Arc<Toolbox>) {
     std::thread::spawn(move || toolbox.prepare());
 }
 
+/// Receives the Queued Downloads in the background, unless another thread
+/// does already.
+fn spawn_run(downloader: Arc<Downloader>) {
+    std::thread::spawn(move || downloader.run());
+}
+
 /// Plugins and commands shared by the real app and tests on the mock runtime.
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
@@ -190,8 +223,10 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             retry_setup,
             probe,
             set_sign_in_browser,
-            download,
+            add_download,
             retry_download,
+            remove_download,
+            clear_done_downloads,
             open_downloaded_file,
             show_downloaded_file
         ])
