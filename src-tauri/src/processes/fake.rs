@@ -6,9 +6,10 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::Processes;
+use super::{Processes, Stopper};
 
 #[derive(Default)]
 pub struct FakeProcesses(Mutex<Scenario>);
@@ -21,6 +22,7 @@ struct Scenario {
     broken: HashSet<OsString>,
     answers: HashMap<OsString, Script>,
     runs: Vec<(PathBuf, Vec<OsString>)>,
+    kills: usize,
 }
 
 impl FakeProcesses {
@@ -58,6 +60,11 @@ impl FakeProcesses {
     /// Programs started so far with their arguments, in order.
     pub fn runs(&self) -> Vec<(PathBuf, Vec<OsString>)> {
         self.scenario().runs.clone()
+    }
+
+    /// How many programs were killed while they ran.
+    pub fn kills(&self) -> usize {
+        self.scenario().kills
     }
 
     fn answer(&self, file_name: &str, status: ExitStatus, stdout: &[u8], stderr: &[u8]) {
@@ -99,8 +106,23 @@ impl Processes for FakeProcesses {
         program: &Path,
         args: &[OsString],
         on_line: &mut dyn FnMut(&str),
+        stopper: &Stopper,
     ) -> io::Result<Output> {
-        let mut output = self.run(program, args)?;
+        let killed = Arc::new(AtomicBool::new(false));
+        let kill = killed.clone();
+        stopper.on_stop(move || kill.store(true, Ordering::SeqCst));
+        let output = self.run(program, args);
+        stopper.exited();
+        let mut output = output?;
+        if killed.load(Ordering::SeqCst) {
+            self.scenario().kills += 1;
+            // A killed program prints nothing more and exits with an error.
+            return Ok(Output {
+                status: exit_status(1),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+        }
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             on_line(line);
         }

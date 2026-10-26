@@ -146,15 +146,27 @@ fn add_download(
     Ok(added)
 }
 
-/// Puts the Failed Download back in the Queue to download its Video again,
-/// resuming from its Partial; the UI follows along through events.
+/// Puts the Failed or Cancelled Download back in the Queue to download its
+/// Video again, resuming from a Failed one's Partial; the UI follows along
+/// through events.
 #[tauri::command]
 fn retry_download(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<Added, String> {
     let added = downloader
         .retry(id)
-        .ok_or(format!("no Failed Download {id}"))?;
+        .ok_or(format!("no Failed or Cancelled Download {id}"))?;
     spawn_run(downloader.inner().clone());
     Ok(added)
+}
+
+/// Cancels the Queued or Downloading Download, stopping its yt-dlp and
+/// removing its Partial; the UI follows along through events.
+#[tauri::command]
+fn cancel_download(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<(), String> {
+    if downloader.cancel(id) {
+        Ok(())
+    } else {
+        Err(format!("no Queued or Downloading Download {id}"))
+    }
 }
 
 /// Takes the Done Download out of the Queue.
@@ -225,6 +237,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             set_sign_in_browser,
             add_download,
             retry_download,
+            cancel_download,
             remove_download,
             clear_done_downloads,
             open_downloaded_file,
