@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 use sha2::{Digest, Sha256};
 use zip::ZipWriter;
@@ -24,12 +24,20 @@ pub const DENO_BYTES: &[u8] = b"fake deno 2.9.8";
 /// Bytes per progress report, so even tiny fake downloads report progress.
 const CHUNK: usize = 4;
 
-pub struct FakeReleases(Mutex<Scenario>);
+pub struct FakeReleases {
+    scenario: Mutex<Scenario>,
+    /// Woken when a fetch starts waiting or fetches are let through.
+    held_changed: Condvar,
+}
 
 struct Scenario {
     online: bool,
     releases: HashMap<Package, (Release, Vec<u8>)>,
     fetches: Vec<String>,
+    /// Fetches wait until the test lets them through.
+    held: bool,
+    /// Fetches waiting while held.
+    waiting: usize,
 }
 
 impl FakeReleases {
@@ -47,11 +55,38 @@ impl FakeReleases {
             ),
             (Package::Deno, release("v2.9.8", DENO_URL, deno_zip())),
         ]);
-        Self(Mutex::new(Scenario {
-            online: true,
-            releases,
-            fetches: Vec::new(),
-        }))
+        Self {
+            scenario: Mutex::new(Scenario {
+                online: true,
+                releases,
+                fetches: Vec::new(),
+                held: false,
+                waiting: 0,
+            }),
+            held_changed: Condvar::new(),
+        }
+    }
+
+    /// Makes each fetch wait until [`FakeReleases::release_fetches`], as a
+    /// slow download would.
+    pub fn hold_fetches(&self) {
+        self.scenario().held = true;
+    }
+
+    /// Blocks until a held fetch waits.
+    pub fn wait_until_fetch_held(&self) {
+        let scenario = self.scenario();
+        drop(
+            self.held_changed
+                .wait_while(scenario, |scenario| scenario.waiting == 0)
+                .unwrap(),
+        );
+    }
+
+    /// Lets the held fetches through, and the later ones at once.
+    pub fn release_fetches(&self) {
+        self.scenario().held = false;
+        self.held_changed.notify_all();
     }
 
     pub fn set_online(&self, online: bool) {
@@ -83,7 +118,7 @@ impl FakeReleases {
     }
 
     fn scenario(&self) -> std::sync::MutexGuard<'_, Scenario> {
-        self.0.lock().unwrap()
+        self.scenario.lock().unwrap()
     }
 }
 
@@ -110,6 +145,15 @@ impl Releases for FakeReleases {
     ) -> Result<(), ReleasesError> {
         let bytes = {
             let mut scenario = self.scenario();
+            if scenario.held {
+                scenario.waiting += 1;
+                self.held_changed.notify_all();
+                scenario = self
+                    .held_changed
+                    .wait_while(scenario, |scenario| scenario.held)
+                    .unwrap();
+                scenario.waiting -= 1;
+            }
             if !scenario.online {
                 return Err(ReleasesError::Offline);
             }

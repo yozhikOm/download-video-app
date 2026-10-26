@@ -926,6 +926,39 @@ fn the_queue_waits_while_a_broken_yt_dlp_cant_be_restored() {
 }
 
 #[test]
+fn the_queue_goes_on_once_a_setup_already_running_restores_yt_dlp() {
+    let app = App::start();
+    app.ytdlp_downloads("second", b"the video", &[]);
+    fs::remove_file(app.dir.path().join("tools").join("yt-dlp.exe")).unwrap();
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    app.releases.hold_fetches();
+
+    std::thread::scope(|scope| {
+        // A Probe found yt-dlp broken first and restores it.
+        assert!(app.toolbox.run(Tool::YtDlp, &[], None).is_err());
+        scope.spawn(|| app.toolbox.prepare());
+        app.releases.wait_until_fetch_held();
+        let worker = scope.spawn(|| app.downloader.run());
+        // The first Download is dropped once yt-dlp fails to start for it.
+        while app.downloader.state().len() != 1 {
+            std::thread::yield_now();
+        }
+        app.releases.release_fetches();
+        worker.join().unwrap();
+    });
+
+    assert_eq!(app.toolbox.state(), SetupState::Ready);
+    assert_eq!(titles(&app.downloader), ["second"]);
+    assert!(matches!(
+        last_status(&app.downloader),
+        Some(DownloadStatus::Done { .. })
+    ));
+}
+
+#[test]
 fn a_youtube_download_runs_with_the_sign_in_browser_and_another_site_without() {
     let app = App::start();
     app.settings

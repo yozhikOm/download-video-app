@@ -128,7 +128,8 @@ pub struct Toolbox {
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     state: Mutex<SetupState>,
-    /// Held while preparing, so concurrent requests don't download twice.
+    /// Held while preparing, so concurrent requests don't download twice and
+    /// wait for the one preparing.
     preparing: Mutex<()>,
     /// The tool being restored after it failed to start.
     broken: Mutex<Option<Tool>>,
@@ -160,9 +161,11 @@ impl Toolbox {
 
     /// Makes sure all tools are in place, downloading whatever is missing.
     /// Blocks until it ends in [`SetupState::Ready`] or [`SetupState::Failed`].
-    /// Returns at once if another call is already preparing.
+    /// When another call is already preparing, waits for it to end instead,
+    /// so that the caller reads how Setup ended either way.
     pub fn prepare(&self) {
         let Ok(_preparing) = self.preparing.try_lock() else {
+            drop(self.preparing.lock().unwrap());
             return;
         };
         let broken = *self.broken.lock().unwrap();

@@ -387,8 +387,9 @@ impl Downloader {
             // Each Download's first progress goes out at once.
             *self.progress_sent.lock().unwrap() = None;
             if !self.download(&video, &content) {
-                // The rest wait until Setup is retried and runs the Queue.
-                // Setup's state is read under the Queue's lock, so that a
+                // Setup has ended, this call's or one already running; when
+                // it failed, the rest wait until Setup is retried and runs
+                // the Queue. Its state is read under the Queue's lock, so that a
                 // `run` after a Setup that ends Ready meanwhile either
                 // finds the worker gone or leaves the Queue to it.
                 let mut queue = self.queue.lock().unwrap();
