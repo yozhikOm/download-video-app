@@ -225,6 +225,20 @@ impl Queue {
         self.entries.iter().find(|entry| entry.download.id == id)
     }
 
+    /// The name prefixes of the Partial of `entry`, which isn't running,
+    /// that the running Download doesn't use: it may receive the same
+    /// Transcript.
+    fn unused_partial(&self, entry: &Entry) -> Vec<String> {
+        let in_use = self
+            .running()
+            .map(|running| partial_prefixes(&running.video, &running.content))
+            .unwrap_or_default();
+        partial_prefixes(&entry.video, &entry.content)
+            .into_iter()
+            .filter(|prefix| !in_use.contains(prefix))
+            .collect()
+    }
+
     fn running_mut(&mut self) -> Option<&mut Entry> {
         let id = self.running?;
         self.entries
@@ -363,8 +377,9 @@ impl Downloader {
     /// Puts a Failed or Cancelled Download back at the end of the Queue, to
     /// download its Video with its Preset and Transcript again: yt-dlp
     /// resumes from a Failed one's Partial, and starts a Cancelled one from
-    /// scratch. `None` when it is neither; nothing changes for a duplicate
-    /// of a Queued or running Download, as with [`Downloader::add`].
+    /// scratch. `None` when it is neither, or while a cancelled one's
+    /// yt-dlp is still exiting; nothing changes for a duplicate of a Queued
+    /// or running Download, as with [`Downloader::add`].
     pub fn retry(&self, id: u64) -> Option<Added> {
         self.update(|queue| {
             let at = queue.entries.iter().position(|entry| {
@@ -374,9 +389,16 @@ impl Downloader {
                         DownloadStatus::Failed { .. } | DownloadStatus::Cancelled
                     )
             })?;
-            let failed = &queue.entries[at];
-            if let Some(of) = queue.duplicate_of(&failed.video, &failed.content) {
+            if queue.running == Some(id) {
+                return None;
+            }
+            let retried = &queue.entries[at];
+            if let Some(of) = queue.duplicate_of(&retried.video, &retried.content) {
                 return Some(Added::Duplicate { of });
+            }
+            if retried.download.status == DownloadStatus::Cancelled {
+                // Its Partial may have been in use when it was cancelled.
+                remove_partial(&self.partials_dir, &queue.unused_partial(retried));
             }
             let mut entry = queue.entries.remove(at);
             entry.download.status = DownloadStatus::Queued;
@@ -401,16 +423,7 @@ impl Downloader {
             let entry = &queue.entries[at];
             match entry.download.status {
                 DownloadStatus::Queued => {
-                    // The running Download may receive the same Transcript.
-                    let in_use = queue
-                        .running()
-                        .map(|running| partial_prefixes(&running.video, &running.content))
-                        .unwrap_or_default();
-                    let prefixes: Vec<String> = partial_prefixes(&entry.video, &entry.content)
-                        .into_iter()
-                        .filter(|prefix| !in_use.contains(prefix))
-                        .collect();
-                    remove_partial(&self.partials_dir, &prefixes);
+                    remove_partial(&self.partials_dir, &queue.unused_partial(entry));
                 }
                 DownloadStatus::Downloading { .. } if queue.running == Some(id) => {
                     if !queue.stopper.stop() {

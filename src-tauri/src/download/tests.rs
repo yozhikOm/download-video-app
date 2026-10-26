@@ -1504,6 +1504,33 @@ fn a_failed_download_is_retried_from_its_partial() {
 }
 
 #[test]
+fn a_cancelled_download_isnt_retried_until_its_yt_dlp_has_exited() {
+    let app = App::start();
+    let downloader = Arc::downgrade(&app.downloader);
+    let retried = Arc::new(Mutex::new(None));
+    let retried_meanwhile = retried.clone();
+    app.processes.script("yt-dlp.exe", move |_| {
+        let downloader = downloader.upgrade().unwrap();
+        let id = downloader.state()[0].id;
+        assert!(downloader.cancel(id));
+        *retried_meanwhile.lock().unwrap() = Some(downloader.retry(id));
+        Output {
+            status: exit_status(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(*retried.lock().unwrap(), Some(None));
+    assert_eq!(app.status(), Some(DownloadStatus::Cancelled));
+    ytdlp_downloads_any(&app);
+    app.retry();
+    assert!(matches!(app.status(), Some(DownloadStatus::Done { .. })));
+}
+
+#[test]
 fn a_cancelled_download_is_retried_from_scratch() {
     let app = App::start();
     ytdlp_cancelled_for(&app, "first");
