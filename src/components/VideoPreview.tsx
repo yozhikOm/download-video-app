@@ -8,31 +8,45 @@ import {
 } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { VideoCard, VideoPreset } from "@/backend";
+import type { AudioPreset, Preset, VideoCard, VideoPreset } from "@/backend";
 import { formatDuration } from "@/lib/format";
 import { strings } from "@/strings";
 
-/** The Video presets the Video has, to choose the quality from. */
-function VideoPresetPicker({
+/**
+ * What the user chose on the Video's card: the tab, and the Preset on each;
+ * `audio` is `null` for a Video without sound, which has no Audio tab.
+ */
+export type PresetChoice = {
+  group: "video" | "audio";
+  video: VideoPreset;
+  audio: AudioPreset | null;
+};
+
+/** The Presets of one group the Video has, to choose one from. */
+function PresetPicker<P extends Preset>({
+  label,
   presets,
+  names,
   chosen,
   onChoose,
 }: {
-  presets: VideoPreset[];
-  chosen: VideoPreset;
-  onChoose: (preset: VideoPreset) => void;
+  label: string;
+  presets: P[];
+  names: Record<P, string>;
+  chosen: P;
+  onChoose: (preset: P) => void;
 }) {
   return (
     <RadioGroup
-      aria-label={strings.presets.quality}
+      aria-label={label}
       value={chosen}
-      onValueChange={(value) => onChoose(value as VideoPreset)}
+      onValueChange={(value) => onChoose(value as P)}
       className="flex flex-wrap gap-x-4"
     >
       {presets.map((preset) => (
         <label key={preset} className="flex items-center gap-2">
           <RadioGroupItem value={preset} />
-          {strings.presets.video[preset]}
+          {names[preset]}
         </label>
       ))}
     </RadioGroup>
@@ -43,15 +57,17 @@ function VideoPresetPicker({
 export function VideoPreview({
   video,
   videoPresets,
-  videoPreset,
-  onChooseVideoPreset,
+  audioPresets,
+  choice,
+  onChoose,
   canDownload,
   onDownload,
 }: {
   video: VideoCard;
   videoPresets: VideoPreset[];
-  videoPreset: VideoPreset;
-  onChooseVideoPreset: (preset: VideoPreset) => void;
+  audioPresets: AudioPreset[];
+  choice: PresetChoice;
+  onChoose: (choice: PresetChoice) => void;
   canDownload: boolean;
   onDownload: () => void;
 }) {
@@ -78,17 +94,40 @@ export function VideoPreview({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <Tabs defaultValue="video">
+        <Tabs
+          value={choice.group}
+          onValueChange={(group) =>
+            onChoose({ ...choice, group: group as PresetChoice["group"] })
+          }
+        >
           <TabsList>
             <TabsTrigger value="video">{strings.presets.videoTab}</TabsTrigger>
+            {choice.audio && (
+              <TabsTrigger value="audio">
+                {strings.presets.audioTab}
+              </TabsTrigger>
+            )}
           </TabsList>
           <TabsContent value="video">
-            <VideoPresetPicker
+            <PresetPicker
+              label={strings.presets.quality}
               presets={videoPresets}
-              chosen={videoPreset}
-              onChoose={onChooseVideoPreset}
+              names={strings.presets.video}
+              chosen={choice.video}
+              onChoose={(preset) => onChoose({ ...choice, video: preset })}
             />
           </TabsContent>
+          {choice.audio && (
+            <TabsContent value="audio">
+              <PresetPicker
+                label={strings.presets.format}
+                presets={audioPresets}
+                names={strings.presets.audio}
+                chosen={choice.audio}
+                onChoose={(preset) => onChoose({ ...choice, audio: preset })}
+              />
+            </TabsContent>
+          )}
         </Tabs>
         <div>
           <Button disabled={!canDownload} onClick={onDownload}>

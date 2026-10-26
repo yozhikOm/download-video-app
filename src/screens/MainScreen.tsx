@@ -4,7 +4,7 @@ import { SignInBrowserPicker } from "@/components/SignInBrowserPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { VideoPreview } from "@/components/VideoPreview";
+import { VideoPreview, type PresetChoice } from "@/components/VideoPreview";
 import {
   appInfo as fetchAppInfo,
   download as downloadVideo,
@@ -12,10 +12,10 @@ import {
   type AppInfo,
   type Browser,
   type Download,
+  type Preset,
   type ProbeError,
   type ProbeState,
   type SettingsState,
-  type VideoPreset,
 } from "@/backend";
 import { strings } from "@/strings";
 
@@ -105,12 +105,12 @@ export function MainScreen({ probe, settings, download }: Props) {
   // Each «Скачать» gets a card of its own, so that the previous Download's
   // failure to open its file doesn't carry over to the next one.
   const [downloadsStarted, setDownloadsStarted] = useState(0);
-  // The Video preset the user chose, for the Probe it was chosen in; each
-  // Probe starts from its own default, while a card that comes back keeps
-  // the choice.
-  const [videoPresetChoice, setVideoPresetChoice] = useState<{
+  // The tab and Presets the user chose, for the Probe they were chosen in;
+  // each Probe starts on the Video tab with its own defaults, while a card
+  // that comes back keeps the choice.
+  const [presetChoice, setPresetChoice] = useState<{
     probe: ProbeState;
-    preset: VideoPreset;
+    choice: PresetChoice;
   } | null>(null);
 
   useEffect(() => {
@@ -139,12 +139,26 @@ export function MainScreen({ probe, settings, download }: Props) {
     }
   }
 
-  function chosenVideoPreset(
+  function presetChoiceFor(
     probed: Extract<ProbeState, { status: "probed" }>,
-  ) {
-    return videoPresetChoice?.probe === probed
-      ? videoPresetChoice.preset
-      : probed.defaultVideoPreset;
+  ): PresetChoice {
+    return presetChoice?.probe === probed
+      ? presetChoice.choice
+      : {
+          group: "video",
+          video: probed.defaultVideoPreset,
+          audio: probed.audioPresets[0] ?? null,
+        };
+  }
+
+  /** The Preset on the chosen tab. */
+  function chosenPreset(
+    probed: Extract<ProbeState, { status: "probed" }>,
+  ): Preset {
+    const choice = presetChoiceFor(probed);
+    return choice.group === "audio" && choice.audio
+      ? choice.audio
+      : choice.video;
   }
 
   // Signing in steps aside for the URL just submitted, unless its Probe
@@ -195,10 +209,9 @@ export function MainScreen({ probe, settings, download }: Props) {
         <VideoPreview
           video={probe.video}
           videoPresets={probe.videoPresets}
-          videoPreset={chosenVideoPreset(probe)}
-          onChooseVideoPreset={(preset) =>
-            setVideoPresetChoice({ probe, preset })
-          }
+          audioPresets={probe.audioPresets}
+          choice={presetChoiceFor(probe)}
+          onChoose={(choice) => setPresetChoice({ probe, choice })}
           canDownload={!isRunning(download)}
           onDownload={() => {
             // The Download's card takes over from the Video's.
@@ -206,7 +219,7 @@ export function MainScreen({ probe, settings, download }: Props) {
             setEndedHidden(false);
             setDownloadsStarted((count) => count + 1);
             // With no Video to download, its card comes back.
-            downloadVideo(chosenVideoPreset(probe)).catch(() =>
+            downloadVideo(chosenPreset(probe)).catch(() =>
               setPreviewHidden(false),
             );
           }}
