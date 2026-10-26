@@ -423,7 +423,12 @@ fn a_preset_comes_from_the_ui_by_its_name() {
         );
     }
     assert_eq!(serde_json::to_value(AudioPreset::Mp3).unwrap(), "mp3");
-    assert!(serde_json::from_value::<Preset>("flac".into()).is_err());
+    assert_eq!(
+        serde_json::from_value::<Preset>("flac".into())
+            .unwrap_err()
+            .to_string(),
+        "no Preset is named flac"
+    );
 }
 
 #[test]

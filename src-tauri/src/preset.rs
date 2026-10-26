@@ -8,7 +8,7 @@ use crate::probe::Format;
 /// A Preset of either group, as the UI names it when it asks for a
 /// Download.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum Preset {
     Video(VideoPreset),
     Audio(AudioPreset),
@@ -34,6 +34,23 @@ impl From<VideoPreset> for Preset {
 impl From<AudioPreset> for Preset {
     fn from(preset: AudioPreset) -> Self {
         Self::Audio(preset)
+    }
+}
+
+impl From<Preset> for &'static str {
+    fn from(preset: Preset) -> Self {
+        preset.name()
+    }
+}
+
+impl TryFrom<String> for Preset {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        VideoPreset::try_from(name.clone())
+            .map(Self::Video)
+            .or_else(|_| AudioPreset::try_from(name.clone()).map(Self::Audio))
+            .map_err(|_| format!("no Preset is named {name}"))
     }
 }
 
