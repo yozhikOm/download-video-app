@@ -13,6 +13,7 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::events::{AppEvent, EventSink};
+use crate::preset::{self, VideoPreset};
 use crate::settings::{Browser, Settings};
 use crate::toolbox::{Tool, Toolbox};
 
@@ -22,8 +23,14 @@ use crate::toolbox::{Tool, Toolbox};
 pub enum ProbeState {
     Idle,
     Probing,
+    #[serde(rename_all = "camelCase")]
     Probed {
         video: VideoCard,
+        /// The Video presets the Video has, the Video's best first, then
+        /// highest first.
+        video_presets: Vec<VideoPreset>,
+        /// The Video preset chosen at first.
+        default_video_preset: VideoPreset,
     },
     #[serde(rename_all = "camelCase")]
     Failed {
@@ -122,6 +129,20 @@ pub struct Format {
     pub language: Option<String>,
 }
 
+impl Format {
+    /// The smaller side of the picture, as yt-dlp counts resolution;
+    /// `None` for a Format without video or of unknown size.
+    pub fn resolution(&self) -> Option<u32> {
+        if self.video_codec.as_deref() == Some("none") {
+            return None;
+        }
+        match (self.width, self.height) {
+            (Some(width), Some(height)) => Some(width.min(height)),
+            (width, height) => width.or(height),
+        }
+    }
+}
+
 /// The languages a Transcript can be saved in, by the source of the text.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TranscriptLanguages {
@@ -147,6 +168,12 @@ impl Video {
             thumbnail: self.thumbnail.clone(),
             duration: self.duration,
         }
+    }
+
+    /// The Video presets this Video has, the Video's best first, then
+    /// highest first.
+    pub fn video_presets(&self) -> Vec<VideoPreset> {
+        preset::video_presets(&self.formats)
     }
 }
 
@@ -203,13 +230,15 @@ impl Prober {
             .collect();
         match self.toolbox.run(Tool::YtDlp, &args, sign_in_browser) {
             Ok(output) => match read_answer(&output, url) {
-                Ok(video) => self.finish(
-                    generation,
-                    ProbeState::Probed {
+                Ok(video) => {
+                    let video_presets = video.video_presets();
+                    let state = ProbeState::Probed {
                         video: video.card(),
-                    },
-                    Some(video),
-                ),
+                        default_video_preset: preset::default_video_preset(&video_presets),
+                        video_presets,
+                    };
+                    self.finish(generation, state, Some(video));
+                }
                 Err(error) => {
                     if let ProbeError::Other { message } = &error {
                         eprintln!("can't probe {url}: {message}");

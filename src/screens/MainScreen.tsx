@@ -1,28 +1,22 @@
 import { useEffect, useState, type SubmitEvent } from "react";
+import { DownloadCard } from "@/components/DownloadCard";
+import { SignInBrowserPicker } from "@/components/SignInBrowserPicker";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { VideoPreview } from "@/components/VideoPreview";
 import {
   appInfo as fetchAppInfo,
   download as downloadVideo,
   probe as probeUrl,
-  setSignInBrowser,
   type AppInfo,
   type Browser,
   type Download,
   type ProbeError,
   type ProbeState,
   type SettingsState,
-  type VideoCard,
+  type VideoPreset,
 } from "@/backend";
-import { formatDuration } from "@/lib/format";
-import { DownloadCard } from "@/screens/DownloadCard";
 import { strings } from "@/strings";
 
 type Props = {
@@ -61,47 +55,6 @@ function errorText(error: ProbeError, signInBrowser: Browser | null) {
   }
 }
 
-/** The probed Video, for the user to confirm it's the right one and download it. */
-function VideoPreview({
-  video,
-  canDownload,
-  onDownload,
-}: {
-  video: VideoCard;
-  canDownload: boolean;
-  onDownload: () => void;
-}) {
-  return (
-    <Card className="pt-0">
-      {video.thumbnail && (
-        <img
-          src={video.thumbnail}
-          alt={strings.probe.thumbnail}
-          className="aspect-video w-full object-cover"
-        />
-      )}
-      <CardHeader>
-        <CardTitle>
-          <h2>{video.title}</h2>
-        </CardTitle>
-        <CardDescription className="flex justify-between gap-4">
-          <span>{video.channel}</span>
-          {video.duration !== null && (
-            <span className="tabular-nums">
-              {formatDuration(video.duration)}
-            </span>
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Button disabled={!canDownload} onClick={onDownload}>
-          {strings.download.start}
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
 /** One Download at a time until the Queue arrives. */
 function isRunning(download: Download | null) {
   return (
@@ -138,55 +91,6 @@ function isYoutube(url: string) {
   );
 }
 
-const browsers = Object.keys(strings.browsers) as Browser[];
-
-/** Which browser's YouTube sign-in the app uses, if any. */
-function SignInBrowserPicker({
-  signInBrowser,
-}: {
-  signInBrowser: Browser | null;
-}) {
-  const [saveFailed, setSaveFailed] = useState(false);
-
-  function choose(value: string) {
-    setSaveFailed(false);
-    setSignInBrowser(value ? (value as Browser) : null).catch(() =>
-      setSaveFailed(true),
-    );
-  }
-
-  return (
-    <section className="flex flex-col gap-1.5 text-sm">
-      <div className="flex items-center justify-between gap-4">
-        <label htmlFor="sign-in-browser">{strings.signIn.browser}</label>
-        <select
-          id="sign-in-browser"
-          value={signInBrowser ?? ""}
-          onChange={(event) => choose(event.target.value)}
-          className="h-8 rounded-lg border border-input bg-transparent px-2 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-        >
-          <option value="">{strings.signIn.none}</option>
-          {browsers.map((browser) => (
-            <option key={browser} value={browser}>
-              {strings.browsers[browser]}
-            </option>
-          ))}
-        </select>
-      </div>
-      <p className="text-muted-foreground">
-        {signInBrowser
-          ? strings.signIn.warning(strings.browsers[signInBrowser])
-          : strings.signIn.hint}
-      </p>
-      {saveFailed && (
-        <p role="alert" className="text-destructive">
-          {strings.signIn.saveFailed}
-        </p>
-      )}
-    </section>
-  );
-}
-
 export function MainScreen({ probe, settings, download }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
@@ -201,6 +105,13 @@ export function MainScreen({ probe, settings, download }: Props) {
   // Each «Скачать» gets a card of its own, so that the previous Download's
   // failure to open its file doesn't carry over to the next one.
   const [downloadsStarted, setDownloadsStarted] = useState(0);
+  // The Video preset the user chose, for the Probe it was chosen in; each
+  // Probe starts from its own default, while a card that comes back keeps
+  // the choice.
+  const [videoPresetChoice, setVideoPresetChoice] = useState<{
+    probe: ProbeState;
+    preset: VideoPreset;
+  } | null>(null);
 
   useEffect(() => {
     fetchAppInfo()
@@ -226,6 +137,14 @@ export function MainScreen({ probe, settings, download }: Props) {
       setPreviewHidden(false);
       void probeUrl(trimmed);
     }
+  }
+
+  function chosenVideoPreset(
+    probed: Extract<ProbeState, { status: "probed" }>,
+  ) {
+    return videoPresetChoice?.probe === probed
+      ? videoPresetChoice.preset
+      : probed.defaultVideoPreset;
   }
 
   // Signing in steps aside for the URL just submitted, unless its Probe
@@ -275,6 +194,11 @@ export function MainScreen({ probe, settings, download }: Props) {
       {probe.status === "probed" && !previewHidden && (
         <VideoPreview
           video={probe.video}
+          videoPresets={probe.videoPresets}
+          videoPreset={chosenVideoPreset(probe)}
+          onChooseVideoPreset={(preset) =>
+            setVideoPresetChoice({ probe, preset })
+          }
           canDownload={!isRunning(download)}
           onDownload={() => {
             // The Download's card takes over from the Video's.
@@ -282,7 +206,9 @@ export function MainScreen({ probe, settings, download }: Props) {
             setEndedHidden(false);
             setDownloadsStarted((count) => count + 1);
             // With no Video to download, its card comes back.
-            downloadVideo().catch(() => setPreviewHidden(false));
+            downloadVideo(chosenVideoPreset(probe)).catch(() =>
+              setPreviewHidden(false),
+            );
           }}
         />
       )}

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
+use crate::preset::VideoPreset;
 use crate::probe::{Video, VideoCard, error_line};
 use crate::settings::Settings;
 use crate::toolbox::{Tool, Toolbox};
@@ -63,8 +64,9 @@ pub struct Downloader {
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     current: Mutex<Option<Download>>,
-    /// The current Download's Video, for retrying it once it is Failed.
-    video: Mutex<Option<Video>>,
+    /// The current Download's Video and Preset, for retrying it once it is
+    /// Failed.
+    to_retry: Mutex<Option<(Video, VideoPreset)>>,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -89,7 +91,7 @@ impl Downloader {
             clock,
             events,
             current: Mutex::new(None),
-            video: Mutex::new(None),
+            to_retry: Mutex::new(None),
             progress_sent: Mutex::new(None),
             sending: Mutex::new(()),
         }
@@ -107,8 +109,9 @@ impl Downloader {
         }
     }
 
-    /// Downloads the current Download's Video again if it is Failed; yt-dlp
-    /// resumes from its Partial. Blocks until the Download ends.
+    /// Downloads the current Download's Video again with its Preset if it is
+    /// Failed; yt-dlp resumes from its Partial. Blocks until the Download
+    /// ends.
     pub fn retry(&self) {
         let failed = matches!(
             self.state(),
@@ -117,27 +120,35 @@ impl Downloader {
                 ..
             })
         );
-        let video = self.video.lock().unwrap().clone();
-        if let (true, Some(video)) = (failed, video) {
-            self.download(&video);
+        let video = self.to_retry.lock().unwrap().clone();
+        if let (true, Some((video, preset))) = (failed, video) {
+            self.download(&video, preset);
         }
     }
 
-    /// Downloads `video` in yt-dlp's default quality as an MP4. Blocks until
-    /// the Download ends. Returns at once if another Download is running.
-    pub fn download(&self, video: &Video) {
-        if !self.start(video) {
+    /// Downloads `video` as an MP4 in the resolution of `preset`. Blocks
+    /// until the Download ends. Returns at once if another Download is
+    /// running.
+    pub fn download(&self, video: &Video, preset: VideoPreset) {
+        if !self.start(video, preset) {
             return;
         }
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
         let mut args: Vec<OsString> = vec![
             "--no-playlist".into(),
+            // Separate video and audio: preferring AAC would otherwise pick
+            // a Format with both, which YouTube sends slowly over HLS. A
+            // site with only such Formats falls back to the best of them.
+            "-f".into(),
+            "bv+ba/b".into(),
+            "-S".into(),
+            format_sort(preset).into(),
             "--merge-output-format".into(),
             "mp4".into(),
             "-P".into(),
             self.partials_dir.clone().into_os_string(),
             "-o".into(),
-            "%(id)s.default.%(ext)s".into(),
+            format!("%(id)s.{}.%(ext)s", preset.name()).into(),
             // `--print` makes yt-dlp quiet, and quiet hides the progress.
             "--progress".into(),
             "--newline".into(),
@@ -208,7 +219,7 @@ impl Downloader {
     }
 
     /// Makes `video` the current Download, unless one is running.
-    fn start(&self, video: &Video) -> bool {
+    fn start(&self, video: &Video, preset: VideoPreset) -> bool {
         let _sending = self.sending.lock().unwrap();
         let download = Download {
             video: video.card(),
@@ -228,7 +239,7 @@ impl Downloader {
                 return false;
             }
             *current = Some(download.clone());
-            *self.video.lock().unwrap() = Some(video.clone());
+            *self.to_retry.lock().unwrap() = Some((video.clone(), preset));
         }
         // The new Download's first progress goes out at once.
         *self.progress_sent.lock().unwrap() = None;
@@ -314,6 +325,17 @@ impl Downloader {
         // while holding the subscribers' lock.
         self.events.send(AppEvent::Download(state));
     }
+}
+
+/// yt-dlp's order of the Formats for `preset`: the highest resolution up to
+/// the Preset's, then H.264 video and AAC audio, which any player plays,
+/// over VP9, AV1 and Opus of the same resolution.
+fn format_sort(preset: VideoPreset) -> String {
+    let resolution = match preset.resolution() {
+        Some(resolution) => format!("res:{resolution}"),
+        None => "res".into(),
+    };
+    format!("{resolution},vcodec:h264,acodec:aac")
 }
 
 /// Longer titles are cut, so that the path fits Windows' limit.
@@ -502,6 +524,15 @@ impl ProgressLine {
             .or(self.progress.total_bytes_estimate)
     }
 
+    /// 0 to 1, of the fragments of a Format that comes in fragments. Its
+    /// size is only estimated from the fragments received so far, which
+    /// YouTube's HLS makes far too small, so the share of fragments is
+    /// closer.
+    fn share_of_fragments(&self) -> Option<f64> {
+        let (index, count) = (self.progress.fragment_index?, self.progress.fragment_count?);
+        (count > 0.0).then(|| (index / count).clamp(0.0, 1.0))
+    }
+
     /// Remembers the size of the Format being received among the separate
     /// `formats`, so that it counts as received rather than as told.
     fn note(&self, formats: &mut [PlannedFormat]) {
@@ -529,8 +560,10 @@ impl ProgressLine {
             .position(|planned| Some(&planned.format_id) == self.format.as_ref())
         else {
             return DownloadStatus::Downloading {
-                percent: percent_of(progress.downloaded_bytes, total)
-                    .or_else(|| percent_of(progress.fragment_index, progress.fragment_count)),
+                percent: self
+                    .share_of_fragments()
+                    .map(|share| share * 100.0)
+                    .or_else(|| percent_of(progress.downloaded_bytes, total)),
                 speed: progress.speed,
                 eta: own_eta,
             };
@@ -573,8 +606,17 @@ impl ProgressLine {
             .iter()
             .map(PlannedFormat::size)
             .sum::<Option<f64>>()?;
-        let total = total.or(formats[at].size())?;
-        let downloaded = self.progress.downloaded_bytes?;
+        let (downloaded, total) = match self.share_of_fragments() {
+            // Its told size stands in for the estimate.
+            Some(share) => {
+                let size = formats[at].size()?;
+                (share * size, size)
+            }
+            None => (
+                self.progress.downloaded_bytes?,
+                total.or(formats[at].size())?,
+            ),
+        };
         Some((before + downloaded, before + total + after))
     }
 }

@@ -1,4 +1,4 @@
-import type { Browser, Package, Tool } from "@/backend";
+import type { Browser, Package, Tool, VideoPreset } from "@/backend";
 
 /** Every piece of UI text. */
 export const strings = {
@@ -60,6 +60,19 @@ export const strings = {
       "Ссылка неполная — похоже, часть её потерялась при копировании. Скопируйте её ещё раз.",
     unsupported: "Сайт не поддерживается или по ссылке нет видео.",
     other: "Не удалось получить сведения о видео. Попробуйте ещё раз.",
+  },
+  presets: {
+    videoTab: "Видео",
+    quality: "Качество",
+    video: {
+      best: "Лучшее",
+      "2160p": "2160p",
+      "1440p": "1440p",
+      "1080p": "1080p",
+      "720p": "720p",
+      "480p": "480p",
+      "360p": "360p",
+    } satisfies Record<VideoPreset, string>,
   },
   download: {
     start: "Скачать",
