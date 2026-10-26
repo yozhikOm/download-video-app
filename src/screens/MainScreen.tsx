@@ -99,6 +99,8 @@ export function MainScreen({ probe, settings, queue }: Props) {
   const [supersededProbe, setSupersededProbe] = useState<ProbeState | null>(
     null,
   );
+  // The submitted URL's Probe couldn't start, so the backend sends none.
+  const [probeFailed, setProbeFailed] = useState(false);
   // «Скачать» added nothing: the same Download is Queued or running. The
   // warning stays while it is, until the choice, the Video or the URL
   // changes.
@@ -131,8 +133,9 @@ export function MainScreen({ probe, settings, queue }: Props) {
       setSubmittedUrl(trimmed);
       setPreviewHidden(false);
       setSupersededProbe(probe);
+      setProbeFailed(false);
       duplicate.clear();
-      void probeUrl(trimmed);
+      probeUrl(trimmed).catch(() => setProbeFailed(true));
     }
   }
 
@@ -247,10 +250,16 @@ export function MainScreen({ probe, settings, queue }: Props) {
           {strings.download.duplicate}
         </p>
       )}
-      {probe.status === "failed" && (
+      {probeFailed ? (
         <p role="alert" className="text-sm text-destructive">
-          {errorText(probe.error, probe.signInBrowser)}
+          {strings.probe.other}
         </p>
+      ) : (
+        probe.status === "failed" && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorText(probe.error, probe.signInBrowser)}
+          </p>
+        )
       )}
       {/* With a YouTube URL in the field, a chosen browser stays on screen
           so that it can be turned off, except for the URL just submitted. */}

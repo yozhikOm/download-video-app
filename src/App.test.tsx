@@ -80,6 +80,7 @@ function queued(
  */
 function mockBackend({
   appInfoFails = false,
+  probeFails = false,
   savingFails = false,
   openingFails = false,
   downloadFails = false,
@@ -106,6 +107,9 @@ function mockBackend({
     switch (cmd) {
       case "probe":
         probedUrls.push((args as { url: string }).url);
+        if (probeFails) {
+          throw new Error("backend is down");
+        }
         return null;
       case "set_sign_in_browser":
         if (savingFails) {
@@ -1293,6 +1297,20 @@ test("a new URL hides the previous Video's card", async () => {
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Скачать" }),
+  ).not.toBeInTheDocument();
+});
+
+test("a URL whose Probe can't start says so instead of the previous Video", async () => {
+  const backend = await startReady({ probeFails: true });
+  await backend.probe(probed(zoo));
+
+  submitUrl(nextUrl);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Не удалось получить сведения о видео",
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
   ).not.toBeInTheDocument();
 });
 
