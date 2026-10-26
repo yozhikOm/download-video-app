@@ -66,7 +66,7 @@ pub struct Downloader {
     current: Mutex<Option<Download>>,
     /// The current Download's Video and Preset, for retrying it once it is
     /// Failed.
-    video: Mutex<Option<(Video, VideoPreset)>>,
+    to_retry: Mutex<Option<(Video, VideoPreset)>>,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -91,7 +91,7 @@ impl Downloader {
             clock,
             events,
             current: Mutex::new(None),
-            video: Mutex::new(None),
+            to_retry: Mutex::new(None),
             progress_sent: Mutex::new(None),
             sending: Mutex::new(()),
         }
@@ -120,7 +120,7 @@ impl Downloader {
                 ..
             })
         );
-        let video = self.video.lock().unwrap().clone();
+        let video = self.to_retry.lock().unwrap().clone();
         if let (true, Some((video, preset))) = (failed, video) {
             self.download(&video, preset);
         }
@@ -239,7 +239,7 @@ impl Downloader {
                 return false;
             }
             *current = Some(download.clone());
-            *self.video.lock().unwrap() = Some((video.clone(), preset));
+            *self.to_retry.lock().unwrap() = Some((video.clone(), preset));
         }
         // The new Download's first progress goes out at once.
         *self.progress_sent.lock().unwrap() = None;
