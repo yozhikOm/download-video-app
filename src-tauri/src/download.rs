@@ -34,8 +34,9 @@ pub struct Download {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum DownloadStatus {
-    /// Each field is `None` while yt-dlp doesn't tell it.
+    /// Each field but `receiving` is `None` while yt-dlp doesn't tell it.
     Downloading {
+        receiving: Receiving,
         /// 0 to 100, of all the Formats yt-dlp receives; `None` while the
         /// size of one is unknown. Never goes down during a Download.
         percent: Option<f64>,
@@ -54,6 +55,39 @@ pub enum DownloadStatus {
     Failed {
         message: String,
     },
+}
+
+impl DownloadStatus {
+    /// Downloading `receiving`, before yt-dlp tells its progress.
+    fn starting(receiving: Receiving) -> Self {
+        Self::Downloading {
+            receiving,
+            percent: None,
+            speed: None,
+            eta: None,
+        }
+    }
+}
+
+/// What a Downloading Download receives now.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Receiving {
+    Transcript,
+    /// A Format with the picture, with or without the sound.
+    Video,
+    /// A Format with the sound alone.
+    Audio,
+}
+
+impl Receiving {
+    /// What a Format of `preset` is when yt-dlp doesn't tell.
+    fn of(preset: Preset) -> Self {
+        match preset {
+            Preset::Video(_) => Self::Video,
+            Preset::Audio(_) => Self::Audio,
+        }
+    }
 }
 
 /// What a Download saves of its Video.
@@ -80,6 +114,15 @@ impl Content {
         match self {
             Self::Media(_) => None,
             Self::MediaWithTranscript(_, language) | Self::Transcript(language) => Some(language),
+        }
+    }
+
+    /// What the Download receives first: the Transcript comes before the
+    /// media.
+    fn first(&self) -> Receiving {
+        match self {
+            Self::Media(preset) => Receiving::of(*preset),
+            Self::MediaWithTranscript(..) | Self::Transcript(_) => Receiving::Transcript,
         }
     }
 }
@@ -233,7 +276,14 @@ impl Downloader {
             .transpose()?;
         let media = content
             .preset()
-            .map(|preset| self.receive_media(video, preset, sign_in_browser))
+            .map(|preset| {
+                // The UI turns from the Transcript to the media at once,
+                // while yt-dlp asks the site about the Video again.
+                if transcript.is_some() {
+                    self.set_status(DownloadStatus::starting(Receiving::of(preset)));
+                }
+                self.receive_media(video, preset, sign_in_browser)
+            })
             .transpose()?;
         Ok(media.into_iter().chain(transcript).collect())
     }
@@ -256,9 +306,10 @@ impl Downloader {
             "--progress".into(),
             "--newline".into(),
             "--progress-template".into(),
-            // The Format's id places it among the separate Formats; a
-            // missing one prints as `null`.
-            r#"download:{"progress": %(progress)j, "format": %(info.format_id|null)j}"#.into(),
+            // The Format's id places it among the separate Formats, and its
+            // video codec tells whether it has the picture; a missing one
+            // prints as `null`.
+            r#"download:{"progress": %(progress)j, "format": %(info.format_id|null)j, "vcodec": %(info.vcodec|null)j}"#.into(),
             // The separate Formats and their sizes, before any is received,
             // so that the progress covers all of them; `null` for a single
             // Format.
@@ -286,7 +337,7 @@ impl Downloader {
                     Line::Formats(planned) => formats = planned,
                     Line::Progress(line) => {
                         line.note(&mut formats);
-                        self.report_progress(line.status(&formats));
+                        self.report_progress(line.status(&formats, Receiving::of(preset)));
                     }
                     Line::Processing => self.set_status(DownloadStatus::Processing),
                     Line::FinalFile(path) => final_file = Some(path),
@@ -366,11 +417,7 @@ impl Downloader {
         let _sending = self.sending.lock().unwrap();
         let download = Download {
             video: video.card(),
-            status: DownloadStatus::Downloading {
-                percent: None,
-                speed: None,
-                eta: None,
-            },
+            status: DownloadStatus::starting(content.first()),
         };
         {
             let mut current = self.current.lock().unwrap();
@@ -451,17 +498,17 @@ impl Downloader {
             *percent = Some(percent.map_or(shown, |percent| percent.max(shown)));
         }
         // yt-dlp reports every chunk it receives; the UI gets each tenth of
-        // a percent at once, and otherwise a line at most once a second, so
-        // the speed and time left move even while the percent stands or is
-        // unknown.
-        let permille = |status: &DownloadStatus| match status {
-            DownloadStatus::Downloading { percent, .. } => {
-                percent.map(|percent| (percent * 10.0) as u64)
-            }
+        // a percent and the turn from the video to the audio at once, and
+        // otherwise a line at most once a second, so the speed and time
+        // left move even while the percent stands or is unknown.
+        let step = |status: &DownloadStatus| match status {
+            DownloadStatus::Downloading {
+                receiving, percent, ..
+            } => Some((*receiving, percent.map(|percent| (percent * 10.0) as u64))),
             _ => None,
         };
         if let DownloadStatus::Downloading { .. } = shown.status
-            && permille(&shown.status) == permille(&status)
+            && step(&shown.status) == step(&status)
             && self.progress_sent.lock().unwrap().is_some_and(|sent| {
                 // A clock set back counts as the interval gone.
                 now.duration_since(sent)
@@ -704,6 +751,8 @@ struct ProgressLine {
     progress: Progress,
     /// The id of the Format being received.
     format: Option<String>,
+    /// Its video codec; `none` when it has the sound alone.
+    vcodec: Option<String>,
 }
 
 /// The part of yt-dlp's progress the app uses.
@@ -766,10 +815,20 @@ impl ProgressLine {
         }
     }
 
+    /// What the Format being received is, when yt-dlp tells its codec.
+    fn receiving(&self) -> Option<Receiving> {
+        match self.vcodec.as_deref()? {
+            "none" => Some(Receiving::Audio),
+            _ => Some(Receiving::Video),
+        }
+    }
+
     /// The status this line tells; with the separate `formats`, its
-    /// percent and time left cover all of them.
-    fn status(&self, formats: &[PlannedFormat]) -> DownloadStatus {
+    /// percent and time left cover all of them. A Format whose codec isn't
+    /// told is received as `otherwise`.
+    fn status(&self, formats: &[PlannedFormat], otherwise: Receiving) -> DownloadStatus {
         let progress = &self.progress;
+        let receiving = self.receiving().unwrap_or(otherwise);
         let total = self.total();
         let percent_of = |done: Option<f64>, total: Option<f64>| {
             let (done, total) = (done?, total?);
@@ -781,6 +840,7 @@ impl ProgressLine {
             .position(|planned| Some(&planned.format_id) == self.format.as_ref())
         else {
             return DownloadStatus::Downloading {
+                receiving,
                 percent: self
                     .share_of_fragments()
                     .map(|share| share * 100.0)
@@ -793,6 +853,7 @@ impl ProgressLine {
         // so there is none until all the sizes are known.
         let Some((done, all)) = self.of_all(formats, at, total) else {
             return DownloadStatus::Downloading {
+                receiving,
                 percent: None,
                 speed: progress.speed,
                 eta: own_eta,
@@ -800,6 +861,7 @@ impl ProgressLine {
         };
         let left = (all - done).max(0.0);
         DownloadStatus::Downloading {
+            receiving,
             percent: percent_of(Some(done), Some(all)),
             speed: progress.speed,
             eta: progress

@@ -48,7 +48,7 @@ A Download is in exactly one status at a time.
 Waiting in the Queue for the Download ahead of it to finish.
 
 **Downloading**:
-Receiving the Video's data from the site.
+Receiving the Video's data from the site, one part after another: the Transcript, then the video and the audio, which may come as separate Formats.
 
 **Processing**:
 Turning the received data into the final file, such as merging video and audio or converting to MP3.

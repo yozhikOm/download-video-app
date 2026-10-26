@@ -307,16 +307,21 @@ fn an_audio_download_goes_through_processing_to_a_file_of_its_format() {
         (AudioPreset::Mp3, "Me at the zoo.mp3"),
     ] {
         let app = App::start();
-        app.ytdlp_downloads(ID, b"the sound", &[progress(1000, 1000, 400.0, 0)]);
+        app.ytdlp_downloads(
+            ID,
+            b"the sound",
+            &[progress_of(AUDIO_ONLY, 1000, 1000, 400.0, 0)],
+        );
 
         app.downloader
             .download(&video(URL, "Me at the zoo"), preset.into());
 
         let saved = app.save_dir().join(name);
         assert_eq!(
-            app.download_statuses()[1..],
+            app.download_statuses(),
             [
-                downloading(100.0, 400.0, 0),
+                DownloadStatus::starting(Receiving::Audio),
+                downloading(Receiving::Audio, 100.0, 400.0, 0),
                 DownloadStatus::Processing,
                 DownloadStatus::Done {
                     file: saved.clone()
@@ -355,9 +360,11 @@ fn progress_of(format: &str, downloaded: u64, total: u64, speed: f64, eta: u64) 
     )
 }
 
-/// A line as yt-dlp prints it with the app's `--progress-template`.
+/// A line as yt-dlp prints it with the app's `--progress-template`; only
+/// [`AUDIO_ONLY`] has no picture.
 fn progress_line(format: &str, progress: serde_json::Value) -> String {
-    serde_json::json!({ "progress": progress, "format": format }).to_string()
+    let vcodec = if format == AUDIO_ONLY { "none" } else { "avc1" };
+    serde_json::json!({ "progress": progress, "format": format, "vcodec": vcodec }).to_string()
 }
 
 /// The separate Formats yt-dlp names before receiving them, with their
@@ -381,8 +388,9 @@ fn approx_formats(sizes: &[(&str, u64)]) -> serde_json::Value {
         .collect()
 }
 
-fn downloading(percent: f64, speed: f64, eta: u64) -> DownloadStatus {
+fn downloading(receiving: Receiving, percent: f64, speed: f64, eta: u64) -> DownloadStatus {
     DownloadStatus::Downloading {
+        receiving,
         percent: Some(percent),
         speed: Some(speed),
         eta: Some(eta),
@@ -412,13 +420,9 @@ fn a_download_goes_from_downloading_through_processing_to_done() {
     assert_eq!(
         statuses,
         [
-            DownloadStatus::Downloading {
-                percent: None,
-                speed: None,
-                eta: None
-            },
-            downloading(25.0, 100.0, 7),
-            downloading(100.0, 400.0, 0),
+            DownloadStatus::starting(Receiving::Video),
+            downloading(Receiving::Video, 25.0, 100.0, 7),
+            downloading(Receiving::Video, 100.0, 400.0, 0),
             DownloadStatus::Processing,
             DownloadStatus::Done {
                 file: app.save_dir().join("Me at the zoo.mp4")
@@ -451,11 +455,62 @@ fn a_video_received_as_separate_video_and_audio_shows_one_progress_for_both() {
     assert_eq!(
         app.download_statuses()[1..4],
         [
-            downloading(25.0, 100.0, 15),
-            downloading(75.0, 100.0, 5),
-            downloading(87.5, 50.0, 5),
+            downloading(Receiving::Video, 25.0, 100.0, 15),
+            downloading(Receiving::Video, 75.0, 100.0, 5),
+            downloading(Receiving::Audio, 87.5, 50.0, 5),
         ]
     );
+}
+
+#[test]
+fn the_turn_from_the_video_to_the_audio_shows_at_once() {
+    let app = App::start();
+    app.ytdlp_downloads_formats(
+        ID,
+        b"the video",
+        formats(&[(VIDEO_ONLY, Some(1000)), (AUDIO_ONLY, Some(1000))]),
+        &[
+            progress_of(VIDEO_ONLY, 1000, 1000, 100.0, 0),
+            progress_of(AUDIO_ONLY, 0, 1000, 100.0, 10),
+        ],
+    );
+
+    app.downloader
+        .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    // The clock stands still and the percent stays at half.
+    assert_eq!(
+        app.download_statuses()[1..3],
+        [
+            downloading(Receiving::Video, 50.0, 100.0, 10),
+            downloading(Receiving::Audio, 50.0, 100.0, 10),
+        ]
+    );
+}
+
+#[test]
+fn a_format_whose_codec_yt_dlp_doesnt_tell_counts_as_what_its_preset_saves() {
+    for (preset, receiving) in [
+        (Preset::from(VideoPreset::P1080), Receiving::Video),
+        (AudioPreset::Mp3.into(), Receiving::Audio),
+    ] {
+        let app = App::start();
+        let line = serde_json::json!({
+            "progress": { "downloaded_bytes": 250, "total_bytes": 1000, "speed": 100.0, "eta": 7 },
+            "format": "http-0",
+            "vcodec": null,
+        });
+        app.ytdlp_downloads(ID, b"the media", &[line.to_string()]);
+
+        app.downloader
+            .download(&video(URL, "Me at the zoo"), preset.into());
+
+        assert_eq!(
+            app.download_statuses()[1],
+            downloading(receiving, 25.0, 100.0, 7),
+            "{preset:?}"
+        );
+    }
 }
 
 #[test]
@@ -480,11 +535,12 @@ fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
         app.download_statuses()[1..3],
         [
             DownloadStatus::Downloading {
+                receiving: Receiving::Video,
                 percent: None,
                 speed: Some(100.0),
                 eta: Some(8)
             },
-            downloading(87.5, 50.0, 5),
+            downloading(Receiving::Audio, 87.5, 50.0, 5),
         ]
     );
 }
@@ -507,7 +563,10 @@ fn a_received_format_of_approximate_size_counts_with_the_bytes_received() {
 
     assert_eq!(
         app.download_statuses()[1..3],
-        [downloading(75.0, 100.0, 5), downloading(77.5, 50.0, 9)]
+        [
+            downloading(Receiving::Video, 75.0, 100.0, 5),
+            downloading(Receiving::Audio, 77.5, 50.0, 9)
+        ]
     );
 }
 
@@ -528,16 +587,9 @@ fn the_percent_holds_when_a_format_turns_out_bigger_than_told() {
     app.downloader
         .download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-    // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead.
-    let percents: Vec<Option<f64>> = app
-        .download_statuses()
-        .into_iter()
-        .filter_map(|status| match status {
-            DownloadStatus::Downloading { percent, .. } => Some(percent),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(percents, [None, Some(75.0), Some(100.0)]);
+    // 1600 of 2500 bytes would be 64%; the bar holds at 75% instead, as the
+    // turn to the audio shows.
+    assert_eq!(percents(&app), [None, Some(75.0), Some(75.0), Some(100.0)]);
 }
 
 #[test]
@@ -560,7 +612,10 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_stands() {
     // The second line comes 0.6 s after the first, the third 1.2 s.
     assert_eq!(
         app.download_statuses()[1..3],
-        [downloading(25.0, 100.0, 9), downloading(25.0, 50.0, 15)]
+        [
+            downloading(Receiving::Video, 25.0, 100.0, 9),
+            downloading(Receiving::Video, 25.0, 50.0, 15)
+        ]
     );
 }
 
@@ -587,11 +642,13 @@ fn the_speed_and_time_left_update_each_second_while_the_percent_is_unknown() {
         app.download_statuses()[1..4],
         [
             DownloadStatus::Downloading {
+                receiving: Receiving::Video,
                 percent: None,
                 speed: Some(100.0),
                 eta: Some(9)
             },
             DownloadStatus::Downloading {
+                receiving: Receiving::Video,
                 percent: None,
                 speed: Some(50.0),
                 eta: Some(15)
@@ -622,6 +679,7 @@ fn a_new_download_shows_its_first_progress_at_once() {
     assert_eq!(
         app.download_statuses()[first + 1],
         DownloadStatus::Downloading {
+            receiving: Receiving::Video,
             percent: None,
             speed: Some(100.0),
             eta: Some(9)
@@ -1066,6 +1124,7 @@ fn a_format_in_fragments_reports_the_share_of_fragments_received() {
     assert_eq!(
         statuses[1],
         DownloadStatus::Downloading {
+            receiving: Receiving::Video,
             percent: Some(25.0),
             speed: None,
             eta: None
@@ -1212,11 +1271,7 @@ fn a_transcript_alone_is_saved_as_text_under_the_title_without_the_media() {
     assert_eq!(
         app.download_statuses(),
         [
-            DownloadStatus::Downloading {
-                percent: None,
-                speed: None,
-                eta: None
-            },
+            DownloadStatus::starting(Receiving::Transcript),
             DownloadStatus::Done {
                 file: saved.clone()
             },
@@ -1309,11 +1364,18 @@ fn a_transcript_with_the_media_is_saved_next_to_it_under_the_same_name() {
     );
 
     let saved = app.save_dir().join("Me at the zoo.mp4");
+    // The Transcript comes first, then the media before yt-dlp tells its
+    // progress.
     assert_eq!(
-        app.status(),
-        Some(DownloadStatus::Done {
-            file: saved.clone()
-        })
+        app.download_statuses(),
+        [
+            DownloadStatus::starting(Receiving::Transcript),
+            DownloadStatus::starting(Receiving::Video),
+            DownloadStatus::Processing,
+            DownloadStatus::Done {
+                file: saved.clone()
+            },
+        ]
     );
     assert_eq!(
         file_names(&app.save_dir()),
@@ -1459,6 +1521,18 @@ fn downloads_a_real_video_with_the_real_yt_dlp() {
         "{percents:?}"
     );
     assert_eq!(percents.last(), Some(&100.0), "{percents:?}");
+    // yt-dlp tells the codec of each, so the video turns to the audio.
+    let receiving: Vec<Receiving> = statuses
+        .iter()
+        .filter_map(|status| match status {
+            DownloadStatus::Downloading { receiving, .. } => Some(*receiving),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        receiving.contains(&Receiving::Video) && receiving.last() == Some(&Receiving::Audio),
+        "{receiving:?}"
+    );
     assert!(statuses.contains(&DownloadStatus::Processing));
 }
 
