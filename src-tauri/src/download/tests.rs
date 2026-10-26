@@ -1642,6 +1642,18 @@ fn a_download_asks_yt_dlp_for_this_one_video_merged_into_an_mp4() {
 }
 
 #[test]
+fn a_download_dates_its_files_when_received_so_its_partial_isnt_taken_for_old() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    let (_, args) = app.processes.runs().pop().unwrap();
+    // Otherwise yt-dlp may date them as the site last changed the Video.
+    assert!(args.contains(&"--no-mtime".into()), "{args:?}");
+}
+
+#[test]
 fn a_video_preset_limits_the_resolution_and_prefers_h264_and_aac_at_equal_resolution() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);

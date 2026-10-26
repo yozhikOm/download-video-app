@@ -588,7 +588,9 @@ impl Downloader {
         sign_in_browser: Option<Browser>,
         stopper: &Stopper,
     ) -> Result<PathBuf, Stopped> {
-        let mut args: Vec<OsString> = vec!["--no-playlist".into()];
+        // Dated when received, not as the site last changed the Video, so
+        // that a fresh Partial isn't discarded as old.
+        let mut args: Vec<OsString> = vec!["--no-playlist".into(), "--no-mtime".into()];
         args.extend(preset_args(preset));
         args.extend::<[OsString; _]>([
             "-P".into(),
