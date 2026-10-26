@@ -5,24 +5,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::probe::Format;
 
-/// A Video preset: the quality of the saved MP4.
+/// A Video preset: the quality of the saved MP4. The UI knows it by its
+/// [`name`](VideoPreset::name).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum VideoPreset {
     /// The highest resolution the Video has, offered only above 2160p or
     /// when the Video has no other Preset.
-    #[serde(rename = "best")]
     Best,
-    #[serde(rename = "2160p")]
     P2160,
-    #[serde(rename = "1440p")]
     P1440,
-    #[serde(rename = "1080p")]
     P1080,
-    #[serde(rename = "720p")]
     P720,
-    #[serde(rename = "480p")]
     P480,
-    #[serde(rename = "360p")]
     P360,
 }
 
@@ -51,7 +46,8 @@ impl VideoPreset {
             .map(|(_, resolution)| resolution)
     }
 
-    /// The name of this Preset in a Partial's name, such as `1080p`.
+    /// The name of this Preset in the UI and in a Partial's name, such as
+    /// `1080p`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Best => "best",
@@ -62,6 +58,24 @@ impl VideoPreset {
             Self::P480 => "480p",
             Self::P360 => "360p",
         }
+    }
+}
+
+impl From<VideoPreset> for &'static str {
+    fn from(preset: VideoPreset) -> Self {
+        preset.name()
+    }
+}
+
+impl TryFrom<String> for VideoPreset {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        [VideoPreset::Best]
+            .into_iter()
+            .chain(RESOLUTIONS.map(|(preset, _)| preset))
+            .find(|preset| preset.name() == name)
+            .ok_or_else(|| format!("no Video preset is named {name}"))
     }
 }
 

@@ -322,6 +322,18 @@ fn a_widescreen_or_vertical_video_offers_presets_by_the_smaller_side() {
 }
 
 #[test]
+fn a_video_preset_goes_to_the_ui_and_back_by_its_name() {
+    for (preset, name) in [(VideoPreset::Best, "best"), (VideoPreset::P360, "360p")] {
+        assert_eq!(serde_json::to_value(preset).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<VideoPreset>(name.into()).unwrap(),
+            preset
+        );
+    }
+    assert!(serde_json::from_value::<VideoPreset>("4320p".into()).is_err());
+}
+
+#[test]
 fn a_video_from_another_site_offers_presets_from_its_formats_with_sound() {
     let app = App::start();
     app.ytdlp_prints(include_bytes!("fixtures/rutube-video.json"));
