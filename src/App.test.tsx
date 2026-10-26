@@ -1383,3 +1383,28 @@ test("a Video's card hidden by «Скачать» returns when its URL is submit
     screen.getByRole("heading", { name: "Me at the zoo" }),
   ).toBeInTheDocument();
 });
+
+test("a Video's card hidden by «Скачать» stays hidden until its URL submitted again is probed", async () => {
+  const backend = await startReady();
+  submitUrl(nextUrl);
+  await backend.probe(probed(zoo));
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await waitFor(() => expect(backend.commands).toContain("add_download"));
+
+  submitUrl(nextUrl);
+
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+});
+
+test("submitting another URL doesn't bring the previous Video's card back", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo));
+
+  submitUrl(nextUrl);
+
+  expect(
+    screen.queryByRole("heading", { name: "Me at the zoo" }),
+  ).not.toBeInTheDocument();
+});

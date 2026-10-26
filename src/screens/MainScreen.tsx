@@ -93,6 +93,11 @@ export function MainScreen({ probe, settings, queue }: Props) {
   // hides the Video too, until the field gets its URL back after an edit or
   // the URL is submitted again.
   const [previewHidden, setPreviewHidden] = useState(false);
+  // The Probe a submitted URL replaces stays out of sight until the backend
+  // sends the next one.
+  const [supersededProbe, setSupersededProbe] = useState<ProbeState | null>(
+    null,
+  );
   // «Скачать» added nothing: the same Download is Queued or running. The
   // warning stays until the choice, the Video or the URL changes.
   const [duplicate, setDuplicate] = useState(false);
@@ -123,6 +128,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
     if (trimmed) {
       setSubmittedUrl(trimmed);
       setPreviewHidden(false);
+      setSupersededProbe(probe);
       setDuplicate(false);
       void probeUrl(trimmed);
     }
@@ -165,6 +171,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
   // failed: the user may need to sign in or change the browser to retry.
   const awaitsSubmitted =
     url.trim() === submittedUrl && probe.status !== "failed";
+  const previewShown = !previewHidden && probe !== supersededProbe;
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4 self-start">
@@ -205,7 +212,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
           </CardContent>
         </Card>
       )}
-      {probe.status === "probed" && !previewHidden && (
+      {probe.status === "probed" && previewShown && (
         <VideoPreview
           video={probe.video}
           videoPresets={probe.videoPresets}
@@ -233,7 +240,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
           }}
         />
       )}
-      {duplicate && probe.status === "probed" && !previewHidden && (
+      {duplicate && probe.status === "probed" && previewShown && (
         <p role="alert" className="text-sm text-destructive">
           {strings.download.duplicate}
         </p>
