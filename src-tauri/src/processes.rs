@@ -47,15 +47,14 @@ impl Stopper {
     /// Kills the program running now; `false` once the work is finished,
     /// when there is nothing left to stop.
     pub fn stop(&self) -> bool {
-        let kill = {
-            let mut state = self.0.lock().unwrap();
-            if state.finished {
-                return false;
-            }
-            state.stopped = true;
-            state.kill.take()
-        };
-        if let Some(kill) = kill {
+        let mut state = self.0.lock().unwrap();
+        if state.finished {
+            return false;
+        }
+        state.stopped = true;
+        // Killed under the lock, so that the program can't be found exited
+        // and its process id given to another program meanwhile.
+        if let Some(kill) = state.kill.take() {
             kill();
         }
         true
