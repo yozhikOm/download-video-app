@@ -6,12 +6,14 @@ use serde::Serialize;
 use crate::download::Download;
 use crate::probe::ProbeState;
 use crate::settings::SettingsState;
-use crate::toolbox::SetupState;
+use crate::toolbox::{SetupState, YtDlpUpdateState};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data", rename_all = "camelCase")]
 pub enum AppEvent {
     Setup(SetupState),
+    /// How the update of yt-dlp the user asked for goes.
+    YtDlpUpdate(YtDlpUpdateState),
     Probe(ProbeState),
     Settings(SettingsState),
     /// The Downloads in the Queue, in the order they run.

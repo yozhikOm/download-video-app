@@ -10,7 +10,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,11 @@ use crate::settings::Browser;
 const MANIFEST: &str = "manifest.json";
 /// Suffix of files that are still downloading or unverified.
 const TEMP_SUFFIX: &str = ".download";
+/// Where an update downloads the new yt-dlp. Unlike [`TEMP_SUFFIX`], Setup
+/// doesn't remove it, so that Setup and an update may run at once.
+const YTDLP_UPDATE: &str = "yt-dlp.exe.update";
+/// How long after the last check a launch checks for a newer yt-dlp again.
+const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +106,29 @@ pub enum SetupError {
     },
 }
 
+/// How the update of yt-dlp the user asked for goes.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum YtDlpUpdateState {
+    /// None was asked for since launch.
+    Idle,
+    /// Asking for yt-dlp's latest release and downloading it.
+    Updating,
+    /// The new yt-dlp is downloaded and verified; it replaces the old one
+    /// once the running Download ends.
+    Waiting,
+    Updated {
+        version: String,
+    },
+    /// The latest release is installed already.
+    UpToDate {
+        version: String,
+    },
+    Failed {
+        error: SetupError,
+    },
+}
+
 /// A tool failed to start, so the app needs setup again to restore it.
 #[derive(Debug, PartialEq)]
 pub struct ToolBroken(pub Tool);
@@ -120,6 +148,25 @@ struct InstalledFile {
     sha256: String,
 }
 
+/// Who uses yt-dlp now, so that an update replaces it only while nobody
+/// does.
+#[derive(Default)]
+struct YtDlpUsers {
+    count: usize,
+    /// An update waits to replace yt-dlp.
+    update_waiting: bool,
+}
+
+/// Keeps yt-dlp from being replaced while it lives.
+pub struct YtDlpInUse<'a>(&'a Toolbox);
+
+impl Drop for YtDlpInUse<'_> {
+    fn drop(&mut self) {
+        self.0.ytdlp_users.lock().unwrap().count -= 1;
+        self.0.ytdlp_users_changed.notify_all();
+    }
+}
+
 /// The app's own installed tools: setting them up and running them.
 pub struct Toolbox {
     dir: PathBuf,
@@ -133,6 +180,17 @@ pub struct Toolbox {
     preparing: Mutex<()>,
     /// The tool being restored after it failed to start.
     broken: Mutex<Option<Tool>>,
+    /// Held while updating yt-dlp, so that updates run one at a time.
+    updating: Mutex<()>,
+    /// How the update the user asked for goes.
+    update_state: Mutex<YtDlpUpdateState>,
+    /// Held while an update replaces yt-dlp, so that none starts meanwhile.
+    ytdlp_users: Mutex<YtDlpUsers>,
+    /// Notified when yt-dlp is no longer used or has been replaced.
+    ytdlp_users_changed: Condvar,
+    /// Held while installing or replacing tools and recording it in the
+    /// manifest, so that Setup and an update don't do it at once.
+    installing: Mutex<()>,
 }
 
 impl Toolbox {
@@ -152,6 +210,11 @@ impl Toolbox {
             state: Mutex::new(SetupState::Checking),
             preparing: Mutex::new(()),
             broken: Mutex::new(None),
+            updating: Mutex::new(()),
+            update_state: Mutex::new(YtDlpUpdateState::Idle),
+            ytdlp_users: Mutex::new(YtDlpUsers::default()),
+            ytdlp_users_changed: Condvar::new(),
+            installing: Mutex::new(()),
         }
     }
 
@@ -173,7 +236,11 @@ impl Toolbox {
         if broken.is_none() {
             self.set_state(SetupState::Checking);
         }
-        match self.install_missing() {
+        let installed = {
+            let _installing = self.installing.lock().unwrap();
+            self.install_missing()
+        };
+        match installed {
             Ok(()) => {
                 *self.broken.lock().unwrap() = None;
                 self.set_state(SetupState::Ready);
@@ -197,6 +264,7 @@ impl Toolbox {
         sign_in_browser: Option<Browser>,
     ) -> Result<Output, ToolBroken> {
         let args = self.full_args(tool, args, sign_in_browser);
+        let _in_use = self.in_use(tool);
         self.processes
             .run(&self.path(tool), &args)
             .map_err(|_| self.broke(tool))
@@ -213,9 +281,35 @@ impl Toolbox {
         stopper: &Stopper,
     ) -> Result<Output, ToolBroken> {
         let args = self.full_args(tool, args, sign_in_browser);
+        let _in_use = self.in_use(tool);
         self.processes
             .run_streaming(&self.path(tool), &args, on_line, stopper)
             .map_err(|_| self.broke(tool))
+    }
+
+    /// Keeps yt-dlp from being replaced by an update until the returned
+    /// guard is dropped, as for all the runs of a Download. While an update
+    /// waits to replace it, waits for the update first, so that one
+    /// Download after another doesn't keep it waiting.
+    pub fn use_ytdlp(&self) -> YtDlpInUse<'_> {
+        let users = self.ytdlp_users.lock().unwrap();
+        let mut users = self
+            .ytdlp_users_changed
+            .wait_while(users, |users| users.update_waiting)
+            .unwrap();
+        users.count += 1;
+        YtDlpInUse(self)
+    }
+
+    /// Keeps yt-dlp from being replaced while it runs. Unlike
+    /// [`Toolbox::use_ytdlp`], doesn't wait for an update that waits, which
+    /// may wait for the caller's own use; an update replacing it now holds
+    /// the users' lock throughout.
+    fn in_use(&self, tool: Tool) -> Option<YtDlpInUse<'_>> {
+        (tool == Tool::YtDlp).then(|| {
+            self.ytdlp_users.lock().unwrap().count += 1;
+            YtDlpInUse(self)
+        })
     }
 
     fn full_args(
@@ -255,6 +349,116 @@ impl Toolbox {
     pub fn ytdlp_checked_at(&self) -> Option<SystemTime> {
         let seconds = self.load_manifest().ytdlp_checked_at?;
         Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+    }
+
+    /// The version of the installed yt-dlp.
+    pub fn ytdlp_version(&self) -> Option<String> {
+        let manifest = self.load_manifest();
+        Some(manifest.files.get(Tool::YtDlp.file_name())?.version.clone())
+    }
+
+    /// Updates yt-dlp when more than a day has passed since it was last
+    /// checked for updates, as at launch once Setup is Ready. A failed
+    /// update leaves it to the next launch.
+    pub fn update_ytdlp_if_due(&self) {
+        let now = self.clock.now();
+        let due = self.ytdlp_checked_at().is_none_or(|checked| {
+            // A clock set back counts as the interval gone.
+            now.duration_since(checked)
+                .map_or(true, |elapsed| elapsed > UPDATE_INTERVAL)
+        });
+        if due && let Err(error) = self.update_ytdlp() {
+            eprintln!("can't update yt-dlp: {error:?}");
+        }
+    }
+
+    pub fn ytdlp_update_state(&self) -> YtDlpUpdateState {
+        self.update_state.lock().unwrap().clone()
+    }
+
+    /// Updates yt-dlp as the user asked, telling how it goes through
+    /// [`YtDlpUpdateState`] events.
+    pub fn update_ytdlp_on_request(&self) {
+        self.set_update_state(YtDlpUpdateState::Updating);
+        let state = self
+            .update_ytdlp_telling(&|| self.set_update_state(YtDlpUpdateState::Waiting))
+            .unwrap_or_else(|error| YtDlpUpdateState::Failed { error });
+        self.set_update_state(state);
+    }
+
+    fn set_update_state(&self, state: YtDlpUpdateState) {
+        *self.update_state.lock().unwrap() = state.clone();
+        // Sent outside the lock so a subscriber may read the state meanwhile.
+        self.events.send(AppEvent::YtDlpUpdate(state));
+    }
+
+    /// Installs yt-dlp's latest release unless it is installed already,
+    /// verified against its published checksum as Setup does, and records
+    /// the check. The new yt-dlp replaces the old one once nothing uses it:
+    /// it waits for the running Download to end. Returns
+    /// [`YtDlpUpdateState::Updated`] or [`YtDlpUpdateState::UpToDate`].
+    pub fn update_ytdlp(&self) -> Result<YtDlpUpdateState, SetupError> {
+        self.update_ytdlp_telling(&|| {})
+    }
+
+    /// Like [`Toolbox::update_ytdlp`], calling `on_waiting` when the new
+    /// yt-dlp waits for the old one to be no longer used.
+    fn update_ytdlp_telling(&self, on_waiting: &dyn Fn()) -> Result<YtDlpUpdateState, SetupError> {
+        let _updating = self.updating.lock().unwrap();
+        let release = self.releases.latest_release(Package::YtDlp)?;
+        if !Package::YtDlp.is_official(&release.url) {
+            return Err(other(format!("unofficial asset {}", release.url)));
+        }
+        if self.ytdlp_version().as_ref() == Some(&release.version) {
+            self.record_ytdlp(None)?;
+            return Ok(YtDlpUpdateState::UpToDate {
+                version: release.version,
+            });
+        }
+        let file = self.fetch_verified(
+            Package::YtDlp,
+            &release,
+            &self.dir.join(YTDLP_UPDATE),
+            &mut |_| {},
+        )?;
+        let mut users = self.ytdlp_users.lock().unwrap();
+        users.update_waiting = true;
+        if users.count > 0 {
+            on_waiting();
+        }
+        let mut users = self
+            .ytdlp_users_changed
+            .wait_while(users, |users| users.count > 0)
+            .unwrap();
+        let replaced = self.record_ytdlp(Some((file, &release)));
+        users.update_waiting = false;
+        drop(users);
+        self.ytdlp_users_changed.notify_all();
+        replaced?;
+        Ok(YtDlpUpdateState::Updated {
+            version: release.version,
+        })
+    }
+
+    /// Moves the verified new yt-dlp into place, if any, and records it and
+    /// the check in the manifest; fails unless Setup is Ready.
+    fn record_ytdlp(&self, new: Option<(TempFile, &Release)>) -> Result<(), SetupError> {
+        let _installing = self.installing.lock().unwrap();
+        if self.state() != SetupState::Ready {
+            if let Some((file, _)) = new {
+                remove_if_exists(&file.path);
+            }
+            return Err(other("Setup isn't Ready"));
+        }
+        let mut manifest = self.load_manifest();
+        if let Some((file, release)) = new {
+            let installed = self.install_file(Tool::YtDlp, file, release)?;
+            manifest
+                .files
+                .insert(Tool::YtDlp.file_name().into(), installed);
+        }
+        manifest.ytdlp_checked_at = Some(self.unix_now());
+        self.save_manifest(&manifest)
     }
 
     /// Drops a tool that failed to start from the manifest, so that the next
@@ -303,7 +507,9 @@ impl Toolbox {
         let mut done = 0;
         self.report_progress(0, total);
         for (package, release) in releases {
-            let asset = self.fetch_verified(package, &release, done, total)?;
+            let mut progress = |received: u64| self.report_progress(done + received, total);
+            let asset =
+                self.fetch_verified(package, &release, &self.temp_path(package), &mut progress)?;
             match package {
                 Package::YtDlp => {
                     let installed = self.install_file(Tool::YtDlp, asset, &release)?;
@@ -342,28 +548,31 @@ impl Toolbox {
         Ok(())
     }
 
-    /// Fetches the release asset under a temporary name and verifies its
-    /// published checksum; an asset that doesn't match is deleted.
-    fn fetch_verified(
-        &self,
-        package: Package,
-        release: &Release,
-        done: u64,
-        total: u64,
-    ) -> Result<TempFile, SetupError> {
+    /// Where Setup fetches the package's release asset.
+    fn temp_path(&self, package: Package) -> PathBuf {
         let name = match package {
             Package::YtDlp => Tool::YtDlp.file_name(),
             Package::Ffmpeg => "ffmpeg.zip",
             Package::Deno => "deno.zip",
         };
-        let path = self.dir.join(format!("{name}{TEMP_SUFFIX}"));
-        let result = HashingWriter::create(&path)
+        self.dir.join(format!("{name}{TEMP_SUFFIX}"))
+    }
+
+    /// Fetches the release asset to `path`, reporting the bytes received so
+    /// far, and verifies its published checksum; an asset that doesn't
+    /// match is deleted.
+    fn fetch_verified(
+        &self,
+        package: Package,
+        release: &Release,
+        path: &Path,
+        progress: &mut dyn FnMut(u64),
+    ) -> Result<TempFile, SetupError> {
+        let result = HashingWriter::create(path)
             .map_err(SetupError::from)
             .and_then(|mut file| {
-                let mut progress = |received: u64| self.report_progress(done + received, total);
-                self.releases
-                    .fetch(&release.url, &mut file, &mut progress)?;
-                Ok(file.finish(path.clone())?)
+                self.releases.fetch(&release.url, &mut file, progress)?;
+                Ok(file.finish(path.to_path_buf())?)
             })
             .and_then(|file| {
                 if file.sha256.eq_ignore_ascii_case(&release.sha256) {
@@ -373,7 +582,7 @@ impl Toolbox {
                 }
             });
         if result.is_err() {
-            remove_if_exists(&path);
+            remove_if_exists(path);
         }
         result
     }

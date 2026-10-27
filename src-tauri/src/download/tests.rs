@@ -13,9 +13,9 @@ use crate::events::{AppEvent, RecordingSink};
 use crate::preset::{AudioPreset, VideoPreset};
 use crate::probe::{TranscriptLanguages, Video};
 use crate::processes::fake::{FakeProcesses, exit_status};
-use crate::releases::fake::FakeReleases;
+use crate::releases::fake::{FakeReleases, NEWER_YTDLP_BYTES, YTDLP_BYTES};
 use crate::settings::{Browser, Settings};
-use crate::toolbox::SetupState;
+use crate::toolbox::{SetupState, YtDlpUpdateState};
 use crate::transcript::TranscriptLanguage;
 
 const URL: &str = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
@@ -874,6 +874,7 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
                 "WARNING: retrying".into(),
                 "ERROR: unable to download video data: Read timed out.".into()
             ],
+            ytdlp_update: None,
         })
     );
     assert_eq!(
@@ -1254,6 +1255,7 @@ fn a_download_that_yt_dlp_cant_resume_is_failed_without_its_partial() {
             failure: Failure::Unknown,
             message: "ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into(),
             output: vec!["ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into()],
+            ytdlp_update: None,
         })
     );
     assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
@@ -2763,6 +2765,7 @@ fn a_failed_transcript_is_retried_with_the_media_and_the_transcript() {
             failure: Failure::Unknown,
             message: "ERROR: Unable to download video subtitles".into(),
             output: vec!["ERROR: Unable to download video subtitles".into()],
+            ytdlp_update: None,
         })
     );
     app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
@@ -3058,4 +3061,132 @@ fn track_entries(toolbox: &Toolbox, file: &Path) -> Vec<serde_json::Value> {
     let output = toolbox.run(Tool::Ffprobe, &args, None).unwrap();
     let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     answer["streams"].as_array().unwrap().clone()
+}
+
+const EXTRACTOR_BROKEN: &[u8] = b"ERROR: [youtube] jNQXAC9IVRw: Unable to extract initial player response; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U\n";
+
+/// What became of the update of yt-dlp the Download added last started, as
+/// each event sent it.
+fn ytdlp_updates(app: &App) -> Vec<Option<YtDlpUpdate>> {
+    app.download_statuses()
+        .into_iter()
+        .filter_map(|status| match status {
+            DownloadStatus::Failed { ytdlp_update, .. } => Some(ytdlp_update),
+            _ => None,
+        })
+        .collect()
+}
+
+fn installed_ytdlp(app: &App) -> Vec<u8> {
+    fs::read(app.dir.path().join("tools").join("yt-dlp.exe")).unwrap()
+}
+
+#[test]
+fn a_download_failing_with_a_broken_extractor_updates_yt_dlp_and_stays_failed() {
+    let app = App::start();
+    app.releases.publish_newer_ytdlp();
+    app.processes.fail_with("yt-dlp.exe", EXTRACTOR_BROKEN);
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(installed_ytdlp(&app), NEWER_YTDLP_BYTES);
+    assert_eq!(
+        ytdlp_updates(&app),
+        [Some(YtDlpUpdate::Updating), Some(YtDlpUpdate::Updated)]
+    );
+    assert!(matches!(
+        app.status(),
+        Some(DownloadStatus::Failed {
+            failure: Failure::ExtractorBroken,
+            ..
+        })
+    ));
+    // The user retries it.
+    assert_eq!(ytdlp_runs(&app).len(), 1);
+}
+
+#[test]
+fn a_broken_extractor_tells_when_yt_dlp_couldnt_be_updated() {
+    for (offline, expected) in [(false, YtDlpUpdate::UpToDate), (true, YtDlpUpdate::Failed)] {
+        let app = App::start();
+        app.releases.set_online(!offline);
+        app.processes.fail_with("yt-dlp.exe", EXTRACTOR_BROKEN);
+
+        app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+        assert_eq!(installed_ytdlp(&app), YTDLP_BYTES);
+        assert_eq!(ytdlp_updates(&app).last(), Some(&Some(expected)));
+    }
+}
+
+#[test]
+fn a_download_failing_otherwise_doesnt_update_yt_dlp() {
+    let app = App::start();
+    app.releases.publish_newer_ytdlp();
+    let fetched_before = app.releases.fetches().len();
+    app.processes.fail_with(
+        "yt-dlp.exe",
+        b"ERROR: unable to download video data: HTTP Error 403: Forbidden\n",
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(app.releases.fetches().len(), fetched_before);
+    assert_eq!(ytdlp_updates(&app), [None]);
+}
+
+/// Waits until `done` holds, failing the test after a few seconds.
+fn wait_until(done: impl Fn() -> bool) {
+    let start = std::time::Instant::now();
+    while !done() {
+        assert!(start.elapsed() < Duration::from_secs(5), "timed out");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn an_update_asked_for_during_a_download_waits_for_the_whole_download_to_end() {
+    let app = App::start();
+    app.releases.publish_newer_ytdlp();
+    let toolbox = app.toolbox.clone();
+    let ytdlp = app.dir.path().join("tools").join("yt-dlp.exe");
+    let media_run_used = Arc::new(Mutex::new(Vec::new()));
+    let used = media_run_used.clone();
+    app.processes.script("yt-dlp.exe", move |args| {
+        let dir = PathBuf::from(after(args, "-P"));
+        if args.contains(&"--skip-download".into()) {
+            // The user asks for an update while the Transcript is received.
+            let updating = toolbox.clone();
+            std::thread::spawn(move || updating.update_ytdlp_on_request());
+            wait_until(|| toolbox.ytdlp_update_state() == YtDlpUpdateState::Waiting);
+            return write_subtitles(args, ID, Some(b"WEBVTT\n\n00:00.000 --> 00:01.000\nhi\n"));
+        }
+        *used.lock().unwrap() = fs::read(&ytdlp).unwrap();
+        let name = after(args, "-o")
+            .to_str()
+            .unwrap()
+            .replace("%(id)s", ID)
+            .replace("%(ext)s", "mp4");
+        fs::write(dir.join(&name), b"the video").unwrap();
+        Output {
+            status: exit_status(0),
+            stdout: (serde_json::to_string(&dir.join(name)).unwrap() + "\n").into_bytes(),
+            stderr: Vec::new(),
+        }
+    });
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+    wait_until(|| {
+        matches!(
+            app.toolbox.ytdlp_update_state(),
+            YtDlpUpdateState::Updated { .. }
+        )
+    });
+
+    assert!(matches!(app.status(), Some(DownloadStatus::Done { .. })));
+    assert_eq!(*media_run_used.lock().unwrap(), YTDLP_BYTES);
+    assert_eq!(installed_ytdlp(&app), NEWER_YTDLP_BYTES);
 }

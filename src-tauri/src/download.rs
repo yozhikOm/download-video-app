@@ -72,6 +72,9 @@ pub enum DownloadStatus {
         /// The last lines yt-dlp printed, but its progress and what only
         /// `--verbose` prints, for the user to copy into a bug report.
         output: Vec<String>,
+        /// What became of the update of yt-dlp that a
+        /// [`Failure::ExtractorBroken`] starts; `None` for other failures.
+        ytdlp_update: Option<YtDlpUpdate>,
     },
     /// Stopped by the user; its Partial is removed.
     Cancelled,
@@ -116,6 +119,21 @@ pub enum Failure {
     Disk,
     /// Something else, told only by the message.
     Unknown,
+}
+
+/// What became of the update of yt-dlp that a Download failed with
+/// [`Failure::ExtractorBroken`] starts. The Download stays Failed: the user
+/// retries it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum YtDlpUpdate {
+    Updating,
+    /// A newer yt-dlp is installed; retrying likely works.
+    Updated,
+    /// The latest yt-dlp failed already; a fix awaits its next release.
+    UpToDate,
+    /// yt-dlp couldn't be updated, such as without the internet.
+    Failed,
 }
 
 /// What a Downloading Download receives now.
@@ -604,6 +622,10 @@ impl Downloader {
     /// start: the Download is dropped and Setup restores yt-dlp; once it
     /// does, the user adds the Download again.
     fn download(&self, video: &Video, content: &Content, stopper: &Stopper) -> bool {
+        // An update replaces yt-dlp only between Downloads, not between the
+        // runs for the Transcript and the media.
+        let in_use = self.toolbox.use_ytdlp();
+        let ytdlp_version = self.toolbox.ytdlp_version();
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
         let mut log = self.logs.start(self.clock.now(), &video.id);
         log.note(&format!("URL: {}", video.url));
@@ -648,6 +670,8 @@ impl Downloader {
                 failure,
                 message,
                 output: log.last_lines(),
+                ytdlp_update: (failure == Failure::ExtractorBroken)
+                    .then_some(YtDlpUpdate::Updating),
             },
             Ok(partials) => match self.save(&partials, &file_name(video)) {
                 Ok(files) => DownloadStatus::Done {
@@ -657,6 +681,7 @@ impl Downloader {
                     failure: Failure::Disk,
                     message: format!("can't save {}: {error}", partials[0].display()),
                     output: log.last_lines(),
+                    ytdlp_update: None,
                 },
             },
         };
@@ -668,13 +693,58 @@ impl Downloader {
             }
             _ => {}
         }
-        self.update(|queue| {
+        let updates_ytdlp = matches!(
+            status,
+            DownloadStatus::Failed {
+                ytdlp_update: Some(_),
+                ..
+            }
+        );
+        let id = self.update(|queue| {
             if let Some(entry) = queue.running_mut() {
                 entry.download.status = status;
             }
-            queue.running = None;
+            queue.running.take()
         });
+        drop(in_use);
+        if updates_ytdlp && let Some(id) = id {
+            self.update_ytdlp_after(id, ytdlp_version, &mut log);
+        }
         true
+    }
+
+    /// Updates yt-dlp after the Download `id` failed with a broken
+    /// extractor, before the next Download starts, and tells the Download
+    /// what became of it; `used` is the version it failed with.
+    fn update_ytdlp_after(&self, id: u64, used: Option<String>, log: &mut Log) {
+        let updated = self.toolbox.update_ytdlp();
+        let installed = self.toolbox.ytdlp_version();
+        let update = match updated {
+            // An update the user asked for may have installed it meanwhile.
+            _ if installed != used => YtDlpUpdate::Updated,
+            Ok(_) => YtDlpUpdate::UpToDate,
+            Err(error) => {
+                log.note(&format!("yt-dlp can't be updated: {error:?}"));
+                YtDlpUpdate::Failed
+            }
+        };
+        if update == YtDlpUpdate::Updated {
+            log.note(&format!(
+                "yt-dlp updated to {}",
+                installed.unwrap_or_default()
+            ));
+        }
+        self.update(|queue| {
+            // Unless the user retried or removed it meanwhile.
+            if let Some(entry) = queue
+                .entries
+                .iter_mut()
+                .find(|entry| entry.download.id == id)
+                && let DownloadStatus::Failed { ytdlp_update, .. } = &mut entry.download.status
+            {
+                *ytdlp_update = Some(update);
+            }
+        });
     }
 
     /// Receives `content` of `video` into the Partials folder and returns

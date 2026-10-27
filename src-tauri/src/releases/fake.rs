@@ -20,6 +20,11 @@ pub const YTDLP_BYTES: &[u8] = b"fake yt-dlp 2026.08.19";
 pub const FFMPEG_BYTES: &[u8] = b"fake ffmpeg";
 pub const FFPROBE_BYTES: &[u8] = b"fake ffprobe";
 pub const DENO_BYTES: &[u8] = b"fake deno 2.9.8";
+/// The yt-dlp release [`FakeReleases::publish_newer_ytdlp`] publishes.
+pub const NEWER_YTDLP_VERSION: &str = "2026.10.20";
+pub const NEWER_YTDLP_URL: &str =
+    "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.20/yt-dlp.exe";
+pub const NEWER_YTDLP_BYTES: &[u8] = b"fake yt-dlp 2026.10.20, a little bigger";
 
 /// Bytes per progress report, so even tiny fake downloads report progress.
 const CHUNK: usize = 4;
@@ -91,6 +96,18 @@ impl FakeReleases {
 
     pub fn set_online(&self, online: bool) {
         self.scenario().online = online;
+    }
+
+    /// Publishes a yt-dlp release newer than the one published at first.
+    pub fn publish_newer_ytdlp(&self) {
+        self.scenario().releases.insert(
+            Package::YtDlp,
+            release(
+                NEWER_YTDLP_VERSION,
+                NEWER_YTDLP_URL,
+                NEWER_YTDLP_BYTES.to_vec(),
+            ),
+        );
     }
 
     /// Makes the release publish a checksum that its asset doesn't match.
