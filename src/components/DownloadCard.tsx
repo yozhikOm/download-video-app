@@ -1,11 +1,18 @@
-import { useId, useState, type ReactNode } from "react";
-import { Button } from "@/components/ui/button";
+import { useId, useState, type ComponentProps, type ReactNode } from "react";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardTitle,
-} from "@/components/ui/card";
+  BanIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  ClockIcon,
+  CogIcon,
+  CopyIcon,
+  FileIcon,
+  FolderOpenIcon,
+  RotateCwIcon,
+  XIcon,
+} from "lucide-react";
+import { cn } from "cn";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
   cancelDownload,
@@ -94,8 +101,42 @@ function detailsText(download: Extract<Download, { status: "failed" }>) {
   ].join("\n");
 }
 
+/** A flat action of a Download; the main one is in the accent colour. */
+function ActionButton({
+  main = false,
+  className,
+  ...props
+}: ComponentProps<typeof Button> & { main?: boolean }) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={cn(
+        "font-normal",
+        main && "font-semibold text-primary hover:text-primary",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** A line of the Download's status, in its colour, after its icon. */
+function StatusLine({ className, ...props }: ComponentProps<"p">) {
+  return (
+    <p
+      className={cn(
+        "flex items-start gap-1.5 text-[13px] [&_svg]:mt-0.5 [&_svg]:size-3.5 [&_svg]:shrink-0",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 /**
- * A Download in the `queue`: its Video, what it saves and its status.
+ * A Download in the `queue`, as a row of the Queue: its Video, what it
+ * saves and its status.
  */
 export function DownloadCard({
   download,
@@ -140,147 +181,177 @@ export function DownloadCard({
     cancelDownload(download.id).catch(() => {});
   }
 
+  const actionRow = (buttons: ReactNode) => (
+    <div className="-ml-2 flex flex-wrap gap-0.5">{buttons}</div>
+  );
+
   const cancelButton = (
-    <div>
-      <Button variant="outline" onClick={cancel}>
-        {strings.download.cancel}
-      </Button>
-    </div>
+    <ActionButton onClick={cancel}>
+      <XIcon />
+      {strings.download.cancel}
+    </ActionButton>
   );
 
   const removeButton = (
-    <Button variant="ghost" onClick={() => void removeDownload(download.id)}>
+    <ActionButton onClick={() => void removeDownload(download.id)}>
+      <XIcon />
       {strings.download.remove}
-    </Button>
+    </ActionButton>
   );
 
   const retryOrRemoveButtons = (more?: ReactNode) => (
     <>
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={retry}>{strings.download.retry}</Button>
-        {more}
-        {removeButton}
-      </div>
+      {actionRow(
+        <>
+          <ActionButton main onClick={retry}>
+            <RotateCwIcon />
+            {strings.download.retry}
+          </ActionButton>
+          {more}
+          {removeButton}
+        </>,
+      )}
       {duplicate.shown && (
-        <p role="alert" className="text-destructive">
+        <StatusLine role="alert" className="text-destructive">
           {strings.download.duplicate}
-        </p>
+        </StatusLine>
       )}
     </>
   );
 
   return (
-    <Card size="sm" role="region" aria-labelledby={titleId}>
-      <CardContent className="flex gap-3">
-        {download.video.thumbnail && (
-          <img
-            src={download.video.thumbnail}
-            alt={strings.probe.thumbnail}
-            className="aspect-video w-24 shrink-0 self-start rounded-md object-cover"
-          />
+    <div
+      role="region"
+      aria-labelledby={titleId}
+      className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3.5 px-3.5 py-3"
+    >
+      {download.video.thumbnail ? (
+        <img
+          src={download.video.thumbnail}
+          alt={strings.probe.thumbnail}
+          className="aspect-video w-full rounded-sm object-cover"
+        />
+      ) : (
+        <div className="aspect-video rounded-sm bg-muted" />
+      )}
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex items-baseline gap-2">
+          <h3 id={titleId} className="min-w-0 truncate font-semibold">
+            {download.video.title}
+          </h3>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {savesText(download)}
+          </span>
+        </div>
+        {download.status === "queued" && (
+          <>
+            <StatusLine className="text-muted-foreground">
+              <ClockIcon />
+              {strings.download.queued}
+            </StatusLine>
+            {actionRow(cancelButton)}
+          </>
         )}
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <div>
-            <CardTitle>
-              <h3 id={titleId} className="truncate">
-                {download.video.title}
-              </h3>
-            </CardTitle>
-            <CardDescription>{savesText(download)}</CardDescription>
-          </div>
-          {download.status === "queued" && (
-            <>
-              <p className="text-muted-foreground">{strings.download.queued}</p>
-              {cancelButton}
-            </>
-          )}
-          {download.status === "downloading" && (
-            <>
-              <Progress
-                value={
-                  download.percent === null
-                    ? null
-                    : Math.floor(download.percent)
-                }
-              />
-              <p className="flex justify-between gap-4">
-                <span>{strings.download.downloading[download.receiving]}</span>
-                <span className="text-muted-foreground tabular-nums">
-                  {progressText(download)}
-                </span>
-              </p>
-              {cancelButton}
-            </>
-          )}
-          {download.status === "processing" && (
-            <>
-              <Progress value={null} />
-              <p>{strings.download.processing}</p>
-            </>
-          )}
-          {download.status === "done" && (
-            <>
-              <p>
+        {download.status === "downloading" && (
+          <>
+            <Progress
+              className="my-1"
+              value={
+                download.percent === null ? null : Math.floor(download.percent)
+              }
+            />
+            <p className="flex justify-between gap-4 text-[13px]">
+              <span>{strings.download.downloading[download.receiving]}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {progressText(download)}
+              </span>
+            </p>
+            {actionRow(cancelButton)}
+          </>
+        )}
+        {download.status === "processing" && (
+          <>
+            <Progress className="my-1" value={null} />
+            <StatusLine>
+              <CogIcon />
+              {strings.download.processing}
+            </StatusLine>
+          </>
+        )}
+        {download.status === "done" && (
+          <>
+            <StatusLine>
+              <CircleCheckIcon className="text-success" />
+              <span className="min-w-0 break-words">
                 {strings.download.done}
                 <span className="text-muted-foreground">
                   {" — "}
                   {fileName(download.file)}
                 </span>
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => openOrShowFile(openDownloadedFile)}>
+              </span>
+            </StatusLine>
+            {actionRow(
+              <>
+                <ActionButton
+                  main
+                  onClick={() => openOrShowFile(openDownloadedFile)}
+                >
+                  <FileIcon />
                   {strings.download.openFile}
-                </Button>
-                <Button
-                  variant="outline"
+                </ActionButton>
+                <ActionButton
                   onClick={() => openOrShowFile(showDownloadedFile)}
                 >
+                  <FolderOpenIcon />
                   {strings.download.showInFolder}
-                </Button>
+                </ActionButton>
                 {removeButton}
-              </div>
-              {actionFailed && (
-                <p role="alert" className="text-destructive">
-                  {strings.download.actionFailed}
-                </p>
-              )}
-            </>
-          )}
-          {download.status === "failed" && (
-            <>
-              <p role="alert" className="text-destructive">
-                {download.failure === "extractorBroken" &&
-                download.ytdlpUpdate !== null
-                  ? strings.download.extractorBroken[download.ytdlpUpdate]
-                  : strings.download.failed[download.failure]}
-              </p>
-              {retryOrRemoveButtons(
-                <Button variant="outline" onClick={() => copyDetails(download)}>
-                  {strings.download.copyDetails}
-                </Button>,
-              )}
-              {copying === "copied" && (
-                <p role="status" className="text-muted-foreground">
-                  {strings.download.detailsCopied}
-                </p>
-              )}
-              {copying === "failed" && (
-                <p role="alert" className="text-destructive">
-                  {strings.download.copyFailed}
-                </p>
-              )}
-            </>
-          )}
-          {download.status === "cancelled" && (
-            <>
-              <p className="text-muted-foreground">
-                {strings.download.cancelled}
-              </p>
-              {retryOrRemoveButtons()}
-            </>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+              </>,
+            )}
+            {actionFailed && (
+              <StatusLine role="alert" className="text-destructive">
+                {strings.download.actionFailed}
+              </StatusLine>
+            )}
+          </>
+        )}
+        {download.status === "failed" && (
+          <>
+            <StatusLine role="alert" className="text-destructive">
+              <CircleAlertIcon />
+              {download.failure === "extractorBroken" &&
+              download.ytdlpUpdate !== null
+                ? strings.download.extractorBroken[download.ytdlpUpdate]
+                : strings.download.failed[download.failure]}
+            </StatusLine>
+            {retryOrRemoveButtons(
+              <ActionButton onClick={() => copyDetails(download)}>
+                <CopyIcon />
+                {strings.download.copyDetails}
+              </ActionButton>,
+            )}
+            {copying === "copied" && (
+              <StatusLine role="status" className="text-muted-foreground">
+                {strings.download.detailsCopied}
+              </StatusLine>
+            )}
+            {copying === "failed" && (
+              <StatusLine role="alert" className="text-destructive">
+                {strings.download.copyFailed}
+              </StatusLine>
+            )}
+          </>
+        )}
+        {download.status === "cancelled" && (
+          <>
+            <StatusLine className="text-muted-foreground">
+              <BanIcon />
+              {strings.download.cancelled}
+            </StatusLine>
+            {retryOrRemoveButtons()}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

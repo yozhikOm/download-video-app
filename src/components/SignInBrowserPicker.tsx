@@ -1,10 +1,18 @@
 import { useState } from "react";
+import { Card } from "@/components/ui/card";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { setSignInBrowser, type Browser } from "@/backend";
 import { strings } from "@/strings";
 
 const browsers = Object.keys(strings.browsers) as Browser[];
 
-/** Which browser's YouTube sign-in the app uses, if any. */
+/**
+ * Which browser's YouTube sign-in the app uses, if any: a row of Windows
+ * Settings, with what it does on the left and the list on the right.
+ */
 export function SignInBrowserPicker({
   signInBrowser,
 }: {
@@ -20,33 +28,35 @@ export function SignInBrowserPicker({
   }
 
   return (
-    <section className="flex flex-col gap-1.5 text-sm">
-      <div className="flex items-center justify-between gap-4">
-        <label htmlFor="sign-in-browser">{strings.signIn.browser}</label>
-        <select
-          id="sign-in-browser"
-          value={signInBrowser ?? ""}
-          onChange={(event) => choose(event.target.value)}
-          className="h-8 rounded-lg border border-input bg-transparent px-2 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-        >
-          <option value="">{strings.signIn.none}</option>
-          {browsers.map((browser) => (
-            <option key={browser} value={browser}>
-              {strings.browsers[browser]}
-            </option>
-          ))}
-        </select>
-      </div>
-      <p className="text-muted-foreground">
-        {signInBrowser
-          ? strings.signIn.warning(strings.browsers[signInBrowser])
-          : strings.signIn.hint}
-      </p>
-      {saveFailed && (
-        <p role="alert" className="text-destructive">
-          {strings.signIn.saveFailed}
+    <Card className="flex-row items-center justify-between gap-4 px-4 py-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="sign-in-browser" className="font-semibold">
+          {strings.signIn.browser}
+        </label>
+        <p className="text-xs text-muted-foreground">
+          {signInBrowser
+            ? strings.signIn.warning(strings.browsers[signInBrowser])
+            : strings.signIn.hint}
         </p>
-      )}
-    </section>
+        {saveFailed && (
+          <p role="alert" className="text-xs text-destructive">
+            {strings.signIn.saveFailed}
+          </p>
+        )}
+      </div>
+      <NativeSelect
+        id="sign-in-browser"
+        className="shrink-0"
+        value={signInBrowser ?? ""}
+        onChange={(event) => choose(event.target.value)}
+      >
+        <NativeSelectOption value="">{strings.signIn.none}</NativeSelectOption>
+        {browsers.map((browser) => (
+          <NativeSelectOption key={browser} value={browser}>
+            {strings.browsers[browser]}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+    </Card>
   );
 }

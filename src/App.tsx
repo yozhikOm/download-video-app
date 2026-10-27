@@ -44,7 +44,7 @@ function App() {
   );
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
+    <main className="flex min-h-svh items-center justify-center px-7 py-4.5">
       {(setup.status === "installing" || setup.status === "failed") && (
         <SetupScreen state={setup} />
       )}

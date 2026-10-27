@@ -1,11 +1,7 @@
+import { useId } from "react";
+import { DownloadIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   NativeSelect,
@@ -38,7 +34,7 @@ export type CardChoice = {
   transcriptLanguage: string | null;
 };
 
-/** The Presets of one group the Video has, to choose one from. */
+/** The Presets of one group the Video has, to choose one from, in a grid. */
 function PresetPicker<P extends Preset>({
   label,
   presets,
@@ -52,20 +48,26 @@ function PresetPicker<P extends Preset>({
   chosen: P;
   onChoose: (preset: P) => void;
 }) {
+  const labelId = useId();
   return (
-    <RadioGroup
-      aria-label={label}
-      value={chosen}
-      onValueChange={(value) => onChoose(value as P)}
-      className="flex flex-wrap gap-x-4"
-    >
-      {presets.map((preset) => (
-        <label key={preset} className="flex items-center gap-2">
-          <RadioGroupItem value={preset} />
-          {names[preset]}
-        </label>
-      ))}
-    </RadioGroup>
+    <div className="flex flex-col gap-1.5">
+      <p id={labelId} className="text-xs text-muted-foreground">
+        {label}
+      </p>
+      <RadioGroup
+        aria-labelledby={labelId}
+        value={chosen}
+        onValueChange={(value) => onChoose(value as P)}
+        className="grid-cols-[repeat(4,max-content)] gap-x-4.5 gap-y-1.5"
+      >
+        {presets.map((preset) => (
+          <label key={preset} className="flex items-center gap-2">
+            <RadioGroupItem value={preset} />
+            {names[preset]}
+          </label>
+        ))}
+      </RadioGroup>
+    </div>
   );
 }
 
@@ -149,7 +151,13 @@ export function VideoPreview({
     />
   );
   return (
-    <Card className="pt-0">
+    <Card
+      className={
+        video.thumbnail
+          ? "grid grid-cols-[minmax(0,18.75rem)_minmax(0,1fr)] gap-5 p-4 has-[>img:first-child]:pt-4 *:[img:first-child]:rounded-lg"
+          : "p-4"
+      }
+    >
       {video.thumbnail && (
         <img
           src={video.thumbnail}
@@ -157,27 +165,30 @@ export function VideoPreview({
           className="aspect-video w-full object-cover"
         />
       )}
-      <CardHeader>
-        <CardTitle>
-          <h2>{video.title}</h2>
-        </CardTitle>
-        <CardDescription className="flex justify-between gap-4">
-          <span>{video.channel}</span>
-          {video.duration !== null && (
-            <span className="tabular-nums">
-              {formatDuration(video.duration)}
-            </span>
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-3">
+        <header>
+          <h2 className="font-heading text-base leading-snug font-semibold">
+            {video.title}
+          </h2>
+          <p className="mt-0.5 flex flex-wrap gap-x-2 text-muted-foreground">
+            {video.channel && <span>{video.channel}</span>}
+            {video.channel && video.duration !== null && (
+              <span aria-hidden="true">·</span>
+            )}
+            {video.duration !== null && (
+              <span className="tabular-nums">
+                {formatDuration(video.duration)}
+              </span>
+            )}
+          </p>
+        </header>
         <Tabs
           value={choice.group}
           onValueChange={(group) =>
             onChoose({ ...choice, group: group as CardChoice["group"] })
           }
         >
-          <TabsList>
+          <TabsList className="h-8.5">
             <TabsTrigger value="video">{strings.presets.videoTab}</TabsTrigger>
             {audioPresets.length > 0 && (
               <TabsTrigger value="audio">
@@ -224,7 +235,7 @@ export function VideoPreview({
           </TabsContent>
         </Tabs>
         {choice.group !== "transcript" && (
-          <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <div className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-2">
             <label className="flex items-center gap-2">
               <Checkbox
                 checked={choice.withTranscript}
@@ -240,13 +251,16 @@ export function VideoPreview({
         )}
         <div>
           <Button
+            size="lg"
+            className="px-4.5 font-semibold"
             disabled={choice.group === "transcript" && !hasTranscript}
             onClick={onDownload}
           >
+            <DownloadIcon />
             {strings.download.start}
           </Button>
         </div>
-      </CardContent>
+      </div>
     </Card>
   );
 }

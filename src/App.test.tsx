@@ -1123,6 +1123,20 @@ test("the Queue shows each Download's thumbnail, title, Preset and status in ord
   expect(items[2]).toHaveTextContent("В очереди");
 });
 
+test("the Queue's header counts its Downloads", async () => {
+  const backend = await startReady();
+
+  await backend.queue(
+    queued(1, { video: zoo, status: "queued" }),
+    queued(2, { video: habit, status: "queued" }),
+    queued(3, { video: lecture, status: "cancelled" }),
+  );
+
+  expect(
+    within(screen.getByRole("region", { name: "Очередь" })).getByText("3"),
+  ).toBeInTheDocument();
+});
+
 test("a duplicate of a Queued or running Download gets a warning and the Video's card stays", async () => {
   const backend = await startReady({ duplicateOf: 1 });
   await backend.download({ video: zoo, status: "queued" });
