@@ -165,6 +165,7 @@ function mockBackend({
       send({ type: "queue", data: downloads }),
     download: (state: DownloadState) =>
       send({ type: "queue", data: [queued(1, state)] }),
+    closeRequested: () => send({ type: "closeRequested" }),
   };
 }
 
@@ -1532,4 +1533,35 @@ test("submitting another URL doesn't bring the previous Video's card back", asyn
   expect(
     screen.queryByRole("heading", { name: "Me at the zoo" }),
   ).not.toBeInTheDocument();
+});
+
+test("closing with unfinished Downloads asks first and closes once confirmed", async () => {
+  const backend = mockBackend();
+  render(<App />);
+  await backend.setup({ status: "ready" });
+
+  await backend.closeRequested();
+
+  const dialog = screen.getByRole("alertdialog", {
+    name: "Есть незавершённые загрузки. Закрыть?",
+  });
+  expect(backend.commands).not.toContain("close_app");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  await waitFor(() => expect(backend.commands).toContain("close_app"));
+});
+
+test("declining to close keeps the app open and asks again next time", async () => {
+  const backend = mockBackend();
+  render(<App />);
+  await backend.setup({ status: "ready" });
+  await backend.closeRequested();
+
+  fireEvent.click(screen.getByRole("button", { name: "Не закрывать" }));
+
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(backend.commands).not.toContain("close_app");
+  await backend.closeRequested();
+  expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 });

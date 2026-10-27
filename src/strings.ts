@@ -129,6 +129,13 @@ export const strings = {
     withTranscript: (preset: string) => `${preset} + транскрипт`,
     transcriptAlone: "Транскрипт",
   },
+  close: {
+    title: "Есть незавершённые загрузки. Закрыть?",
+    description:
+      "Скачивание прервётся. Если в течение недели снова добавить то же видео с теми же настройками, оно докачается с того же места.",
+    confirm: "Закрыть",
+    decline: "Не закрывать",
+  },
   signIn: {
     browser: "Вход в YouTube",
     none: "Не использовать",

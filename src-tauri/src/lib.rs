@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Builder, Manager, Runtime, State};
+use tauri::{AppHandle, Builder, Manager, Runtime, State, WindowEvent};
 
 use crate::clock::SystemClock;
 use crate::download::{Added, Content, Downloader};
@@ -58,11 +58,19 @@ impl Subscribers {
     }
 }
 
-impl EventSink for Subscribers {
-    fn send(&self, event: AppEvent) {
+impl Subscribers {
+    /// Sends the event to every channel; `false` when none got it.
+    fn deliver(&self, event: AppEvent) -> bool {
         let mut channels = self.0.lock().unwrap();
         // A channel fails once its page is gone.
         channels.retain(|channel| channel.send(event.clone()).is_ok());
+        !channels.is_empty()
+    }
+}
+
+impl EventSink for Subscribers {
+    fn send(&self, event: AppEvent) {
+        self.deliver(event);
     }
 }
 
@@ -169,6 +177,18 @@ fn cancel_download(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<()
     }
 }
 
+/// Closes the app after the user confirmed it with a Download unfinished:
+/// stops the Queue, keeping the Partials for the next launch, then exits.
+#[tauri::command]
+fn close_app<R: Runtime>(app: AppHandle<R>, downloader: State<'_, Arc<Downloader>>) {
+    let downloader = downloader.inner().clone();
+    // Waits for yt-dlp to exit, off the main thread.
+    std::thread::spawn(move || {
+        downloader.close();
+        app.exit(0);
+    });
+}
+
 /// Takes the Done, Failed or Cancelled Download out of the Queue.
 #[tauri::command]
 fn remove_download(id: u64, downloader: State<'_, Arc<Downloader>>) {
@@ -238,6 +258,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             add_download,
             retry_download,
             cancel_download,
+            close_app,
             remove_download,
             clear_done_downloads,
             open_downloaded_file,
@@ -289,6 +310,19 @@ pub fn run() {
             app.manage(downloader);
             spawn_prepare(toolbox);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // With a Download unfinished, the UI asks first; `close_app`
+            // closes the app once the user confirms. Without a page to ask
+            // in, the window closes, so that it can't get stuck open.
+            if let WindowEvent::CloseRequested { api, .. } = event
+                && window.state::<Arc<Downloader>>().has_unfinished()
+                && window
+                    .state::<Arc<Subscribers>>()
+                    .deliver(AppEvent::CloseRequested)
+            {
+                api.prevent_close();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

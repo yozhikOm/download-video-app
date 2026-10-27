@@ -16,6 +16,9 @@ pub enum AppEvent {
     Settings(SettingsState),
     /// The Downloads in the Queue, in the order they run.
     Queue(Vec<Download>),
+    /// The user closes the window while a Download is unfinished; the app
+    /// stays open until the UI confirms it with `close_app`.
+    CloseRequested,
 }
 
 pub trait EventSink: Send + Sync {

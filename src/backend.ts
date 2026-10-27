@@ -171,7 +171,12 @@ export type AppEvent =
   | { type: "probe"; data: ProbeState }
   | { type: "settings"; data: SettingsState }
   /** The Downloads in the Queue, in the order they run. */
-  | { type: "queue"; data: Download[] };
+  | { type: "queue"; data: Download[] }
+  /**
+   * The user closes the window while a Download is unfinished; the app stays
+   * open until `closeApp` confirms it.
+   */
+  | { type: "closeRequested" };
 
 /**
  * What became of a Download asked for: it waits in the Queue, or nothing
@@ -236,6 +241,15 @@ export function retryDownload(id: number): Promise<Added> {
  */
 export function cancelDownload(id: number): Promise<void> {
   return invoke("cancel_download", { id });
+}
+
+/**
+ * Closes the app after the user confirmed it with a Download unfinished:
+ * yt-dlp stops, and the Partials stay, so that the same Video with the same
+ * Preset resumes after the next launch.
+ */
+export function closeApp(): Promise<void> {
+  return invoke("close_app");
 }
 
 /** Takes the Done, Failed or Cancelled Download out of the Queue; its files stay. */
