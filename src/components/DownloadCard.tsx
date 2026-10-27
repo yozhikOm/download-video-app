@@ -71,6 +71,14 @@ function savesText({ preset, transcriptLanguage }: Download) {
  */
 function detailsText(download: Extract<Download, { status: "failed" }>) {
   const { details } = strings.download;
+  // Longer than any run of backticks yt-dlp printed, so that none ends it.
+  const longestRun = Math.max(
+    0,
+    ...download.output.flatMap((line) =>
+      (line.match(/`+/g) ?? []).map((run) => run.length),
+    ),
+  );
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
   return [
     details.url(download.url),
     ...(download.preset === null ? [] : [details.preset(download.preset)]),
@@ -80,9 +88,9 @@ function detailsText(download: Extract<Download, { status: "failed" }>) {
     details.message(download.message),
     "",
     details.output,
-    "```",
+    fence,
     ...download.output,
-    "```",
+    fence,
   ].join("\n");
 }
 
@@ -109,6 +117,7 @@ export function DownloadCard({
 
   function retry() {
     duplicate.clear();
+    setCopying(null);
     retryDownload(download.id)
       .then(duplicate.note)
       // It fails for a Download no longer Failed or Cancelled, which the

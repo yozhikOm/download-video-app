@@ -1324,6 +1324,26 @@ test("a Failed Download's details copy its URL, Preset and what yt-dlp printed l
   ).toBeInTheDocument();
 });
 
+test("the details fence what yt-dlp printed beyond the backticks it printed", async () => {
+  const clipboard = mockClipboard();
+  const backend = await startReady();
+  await backend.download({
+    video: zoo,
+    status: "failed",
+    ...readTimedOut,
+    output: ["WARNING: ```", "ERROR: ````"],
+  });
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Скопировать подробности" }),
+  );
+
+  await waitFor(() => expect(clipboard).toHaveLength(1));
+  expect(clipboard[0]).toContain(
+    ["`````", "WARNING: ```", "ERROR: ````", "`````"].join("\n"),
+  );
+});
+
 test("the details of a Failed Transcript alone name no Preset", async () => {
   const clipboard = mockClipboard();
   const backend = await startReady();
@@ -1373,6 +1393,21 @@ const failedZoo = queued(1, {
   video: zoo,
   status: "failed",
   ...readTimedOut,
+});
+
+test("a Failed Download retried no longer says its details were copied", async () => {
+  mockClipboard();
+  const backend = await startReady();
+  await backend.queue(failedZoo);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Скопировать подробности" }),
+  );
+  await screen.findByText("Подробности скопированы");
+
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  await backend.queue(failedZoo);
+
+  expect(screen.queryByText("Подробности скопированы")).not.toBeInTheDocument();
 });
 
 test("a Failed Download whose duplicate is in the Queue says so on retry", async () => {
