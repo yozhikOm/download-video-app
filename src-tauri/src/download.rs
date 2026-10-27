@@ -69,8 +69,8 @@ pub enum DownloadStatus {
     Failed {
         failure: Failure,
         message: String,
-        /// The last lines yt-dlp printed, but its progress, for the user to
-        /// copy into a bug report.
+        /// The last lines yt-dlp printed, but its progress and what only
+        /// `--verbose` prints, for the user to copy into a bug report.
         output: Vec<String>,
     },
     /// Stopped by the user; its Partial is removed.
@@ -848,7 +848,7 @@ impl Downloader {
     /// Runs yt-dlp with `args`, so that `stopper` can stop it, and hands
     /// what each line of its stdout tells to `on_line`; everything it prints
     /// but its progress goes to `log`, its stderr once it has exited, and
-    /// all but its debug lines are kept among the last ones.
+    /// all but what only `--verbose` prints are kept among the last ones.
     fn run_ytdlp(
         &self,
         args: &[OsString],
@@ -881,8 +881,7 @@ impl Downloader {
             )
             .map_err(|_| Stopped::ToolBroken)?;
         for line in String::from_utf8_lossy(&output.stderr).lines() {
-            // Too many to leave room for the lines that tell what happened.
-            if line.starts_with("[debug] ") {
+            if verbose_only(line) {
                 log.note(line);
             } else {
                 log.output(line);
@@ -1036,20 +1035,31 @@ fn failure(output: &Output) -> Result<(), Stopped> {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let message = error_line(&stderr);
+    let mut message = error_line(&stderr);
     // Without an error line, such as when yt-dlp crashes, its last line
     // tells why rather than the warnings before it.
-    let failure = if message.starts_with("ERROR:") {
-        read_failure(&message)
-    } else {
-        read_failure(
-            stderr
-                .lines()
-                .rfind(|line| !line.trim().is_empty())
-                .unwrap_or_default(),
-        )
-    };
-    Err(Stopped::Failed(failure, message))
+    if !message.starts_with("ERROR:") {
+        message = stderr
+            .lines()
+            .rfind(|line| !verbose_only(line))
+            .unwrap_or_default()
+            .to_owned();
+    }
+    Err(Stopped::Failed(read_failure(&message), message))
+}
+
+/// Whether a line of yt-dlp's stderr is one only `--verbose` prints and
+/// tells nothing of what happened on its own: a debug line, or a frame of
+/// the Python traceback printed after an error. They are too many to leave
+/// room among the last lines for the ones that do tell, such as the
+/// exception that ends a traceback.
+fn verbose_only(line: &str) -> bool {
+    line.starts_with("[debug] ")
+        || line.starts_with(char::is_whitespace)
+        || line.is_empty()
+        || line == "Traceback (most recent call last):"
+        || line.starts_with("During handling of the above exception")
+        || line.starts_with("The above exception was the direct cause")
 }
 
 /// The kind of failure yt-dlp's error message tells of. A Video that needs

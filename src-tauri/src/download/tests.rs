@@ -1131,6 +1131,67 @@ fn a_download_runs_yt_dlp_verbose_and_logs_its_debug_lines_without_keeping_them(
     );
 }
 
+/// What yt-dlp `--verbose` prints after an error: the frames of where it
+/// was raised and of its cause, then the cause.
+const TRACEBACK: &str = "  File \"yt_dlp\\extractor\\common.py\", line 742, in extract
+  File \"yt_dlp\\extractor\\generic.py\", line 2393, in _real_extract
+  File \"yt_dlp\\extractor\\common.py\", line 911, in _request_webpage
+
+  File \"yt_dlp\\extractor\\common.py\", line 898, in _request_webpage
+  File \"yt_dlp\\YoutubeDL.py\", line 4172, in urlopen
+  File \"yt_dlp\\networking\\common.py\", line 117, in send
+yt_dlp.networking.exceptions.HTTPError: HTTP Error 404: Not Found
+";
+
+#[test]
+fn a_failed_download_logs_the_traceback_yt_dlp_printed_but_keeps_only_its_exception() {
+    let app = App::start();
+    ytdlp_fails_printing(
+        &app,
+        String::new(),
+        format!(
+            "WARNING: [generic] Falling back on generic information extractor\nERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found\n{TRACEBACK}"
+        ),
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        output(&app),
+        [
+            "WARNING: [generic] Falling back on generic information extractor",
+            "ERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found",
+            "yt_dlp.networking.exceptions.HTTPError: HTTP Error 404: Not Found",
+        ]
+    );
+    let logs = file_names(&app.logs_dir());
+    let log = fs::read_to_string(app.logs_dir().join(&logs[0])).unwrap();
+    assert!(log.contains(TRACEBACK), "{log}");
+}
+
+#[test]
+fn a_yt_dlp_that_crashes_is_told_by_its_exception_not_its_debug_lines_or_traceback() {
+    let app = App::start();
+    ytdlp_fails_printing(
+        &app,
+        String::new(),
+        "[debug] Command-line config: ['--verbose']\n[debug] yt-dlp version stable@2026.10.21\nTraceback (most recent call last):\n  File \"yt_dlp\\__main__.py\", line 17, in <module>\n  File \"yt_dlp\\YoutubeDL.py\", line 1730, in wrapper\nKeyError: 'formats'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"yt_dlp\\__init__.py\", line 1093, in main\nSystemExit: 1\n".into(),
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    match app.status() {
+        Some(DownloadStatus::Failed {
+            failure, message, ..
+        }) => assert_eq!(
+            (failure, message.as_str()),
+            (Failure::Unknown, "SystemExit: 1")
+        ),
+        status => panic!("not Failed: {status:?}"),
+    }
+    assert_eq!(output(&app), ["KeyError: 'formats'", "SystemExit: 1"]);
+}
+
 #[test]
 fn of_logs_started_in_the_same_second_the_oldest_go_first() {
     let app = App::start();
