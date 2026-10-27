@@ -1,0 +1,3182 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Варианты дизайна загрузчика</title>
+    <meta name="claude:viewport-fit-sides" content="cover" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Nunito:wght@400;600;700;800&family=Onest:wght@400;500;600;700&display=swap"
+    />
+    <style>
+      /* Layout: a presentation shell (intro, variant switch, controls) around a
+   scaled 1000×700 app window that renders one of three variants. */
+      :root {
+        --bg: #f3f4f7;
+        --surface: #ffffff;
+        --fg: #161922;
+        --muted: #5a6072;
+        --line: #dcdfe6;
+        --ink: #1d2a4d;
+        --ink-fg: #ffffff;
+        --stage: #e4e7ee;
+        --font: "Golos Text", "Segoe UI", system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #111318;
+          --surface: #191c23;
+          --fg: #eceef3;
+          --muted: #9ba1b0;
+          --line: #2a2f3a;
+          --ink: #d6def5;
+          --ink-fg: #111318;
+          --stage: #0a0c10;
+          color-scheme: dark;
+        }
+      }
+      :root[data-theme="dark"] {
+        --bg: #111318;
+        --surface: #191c23;
+        --fg: #eceef3;
+        --muted: #9ba1b0;
+        --line: #2a2f3a;
+        --ink: #d6def5;
+        --ink-fg: #111318;
+        --stage: #0a0c10;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.5 var(--font);
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 2px solid var(--ink);
+        outline-offset: 2px;
+      }
+      .sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+
+      .page {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding-block: 32px 56px;
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      .intro {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-width: 70ch;
+      }
+      .eyebrow {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .intro h1 {
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.2;
+        font-weight: 600;
+        text-wrap: balance;
+      }
+      .intro p.lede {
+        margin: 0;
+        color: var(--muted);
+      }
+      .intro code {
+        font-size: 0.92em;
+      }
+
+      .variants {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .variant-tab {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        text-align: left;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .variant-tab b {
+        font-weight: 600;
+        font-size: 16px;
+      }
+      .variant-tab span {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .variant-tab small {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .variant-tab[aria-pressed="true"] {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: var(--ink-fg);
+      }
+      .variant-tab[aria-pressed="true"] span,
+      .variant-tab[aria-pressed="true"] small {
+        color: var(--ink-fg);
+        opacity: 0.8;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 20px;
+        align-items: center;
+      }
+      .ctl {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .ctl-label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--surface);
+      }
+      .seg button {
+        border: 0;
+        background: none;
+        padding: 5px 10px;
+        font-size: 13px;
+      }
+      .seg button + button {
+        border-left: 1px solid var(--line);
+      }
+      .seg button[aria-pressed="true"] {
+        background: var(--ink);
+        color: var(--ink-fg);
+      }
+      .reset {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 5px 10px;
+        font-size: 13px;
+      }
+
+      .stage {
+        background: var(--stage);
+        border-radius: 14px;
+        padding: 24px;
+        display: flex;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .holder {
+        position: relative;
+        flex: none;
+      }
+      .stage-note {
+        margin: -8px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .note {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px 18px;
+        min-width: 0;
+      }
+      .note h2 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .note p {
+        margin: 0;
+      }
+      .note ul {
+        margin: 0;
+        padding-left: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .note code {
+        font-size: 0.9em;
+        overflow-wrap: anywhere;
+      }
+      .effort {
+        margin-top: 10px !important;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 760px) {
+        .variants,
+        .notes {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .stage {
+          padding: 10px;
+        }
+        .intro h1 {
+          font-size: 24px;
+        }
+      }
+
+      /* ───────────── The app window (shared) ───────────── */
+      .win {
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: 0 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-radius: 8px;
+        box-shadow:
+          0 1px 2px rgb(0 0 0 / 0.12),
+          0 18px 48px rgb(0 0 0 / 0.22);
+        background: var(--w-bg);
+        color: var(--w-fg);
+        font-family: var(--w-font);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .win :focus-visible {
+        outline: 2px solid var(--w-accent);
+        outline-offset: 2px;
+      }
+      .tb {
+        flex: none;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--w-tb);
+        color: var(--w-fg);
+        font:
+          12px "Segoe UI",
+          system-ui,
+          sans-serif;
+        user-select: none;
+      }
+      .tb-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 12px;
+      }
+      .tb-title svg {
+        width: 16px;
+        height: 16px;
+        color: var(--w-accent);
+      }
+      .tb-ctl {
+        display: flex;
+        height: 100%;
+      }
+      .tb-ctl span {
+        width: 46px;
+        display: grid;
+        place-items: center;
+      }
+      .tb-ctl svg {
+        width: 10px;
+        height: 10px;
+      }
+      .wb {
+        flex: 1;
+        min-height: 0;
+        position: relative;
+        overflow: hidden;
+      }
+      .win svg.i {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .thumb {
+        position: relative;
+        display: block;
+        overflow: hidden;
+        aspect-ratio: 16 / 9;
+        max-width: 100%;
+      }
+      .thumb svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .dur {
+        position: absolute;
+        right: 6px;
+        bottom: 6px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: rgb(0 0 0 / 0.72);
+        color: #fff;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+      .toast {
+        position: absolute;
+        left: 50%;
+        bottom: 20px;
+        transform: translateX(-50%);
+        z-index: 30;
+        max-width: 80%;
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        background: var(--w-fg);
+        color: var(--w-bg);
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes slide {
+        from {
+          transform: translateX(-100%);
+        }
+        to {
+          transform: translateX(250%);
+        }
+      }
+      @keyframes flash {
+        from {
+          background: var(--w-flash);
+        }
+      }
+      @keyframes shimmer {
+        50% {
+          opacity: 0.55;
+        }
+      }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid var(--w-line);
+        border-top-color: var(--w-accent);
+        animation: spin 0.8s linear infinite;
+        flex: none;
+      }
+      .indet {
+        position: relative;
+        overflow: hidden;
+      }
+      .indet > i {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 40%;
+        background: var(--w-accent);
+        border-radius: inherit;
+        animation: slide 1.3s ease-in-out infinite;
+      }
+      .is-new {
+        animation: flash 1.6s ease-out;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner,
+        .indet > i,
+        .is-new,
+        .sk {
+          animation: none !important;
+        }
+      }
+
+      /* ───────────── Variant 1: Родной Windows ───────────── */
+      .v1 {
+        --w-font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        --w-bg: #f3f3f3;
+        --w-tb: #f3f3f3;
+        --w-fg: #1b1b1b;
+        --w-muted: #616161;
+        --w-plate: #fbfbfb;
+        --w-plate-2: #f6f6f6;
+        --w-line: #e3e3e3;
+        --w-ctl: #ffffff;
+        --w-ctl-line: #d1d1d1;
+        --w-accent: #005fb8;
+        --w-accent-fg: #ffffff;
+        --w-accent-soft: #dbe9f7;
+        --w-err: #c42b1c;
+        --w-err-bg: #fde7e9;
+        --w-warn-bg: #fff4ce;
+        --w-ok: #0f7b0f;
+        --w-flash: #dbe9f7;
+      }
+      .v1.dark {
+        --w-bg: #202020;
+        --w-tb: #202020;
+        --w-fg: #ffffff;
+        --w-muted: #c5c5c5;
+        --w-plate: #2b2b2b;
+        --w-plate-2: #323232;
+        --w-line: #3b3b3b;
+        --w-ctl: #2d2d2d;
+        --w-ctl-line: #444444;
+        --w-accent: #60cdff;
+        --w-accent-fg: #002437;
+        --w-accent-soft: #1c3a4d;
+        --w-err: #ff99a4;
+        --w-err-bg: #442726;
+        --w-warn-bg: #433519;
+        --w-ok: #6ccb5f;
+        --w-flash: #1c3a4d;
+      }
+      .v1-scroll {
+        height: 100%;
+        overflow: auto;
+      }
+      .v1-col {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 18px 28px 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .v1-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .v1-app {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      .v1-app b {
+        font-size: 20px;
+        font-weight: 600;
+        font-family:
+          "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      }
+      .v1-muted {
+        color: var(--w-muted);
+      }
+      .v1-small {
+        font-size: 12px;
+      }
+      .v1-icon {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: none;
+        color: var(--w-fg);
+      }
+      .v1-icon:hover,
+      .v1-sub:hover,
+      .v1-link:hover {
+        background: var(--w-plate-2);
+      }
+      .v1-url {
+        display: flex;
+        gap: 8px;
+      }
+      .v1-field {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0 10px;
+        background: var(--w-ctl);
+        border: 1px solid var(--w-ctl-line);
+        border-bottom: 1px solid var(--w-muted);
+        border-radius: 6px;
+        color: var(--w-muted);
+      }
+      .v1-field:focus-within {
+        border-bottom: 2px solid var(--w-accent);
+      }
+      .v1-field input {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        outline: 0;
+        background: none;
+        color: var(--w-fg);
+        height: 100%;
+      }
+      .v1-accent {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0 18px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: var(--w-accent);
+        color: var(--w-accent-fg);
+        font-weight: 600;
+      }
+      .v1-accent:hover {
+        filter: brightness(1.08);
+      }
+      .v1-accent:disabled {
+        opacity: 0.45;
+        cursor: default;
+        filter: none;
+      }
+      .v1-std {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--w-ctl-line);
+        border-radius: 6px;
+        background: var(--w-ctl);
+      }
+      .v1-sub {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 4px;
+        background: none;
+        color: var(--w-fg);
+        font-size: 13px;
+      }
+      .v1-sub.primary {
+        color: var(--w-accent);
+        font-weight: 600;
+      }
+      .v1-plate {
+        background: var(--w-plate);
+        border: 1px solid var(--w-line);
+        border-radius: 8px;
+      }
+      .v1-probing {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        color: var(--w-muted);
+      }
+      .v1-video {
+        display: grid;
+        grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+        gap: 20px;
+        padding: 16px;
+      }
+      .v1-video .thumb {
+        border-radius: 6px;
+        align-self: start;
+      }
+      .v1-vbody {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .v1-vbody h2 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        line-height: 1.35;
+      }
+      .v1-vbody header p {
+        margin: 2px 0 0;
+      }
+      .v1-seg {
+        display: inline-flex;
+        align-self: start;
+        padding: 2px;
+        gap: 2px;
+        border-radius: 6px;
+        background: var(--w-plate-2);
+        border: 1px solid var(--w-line);
+      }
+      .v1-seg button {
+        border: 0;
+        background: none;
+        border-radius: 4px;
+        padding: 4px 14px;
+        color: var(--w-muted);
+      }
+      .v1-seg button[aria-selected="true"] {
+        background: var(--w-ctl);
+        color: var(--w-fg);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+        font-weight: 600;
+      }
+      .v1-radios {
+        display: grid;
+        grid-template-columns: repeat(4, max-content);
+        gap: 6px 18px;
+        border: 0;
+        padding: 0;
+        margin: 0;
+      }
+      .v1-radios legend {
+        padding: 0;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: var(--w-muted);
+      }
+      .v1-radios label,
+      .v1-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .v1 input[type="radio"],
+      .v1 input[type="checkbox"] {
+        accent-color: var(--w-accent);
+        width: 16px;
+        height: 16px;
+        margin: 0;
+      }
+      .v1-transcript {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        min-height: 32px;
+      }
+      .v1 select {
+        height: 32px;
+        padding: 0 8px;
+        border: 1px solid var(--w-ctl-line);
+        border-radius: 6px;
+        background: var(--w-ctl);
+      }
+      .v1-actions {
+        display: flex;
+      }
+      .v1-infobar {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 12px 14px;
+        border-radius: 6px;
+        border: 1px solid var(--w-line);
+        background: var(--w-warn-bg);
+      }
+      .v1-infobar.err {
+        background: var(--w-err-bg);
+      }
+      .v1-infobar svg {
+        margin-top: 2px;
+        color: var(--w-err);
+      }
+      .v1-infobar p {
+        margin: 0;
+      }
+      .v1-setting {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 16px;
+      }
+      .v1-setting p {
+        margin: 2px 0 0;
+        font-size: 12px;
+        color: var(--w-muted);
+      }
+      .v1-qhead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      .v1-qhead h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .v1-badge {
+        min-width: 20px;
+        padding: 0 6px;
+        border-radius: 10px;
+        background: var(--w-plate-2);
+        border: 1px solid var(--w-line);
+        font-size: 12px;
+        text-align: center;
+      }
+      .v1-link {
+        margin-left: auto;
+        border: 0;
+        background: none;
+        color: var(--w-accent);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+      .v1-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+      .v1-row {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr);
+        gap: 14px;
+        padding: 12px 14px;
+      }
+      .v1-row + .v1-row {
+        border-top: 1px solid var(--w-line);
+      }
+      .v1-row .thumb {
+        border-radius: 4px;
+      }
+      .v1-rmain {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .v1-rtitle {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .v1-rtitle h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .v1-rtitle span {
+        flex: none;
+        font-size: 12px;
+        color: var(--w-muted);
+      }
+      .v1-status {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+        color: var(--w-muted);
+      }
+      .v1-status.err {
+        color: var(--w-err);
+        justify-content: flex-start;
+        gap: 6px;
+      }
+      .v1-status.ok {
+        color: var(--w-fg);
+        justify-content: flex-start;
+        gap: 6px;
+      }
+      .v1-status.ok svg {
+        color: var(--w-ok);
+      }
+      .v1-bar {
+        height: 3px;
+        border-radius: 2px;
+        background: var(--w-line);
+      }
+      .v1-bar > b {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--w-accent);
+      }
+      .v1-ractions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        margin-left: -8px;
+      }
+
+      /* ───────────── Variant 2: Две панели ───────────── */
+      .v2 {
+        --w-font: "Onest", "Segoe UI", system-ui, sans-serif;
+        --w-bg: #e9ebf0;
+        --w-tb: #e9ebf0;
+        --w-fg: #1a1d24;
+        --w-muted: #5d6474;
+        --w-panel: #ffffff;
+        --w-panel-2: #f3f4f7;
+        --w-line: #dfe2e8;
+        --w-chip: #eef0f4;
+        --w-accent: #a8620a;
+        --w-accent-fg: #ffffff;
+        --w-accent-soft: #f7e6cc;
+        --w-ok: #1f8a57;
+        --w-ok-soft: #dcf2e6;
+        --w-err: #c23b3b;
+        --w-err-soft: #fbe3e3;
+        --w-flash: #f7e6cc;
+      }
+      .v2.dark {
+        --w-bg: #13151a;
+        --w-tb: #13151a;
+        --w-fg: #e9ebf0;
+        --w-muted: #9097a6;
+        --w-panel: #1b1e25;
+        --w-panel-2: #232731;
+        --w-line: #2c313c;
+        --w-chip: #262a34;
+        --w-accent: #f0b04a;
+        --w-accent-fg: #1c1408;
+        --w-accent-soft: #3b2e17;
+        --w-ok: #5fd39a;
+        --w-ok-soft: #173326;
+        --w-err: #ff8080;
+        --w-err-soft: #3a1d20;
+        --w-flash: #3b2e17;
+      }
+      .v2-grid {
+        height: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(300px, 40%);
+        gap: 1px;
+        background: var(--w-line);
+      }
+      .v2-add,
+      .v2-queue {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--w-bg);
+      }
+      .v2-queue {
+        background: var(--w-panel);
+      }
+      .v2-bar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 20px;
+      }
+      .v2-bar b {
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .v2-bar span {
+        color: var(--w-muted);
+        font-size: 12px;
+        margin-left: 8px;
+      }
+      .v2-icon {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 8px;
+        background: none;
+        color: var(--w-muted);
+      }
+      .v2-icon:hover {
+        background: var(--w-chip);
+        color: var(--w-fg);
+      }
+      .v2-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 4px 20px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .v2-url {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 5px 5px 14px;
+        border-radius: 12px;
+        background: var(--w-panel);
+        border: 1px solid var(--w-line);
+      }
+      .v2-url:focus-within {
+        border-color: var(--w-accent);
+      }
+      .v2-url svg {
+        color: var(--w-muted);
+      }
+      .v2-url input {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        outline: 0;
+        background: none;
+        height: 34px;
+      }
+      .v2-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 34px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 9px;
+        background: var(--w-accent);
+        color: var(--w-accent-fg);
+        font-weight: 600;
+      }
+      .v2-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .v2-btn.big {
+        height: 44px;
+        padding: 0 22px;
+        font-size: 15px;
+        border-radius: 11px;
+      }
+      .v2-ghost.icon-only {
+        width: 28px;
+        padding: 0;
+        justify-content: center;
+      }
+      .v2-ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 7px;
+        background: var(--w-chip);
+        font-size: 12.5px;
+      }
+      .v2-ghost:hover {
+        background: var(--w-line);
+      }
+      .v2-ghost.accent {
+        background: var(--w-accent-soft);
+        color: var(--w-fg);
+        font-weight: 600;
+      }
+      .v2-empty {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 10px;
+        padding: 32px 24px;
+        border: 1.5px dashed var(--w-line);
+        border-radius: 14px;
+        color: var(--w-muted);
+      }
+      .v2-empty svg.i {
+        width: 36px;
+        height: 36px;
+        stroke-width: 1.4;
+        color: var(--w-accent);
+      }
+      .v2-empty b {
+        color: var(--w-fg);
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .v2-empty p {
+        margin: 0;
+        max-width: 36ch;
+      }
+      .v2-card {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .v2-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 46%) minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .v2-hero .thumb {
+        border-radius: 10px;
+      }
+      .v2-hero h2 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+        line-height: 1.3;
+      }
+      .v2-hero p {
+        margin: 4px 0 0;
+        color: var(--w-muted);
+      }
+      .v2-label {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--w-muted);
+      }
+      .v2-modes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .v2-mode {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--w-line);
+        background: var(--w-panel);
+        text-align: left;
+        font-weight: 600;
+      }
+      .v2-mode[aria-checked="true"] {
+        border-color: var(--w-accent);
+        background: var(--w-accent-soft);
+      }
+      .v2-mode svg {
+        color: var(--w-accent);
+      }
+      .v2-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .v2-chip {
+        height: 32px;
+        padding: 0 14px;
+        border-radius: 16px;
+        border: 1px solid var(--w-line);
+        background: var(--w-panel);
+        font-variant-numeric: tabular-nums;
+      }
+      .v2-chip[aria-checked="true"] {
+        background: var(--w-fg);
+        color: var(--w-bg);
+        border-color: var(--w-fg);
+        font-weight: 600;
+      }
+      .v2-switch {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        min-height: 34px;
+      }
+      .v2-switch label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .v2-switch input {
+        appearance: none;
+        width: 34px;
+        height: 20px;
+        border-radius: 10px;
+        background: var(--w-line);
+        position: relative;
+        margin: 0;
+        cursor: pointer;
+      }
+      .v2-switch input::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--w-panel);
+        transition: transform 0.15s;
+      }
+      .v2-switch input:checked {
+        background: var(--w-accent);
+      }
+      .v2-switch input:checked::after {
+        transform: translateX(14px);
+      }
+      .v2-switch input:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .v2 select {
+        height: 32px;
+        padding: 0 8px;
+        border-radius: 8px;
+        border: 1px solid var(--w-line);
+        background: var(--w-panel);
+      }
+      .v2-action {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 20px;
+        background: var(--w-panel);
+        border-top: 1px solid var(--w-line);
+      }
+      .v2-action small {
+        display: block;
+        color: var(--w-muted);
+        font-size: 12px;
+      }
+      .v2-action b {
+        font-weight: 600;
+      }
+      .v2-alert {
+        display: flex;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: var(--w-err-soft);
+      }
+      .v2-alert svg {
+        color: var(--w-err);
+        margin-top: 2px;
+      }
+      .v2-alert p {
+        margin: 0;
+      }
+      .v2-signin {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px;
+        border-radius: 10px;
+        background: var(--w-panel);
+        border: 1px solid var(--w-line);
+      }
+      .v2-signin div {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .v2-signin p {
+        margin: 0;
+        color: var(--w-muted);
+        font-size: 13px;
+      }
+      .v2-sk {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .sk {
+        background: var(--w-line);
+        border-radius: 8px;
+        animation: shimmer 1.4s ease-in-out infinite;
+      }
+      .v2-qhead {
+        flex: none;
+        padding: 14px 16px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border-bottom: 1px solid var(--w-line);
+      }
+      .v2-qhead > div:first-child {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .v2-qhead h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .v2-counts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .v2-count {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: var(--w-chip);
+        font-size: 12px;
+        color: var(--w-muted);
+      }
+      .v2-count b {
+        color: var(--w-fg);
+        font-weight: 600;
+      }
+      .v2-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--w-muted);
+      }
+      .v2-dot.run {
+        background: var(--w-accent);
+      }
+      .v2-dot.ok {
+        background: var(--w-ok);
+      }
+      .v2-dot.err {
+        background: var(--w-err);
+      }
+      .v2-list {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        list-style: none;
+        margin: 0;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .v2-item {
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr);
+        gap: 10px;
+        padding: 10px;
+        border-radius: 10px;
+      }
+      .v2-item:hover {
+        background: var(--w-panel-2);
+      }
+      .v2-item.run {
+        background: var(--w-panel-2);
+      }
+      .v2-item .thumb {
+        border-radius: 6px;
+      }
+      .v2-imain {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .v2-imain h3 {
+        margin: 0;
+        font-size: 13.5px;
+        font-weight: 600;
+        line-height: 1.3;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .v2-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--w-muted);
+      }
+      .v2-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 7px;
+        border-radius: 8px;
+        font-size: 11.5px;
+        font-weight: 600;
+        background: var(--w-chip);
+        color: var(--w-muted);
+      }
+      .v2-pill.run {
+        background: var(--w-accent-soft);
+        color: var(--w-fg);
+      }
+      .v2-pill.ok {
+        background: var(--w-ok-soft);
+        color: var(--w-ok);
+      }
+      .v2-pill.err {
+        background: var(--w-err-soft);
+        color: var(--w-err);
+      }
+      .v2-pill svg.i {
+        width: 12px;
+        height: 12px;
+      }
+      .v2-bar2 {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--w-line);
+      }
+      .v2-bar2 > b {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--w-accent);
+      }
+      .v2-err {
+        margin: 0;
+        font-size: 12.5px;
+        color: var(--w-err);
+      }
+      .v2-iactions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .v2-qempty {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        text-align: center;
+        color: var(--w-muted);
+      }
+
+      /* ───────────── Variant 3: Один шаг ───────────── */
+      .v3 {
+        --w-font: "Nunito", "Segoe UI", system-ui, sans-serif;
+        --w-bg: #f5f7fa;
+        --w-tb: #f5f7fa;
+        --w-fg: #1b2230;
+        --w-muted: #5d6779;
+        --w-card: #ffffff;
+        --w-card-2: #eef1f6;
+        --w-line: #dce1ea;
+        --w-accent: #0d7a63;
+        --w-accent-fg: #ffffff;
+        --w-accent-soft: #dcf1eb;
+        --w-ok: #0d7a63;
+        --w-err: #c23a3a;
+        --w-err-soft: #fce6e6;
+        --w-flash: #dcf1eb;
+        --w-tray: #1b2230;
+        --w-tray-fg: #ffffff;
+        --w-tray-muted: #aab3c3;
+      }
+      .v3.dark {
+        --w-bg: #12161c;
+        --w-tb: #12161c;
+        --w-fg: #e8ecf2;
+        --w-muted: #97a1b2;
+        --w-card: #1b2028;
+        --w-card-2: #232a34;
+        --w-line: #2c3440;
+        --w-accent: #3fd1ad;
+        --w-accent-fg: #062a21;
+        --w-accent-soft: #15372f;
+        --w-ok: #3fd1ad;
+        --w-err: #ff8a8a;
+        --w-err-soft: #3b1f22;
+        --w-flash: #15372f;
+        --w-tray: #232a34;
+        --w-tray-fg: #e8ecf2;
+        --w-tray-muted: #97a1b2;
+      }
+      .v3-scroll {
+        height: 100%;
+        overflow: auto;
+        padding-bottom: 76px;
+      }
+      .v3-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 24px;
+      }
+      .v3-head b {
+        font-size: 16px;
+        font-weight: 800;
+      }
+      .v3-icon {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 12px;
+        background: var(--w-card);
+        color: var(--w-muted);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+      }
+      .v3-main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 0 24px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .v3-drop {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        text-align: center;
+        padding: 36px 32px 28px;
+        border-radius: 22px;
+        background: var(--w-card);
+        border: 2px dashed var(--w-line);
+      }
+      .v3-drop h2 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 800;
+        line-height: 1.2;
+        text-wrap: balance;
+      }
+      .v3-drop > p {
+        margin: 0;
+        color: var(--w-muted);
+        font-size: 15px;
+      }
+      .v3-url {
+        width: 100%;
+        display: flex;
+        gap: 8px;
+      }
+      .v3-url input {
+        flex: 1;
+        min-width: 0;
+        height: 50px;
+        padding: 0 16px;
+        border-radius: 14px;
+        border: 2px solid var(--w-line);
+        background: var(--w-bg);
+        font-size: 15px;
+        outline: 0;
+      }
+      .v3-url input:focus {
+        border-color: var(--w-accent);
+      }
+      .v3-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 50px;
+        padding: 0 24px;
+        border: 0;
+        border-radius: 14px;
+        background: var(--w-accent);
+        color: var(--w-accent-fg);
+        font-weight: 800;
+        font-size: 16px;
+      }
+      .v3-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .v3-btn.wide {
+        width: 100%;
+        height: 56px;
+        font-size: 17px;
+      }
+      .v3-soft {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 12px;
+        background: var(--w-card-2);
+        font-weight: 700;
+      }
+      .v3-soft:hover {
+        background: var(--w-line);
+      }
+      .v3-text {
+        border: 0;
+        background: none;
+        color: var(--w-accent);
+        font-weight: 700;
+        padding: 4px 6px;
+        border-radius: 8px;
+      }
+      .v3-probing {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--w-muted);
+        font-weight: 600;
+      }
+      .v3-err {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 18px 20px;
+        border-radius: 18px;
+        background: var(--w-err-soft);
+      }
+      .v3-err > div {
+        display: flex;
+        gap: 10px;
+      }
+      .v3-err svg {
+        color: var(--w-err);
+        margin-top: 3px;
+      }
+      .v3-err p {
+        margin: 0;
+      }
+      .v3-signin {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: var(--w-card);
+      }
+      .v3-signin label {
+        font-weight: 700;
+      }
+      .v3-signin p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--w-muted);
+      }
+      .v3 select {
+        height: 40px;
+        padding: 0 10px;
+        border-radius: 12px;
+        border: 2px solid var(--w-line);
+        background: var(--w-card);
+        font-weight: 600;
+      }
+      .v3-picked {
+        display: grid;
+        grid-template-columns: 136px minmax(0, 1fr);
+        gap: 16px;
+        align-items: center;
+        padding: 12px;
+        border-radius: 20px;
+        background: var(--w-card);
+      }
+      .v3-picked .thumb {
+        border-radius: 12px;
+      }
+      .v3-picked h2 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 800;
+        line-height: 1.3;
+      }
+      .v3-picked p {
+        margin: 4px 0 0;
+        color: var(--w-muted);
+      }
+      .v3-q {
+        margin: 2px 0 0;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      .v3-tiles {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .v3-tile {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 0 12px;
+        padding: 12px 14px;
+        border-radius: 18px;
+        border: 2px solid transparent;
+        background: var(--w-card);
+        text-align: left;
+      }
+      .v3-tile:hover {
+        border-color: var(--w-line);
+      }
+      .v3-tile[aria-checked="true"] {
+        border-color: var(--w-accent);
+        background: var(--w-accent-soft);
+      }
+      .v3-tile svg.i {
+        width: 26px;
+        height: 26px;
+        color: var(--w-accent);
+        stroke-width: 1.7;
+        grid-row: span 2;
+      }
+      .v3-tile b {
+        font-size: 17px;
+        font-weight: 800;
+      }
+      .v3-tile span {
+        font-size: 13px;
+        color: var(--w-muted);
+      }
+      .v3-opts {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: var(--w-card);
+      }
+      .v3-opts > span {
+        font-weight: 700;
+        color: var(--w-muted);
+        font-size: 13px;
+      }
+      .v3-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .v3-chip {
+        height: 36px;
+        padding: 0 12px;
+        border-radius: 12px;
+        border: 2px solid var(--w-line);
+        background: var(--w-card);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .v3-chip[aria-checked="true"] {
+        border-color: var(--w-accent);
+        color: var(--w-accent);
+        background: var(--w-accent-soft);
+      }
+      .v3-check {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        font-weight: 700;
+      }
+      .v3-check label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .v3 input[type="checkbox"] {
+        width: 20px;
+        height: 20px;
+        accent-color: var(--w-accent);
+        margin: 0;
+      }
+      .v3-dup {
+        margin: 0;
+        color: var(--w-err);
+        font-weight: 700;
+      }
+      .v3-tray {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 12px;
+        z-index: 20;
+        border-radius: 18px;
+        background: var(--w-tray);
+        color: var(--w-tray-fg);
+        box-shadow: 0 12px 32px rgb(0 0 0 / 0.28);
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100% - 24px);
+      }
+      .v3-traybar {
+        flex: none;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 16px;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+      }
+      .v3-traybar > svg.i {
+        width: 20px;
+        height: 20px;
+      }
+      .v3-traybar b {
+        font-weight: 800;
+      }
+      .v3-traybar small {
+        display: block;
+        color: var(--w-tray-muted);
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .v3-mini {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      .v3-minibar {
+        height: 4px;
+        border-radius: 2px;
+        background: rgb(255 255 255 / 0.16);
+      }
+      .v3-minibar > b {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--w-accent);
+      }
+      .v3-chev {
+        transition: transform 0.2s;
+      }
+      .v3-tray.open .v3-chev {
+        transform: rotate(180deg);
+      }
+      .v3-trayhead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px 8px;
+      }
+      .v3-trayhead .v3-text {
+        color: var(--w-tray-fg);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        font-size: 13px;
+      }
+      .v3-traylist {
+        list-style: none;
+        margin: 0;
+        padding: 0 8px 8px;
+        overflow: auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .v3-item {
+        display: grid;
+        grid-template-columns: 88px minmax(0, 1fr);
+        gap: 12px;
+        padding: 10px;
+        border-radius: 14px;
+        background: var(--w-card);
+        color: var(--w-fg);
+      }
+      .v3-item .thumb {
+        border-radius: 8px;
+      }
+      .v3-imain {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .v3-imain h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 800;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .v3-imain > span {
+        font-size: 12.5px;
+        color: var(--w-muted);
+      }
+      .v3-st {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .v3-st.err {
+        color: var(--w-err);
+        justify-content: flex-start;
+        gap: 6px;
+      }
+      .v3-st.ok {
+        color: var(--w-ok);
+        justify-content: flex-start;
+        gap: 6px;
+      }
+      .v3-st .num {
+        color: var(--w-muted);
+        font-weight: 600;
+      }
+      .v3-bar {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--w-card-2);
+      }
+      .v3-bar > b {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--w-accent);
+      }
+      .v3-iactions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .v3-iactions .v3-soft {
+        height: 30px;
+        padding: 0 10px;
+        font-size: 13px;
+        border-radius: 10px;
+      }
+      .v3-iactions .v3-soft.primary {
+        background: var(--w-accent);
+        color: var(--w-accent-fg);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="intro">
+        <p class="eyebrow">download-video-app · issue #40</p>
+        <h1>Три варианта оформления главного экрана</h1>
+        <p class="lede">
+          Кликабельные макеты на примерах данных; тексты взяты из
+          <code>src/strings.ts</code>. Вставьте ссылку и нажмите «Найти»,
+          выберите, что сохранить, нажмите «Скачать» — и посмотрите, как
+          Download проходит по очереди.
+        </p>
+      </header>
+
+      <nav class="variants" aria-label="Вариант оформления" id="variants"></nav>
+
+      <div class="controls">
+        <div class="ctl">
+          <span class="ctl-label" id="lbl-scenario">Пример</span>
+          <div
+            class="seg"
+            role="group"
+            aria-labelledby="lbl-scenario"
+            id="ctl-scenario"
+          ></div>
+        </div>
+        <div class="ctl">
+          <span class="ctl-label" id="lbl-size">Окно</span>
+          <div
+            class="seg"
+            role="group"
+            aria-labelledby="lbl-size"
+            id="ctl-size"
+          ></div>
+        </div>
+        <div class="ctl">
+          <span class="ctl-label" id="lbl-theme">Тема окна</span>
+          <div
+            class="seg"
+            role="group"
+            aria-labelledby="lbl-theme"
+            id="ctl-theme"
+          ></div>
+        </div>
+        <button type="button" class="reset" id="reset">Сбросить очередь</button>
+      </div>
+
+      <div class="stage" id="stage">
+        <div class="holder" id="holder">
+          <div class="win" id="win" role="region" aria-label="Окно приложения">
+            <div class="tb" aria-hidden="true">
+              <span class="tb-title">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14" />
+                </svg>
+                download-video-app
+              </span>
+              <span class="tb-ctl">
+                <span
+                  ><svg viewBox="0 0 10 10">
+                    <path d="M0 5h10" stroke="currentColor" /></svg
+                ></span>
+                <span
+                  ><svg viewBox="0 0 10 10">
+                    <rect
+                      x="0.5"
+                      y="0.5"
+                      width="9"
+                      height="9"
+                      fill="none"
+                      stroke="currentColor"
+                    /></svg
+                ></span>
+                <span
+                  ><svg viewBox="0 0 10 10">
+                    <path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg
+                ></span>
+              </span>
+            </div>
+            <div class="wb" id="wb"></div>
+          </div>
+        </div>
+      </div>
+      <p class="stage-note" id="stage-note"></p>
+
+      <section class="notes" id="notes" aria-live="polite"></section>
+    </div>
+
+    <script>
+      "use strict";
+
+      // ───────────── Texts from src/strings.ts ─────────────
+      const T = {
+        url: "Ссылка на видео",
+        placeholder: "https://www.youtube.com/watch?v=…",
+        find: "Найти",
+        probing: "Получаю сведения о видео…",
+        thumbnail: "Превью",
+        botCheck:
+          "YouTube просит подтвердить, что вы не робот. Так бывает в рабочих сетях и через VPN — выберите ниже браузер, в котором вы вошли в YouTube, или попробуйте из другой сети.",
+        videoTab: "Видео",
+        audioTab: "Аудио",
+        quality: "Качество",
+        audioFormat: "Формат",
+        transcriptTab: "Транскрипт",
+        saveTranscript: "Сохранить транскрипт",
+        transcriptLanguage: "Язык транскрипта",
+        start: "Скачать",
+        downloading: {
+          transcript: "Скачивание транскрипта…",
+          video: "Скачивание видео…",
+          audio: "Скачивание аудио…",
+        },
+        queued: "В очереди",
+        processing: "Обработка…",
+        done: "Готово",
+        openFile: "Открыть файл",
+        showInFolder: "Показать в папке",
+        failed: {
+          offline:
+            "Нет подключения к интернету или сайт не отвечает. Проверьте сеть и повторите.",
+        },
+        copyDetails: "Скопировать подробности",
+        detailsCopied: "Подробности скопированы",
+        copyFailed: "Не удалось скопировать подробности.",
+        retry: "Повторить",
+        cancel: "Отменить",
+        cancelled: "Отменено",
+        duplicate:
+          "Это видео с теми же настройками уже скачивается или ждёт в очереди.",
+        remove: "Убрать",
+        queue: "Очередь",
+        clearDone: "Очистить завершённые",
+        version: "Версия 0.1.0",
+        signIn: "Вход в YouTube",
+        signInNone: "Не использовать",
+        signInHint:
+          "Нужен, если YouTube просит подтвердить, что вы не робот, или видео доступно только после входа.",
+        signInWarning: (b) =>
+          `Приложение будет обращаться к YouTube от имени вашего аккаунта в ${b}. Если скачивать очень много, YouTube может ограничить этот аккаунт.`,
+      };
+      const VIDEO_NAMES = {
+        best: "Лучшее",
+        "2160p": "2160p",
+        "1440p": "1440p",
+        "1080p": "1080p",
+        "720p": "720p",
+        "480p": "480p",
+        "360p": "360p",
+      };
+      const AUDIO_NAMES = { m4a: "M4A (оригинал)", mp3: "MP3" };
+      // A Download doesn't tell whether M4A keeps the sound, so it isn't called original.
+      const PRESET_NAMES = { ...VIDEO_NAMES, m4a: "M4A", mp3: "MP3" };
+      const BROWSERS = {
+        brave: "Brave",
+        chrome: "Chrome",
+        chromium: "Chromium",
+        edge: "Edge",
+        firefox: "Firefox",
+        opera: "Opera",
+        vivaldi: "Vivaldi",
+        whale: "Whale",
+      };
+
+      // ───────────── Example data ─────────────
+      const SAMPLE_URL = "https://www.youtube.com/watch?v=Qh2sWSVRrmo";
+      const VIDEO = {
+        title: "Как работает сжатие видео: H.264, VP9 и AV1 на пальцах",
+        channel: "Разбор по кадрам",
+        duration: 1307,
+        hue: 205,
+      };
+      const VIDEO_PRESETS = [
+        "best",
+        "2160p",
+        "1440p",
+        "1080p",
+        "720p",
+        "480p",
+        "360p",
+      ];
+      const AUDIO_PRESETS = ["m4a", "mp3"];
+      const LANGS = [
+        { code: "en", name: "Английский" },
+        { code: "de", name: "Немецкий (автосубтитры)" },
+        { code: "ru", name: "Русский" },
+      ];
+      const LANG_NAME = Object.fromEntries(LANGS.map((l) => [l.code, l.name]));
+
+      function sampleQueue() {
+        return [
+          {
+            id: 1,
+            title: "Утренняя зарядка за 10 минут",
+            hue: 150,
+            url: "https://www.youtube.com/watch?v=8kq3Zr1pLqE",
+            preset: "720p",
+            lang: null,
+            status: "done",
+            file: "Утренняя зарядка за 10 минут.mp4",
+          },
+          {
+            id: 2,
+            title: "Концерт в парке Горького, 2019 — полная запись",
+            hue: 330,
+            url: "https://vk.com/video-12345_456239",
+            preset: "1080p",
+            lang: null,
+            status: "failed",
+            failure: "offline",
+            percent: 17,
+            message:
+              "ERROR: [vk] 456239: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>",
+            output: [
+              "[vk] Extracting URL: https://vk.com/video-12345_456239",
+              "[vk] 456239: Downloading webpage",
+              "ERROR: [vk] 456239: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>",
+            ],
+          },
+          {
+            id: 3,
+            title: "Подкаст «Код и кофе», выпуск 58",
+            hue: 30,
+            url: "https://www.youtube.com/watch?v=pd58KodKofe",
+            preset: "mp3",
+            lang: null,
+            status: "cancelled",
+          },
+          {
+            id: 4,
+            title: "Лекция 4. Линейная алгебра для инженеров",
+            hue: 262,
+            url: "https://www.youtube.com/watch?v=La4lin_Alg",
+            preset: "1080p",
+            lang: "ru",
+            status: "downloading",
+            percent: 84,
+            size: 420,
+          },
+          {
+            id: 5,
+            title: "Как выбрать первый телескоп",
+            hue: 228,
+            url: "https://www.youtube.com/watch?v=tElEsc0p3",
+            preset: "best",
+            lang: null,
+            status: "queued",
+            size: 260,
+          },
+          {
+            id: 6,
+            title: "Интервью с создателем языка Kotlin",
+            hue: 15,
+            url: "https://www.youtube.com/watch?v=k0tl1nTalk",
+            preset: null,
+            lang: "en",
+            status: "queued",
+            size: 0,
+          },
+        ];
+      }
+
+      // ───────────── State ─────────────
+      const S = {
+        variant: 1,
+        theme: "auto", // auto | light | dark
+        size: "normal", // normal | min
+        url: SAMPLE_URL,
+        submitted: SAMPLE_URL,
+        probe: "probed", // idle | probing | probed | failed
+        failNext: false, // the example of a failed Probe
+        previewHidden: false,
+        signInBrowser: null,
+        choice: null,
+        queue: sampleQueue(),
+        nextId: 7,
+        duplicate: false,
+        copy: null, // { id, ok }
+        flash: null,
+        trayOpen: false,
+        toast: null,
+      };
+      function freshChoice() {
+        return {
+          group: "video",
+          video: "best",
+          audio: "m4a",
+          withTranscript: false,
+          lang: "ru",
+        };
+      }
+      S.choice = freshChoice();
+
+      // ───────────── Helpers ─────────────
+      const esc = (s) =>
+        String(s).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      const decimal = new Intl.NumberFormat("ru-RU", {
+        maximumFractionDigits: 1,
+      });
+      function duration(sec) {
+        const t = Math.round(sec),
+          p = (n) => String(n).padStart(2, "0");
+        const h = Math.floor(t / 3600),
+          m = Math.floor(t / 60) % 60,
+          s = t % 60;
+        return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
+      }
+      const ICONS = {
+        link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+        search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+        download: '<path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/>',
+        settings:
+          '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+        folder:
+          '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+        file: '<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/>',
+        retry:
+          '<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.7"/><path d="M4 4v4.7h4.7"/>',
+        x: '<path d="M6 6l12 12M18 6 6 18"/>',
+        copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
+        chevron: '<path d="m6 15 6-6 6 6"/>',
+        video:
+          '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/>',
+        audio:
+          '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+        transcript: '<path d="M4 6h16M4 10h16M4 14h10M4 18h7"/>',
+        alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
+        check: '<path d="m5 12 5 5 9-10"/>',
+        clipboard:
+          '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/>',
+        pause: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      };
+      const icon = (n) =>
+        `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
+      // data-fk keeps keyboard focus on the same control after a re-render.
+      const act = (a, v = "") =>
+        `data-act="${a}" data-v="${esc(v)}" data-fk="${a}-${esc(v)}"`;
+
+      // A made-up frame for a Video: its own colors, so the queue reads at a glance.
+      function thumb(hue, dur) {
+        const a = `hsl(${hue} 55% 46%)`,
+          b = `hsl(${(hue + 40) % 360} 60% 24%)`,
+          c = `hsl(${(hue + 180) % 360} 70% 70%)`;
+        return `<span class="thumb" role="img" aria-label="${T.thumbnail}">
+    <svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="g${hue}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs>
+    <rect width="160" height="90" fill="url(#g${hue})"/><circle cx="118" cy="30" r="14" fill="${c}" opacity=".8"/><path d="M0 70 40 48l30 16 34-26 56 34v18H0z" fill="#000" opacity=".28"/></svg>
+    ${dur ? `<span class="dur">${dur}</span>` : ""}</span>`;
+      }
+
+      function savesText(preset, lang) {
+        if (preset === null) return "Транскрипт";
+        const name = PRESET_NAMES[preset];
+        return lang === null ? name : `${name} + транскрипт`;
+      }
+      function chosen() {
+        const c = S.choice,
+          lang = c.withTranscript ? c.lang : null;
+        if (c.group === "video") return [c.video, lang];
+        if (c.group === "audio") return [c.audio, lang];
+        return [null, c.lang];
+      }
+      function receiving(d) {
+        if (d.preset === null || (d.lang && d.percent < 6)) return "transcript";
+        return AUDIO_PRESETS.includes(d.preset) ? "audio" : "video";
+      }
+      const SPEED = 3.4; // МБ/с, for the example
+      function progressText(d) {
+        if (d.preset === null) return "";
+        const left = (((100 - d.percent) / 100) * d.size) / SPEED;
+        return `${Math.floor(d.percent)}% · ${decimal.format(SPEED)} МБ/с · осталось ${duration(left)}`;
+      }
+      function fileName(d) {
+        if (d.preset === null) return `${d.title}.${d.lang}.txt`;
+        return `${d.title}.${d.preset === "mp3" ? "mp3" : d.preset === "m4a" ? "m4a" : "mp4"}`;
+      }
+      function detailsText(d) {
+        const longest = Math.max(
+          0,
+          ...d.output.flatMap((l) =>
+            (l.match(/`+/g) || []).map((r) => r.length),
+          ),
+        );
+        const fence = "`".repeat(Math.max(3, longest + 1));
+        return [
+          `Ссылка: ${d.url}`,
+          ...(d.preset === null ? [] : [`Preset: ${d.preset}`]),
+          ...(d.lang === null ? [] : [`Транскрипт: ${d.lang}`]),
+          `Ошибка: ${d.message}`,
+          "",
+          "Последние строки вывода yt-dlp:",
+          fence,
+          ...d.output,
+          fence,
+        ].join("\n");
+      }
+      function isYoutube(url) {
+        const t = url.trim();
+        if (!t) return false;
+        let host;
+        try {
+          host = new URL(t.includes("://") ? t : `https://${t}`).hostname;
+        } catch {
+          return false;
+        }
+        return ["youtube.com", "youtu.be", "youtube-nocookie.com"].some(
+          (s) => host === s || host.endsWith(`.${s}`),
+        );
+      }
+      const previewShown = () => S.probe === "probed" && !S.previewHidden;
+      function signInShown() {
+        const awaitsSubmitted =
+          S.url.trim() === S.submitted && S.probe !== "failed";
+        return (
+          !awaitsSubmitted &&
+          (S.signInBrowser || S.probe === "failed") &&
+          isYoutube(S.url)
+        );
+      }
+      const errorText = () =>
+        S.signInBrowser
+          ? `YouTube всё равно просит подтвердить, что вы не робот. Проверьте, что в ${BROWSERS[S.signInBrowser]} выполнен вход в YouTube.`
+          : T.botCheck;
+      function counts() {
+        const c = { run: 0, queued: 0, done: 0, failed: 0, cancelled: 0 };
+        for (const d of S.queue) {
+          if (d.status === "downloading" || d.status === "processing") c.run++;
+          else c[d.status]++;
+        }
+        return c;
+      }
+      function countParts() {
+        const c = counts(),
+          parts = [];
+        if (c.run) parts.push([c.run, "скачивается", "run"]);
+        if (c.queued) parts.push([c.queued, "в очереди", ""]);
+        if (c.done) parts.push([c.done, "готово", "ok"]);
+        if (c.failed) parts.push([c.failed, "не удалось", "err"]);
+        if (c.cancelled) parts.push([c.cancelled, "отменено", ""]);
+        return parts;
+      }
+      const running = () =>
+        S.queue.find(
+          (d) => d.status === "downloading" || d.status === "processing",
+        );
+
+      function languageSelect(id, cls = "") {
+        return `<select id="${id}" class="${cls}" aria-label="${T.transcriptLanguage}" data-change="lang">${LANGS.map(
+          (l) =>
+            `<option value="${l.code}"${l.code === S.choice.lang ? " selected" : ""}>${l.name}</option>`,
+        ).join("")}</select>`;
+      }
+      function signInSelect(id) {
+        return `<select id="${id}" data-change="signin"><option value="">${T.signInNone}</option>${Object.entries(
+          BROWSERS,
+        )
+          .map(
+            ([k, v]) =>
+              `<option value="${k}"${k === S.signInBrowser ? " selected" : ""}>${v}</option>`,
+          )
+          .join("")}</select>`;
+      }
+      const signInText = () =>
+        S.signInBrowser
+          ? T.signInWarning(BROWSERS[S.signInBrowser])
+          : T.signInHint;
+      const newCls = (d) => (S.flash === d.id ? " is-new" : "");
+      function copyNote(d) {
+        if (!S.copy || S.copy.id !== d.id) return "";
+        return S.copy.ok
+          ? `<span role="status">${T.detailsCopied}</span>`
+          : `<span role="alert">${T.copyFailed}</span>`;
+      }
+
+      // ───────────── Variant 1: Родной Windows ─────────────
+      function v1() {
+        const c = S.choice;
+        let h = `<div class="v1-scroll" data-scroll="v1"><div class="v1-col">
+    <header class="v1-head"><div class="v1-app"><b>download-video-app</b><span class="v1-muted v1-small">${T.version}</span></div>
+      <button class="v1-icon" ${act("settings")} aria-label="Настройки" title="Настройки">${icon("settings")}</button></header>
+    <form class="v1-url" data-form="probe"><label for="url" class="sr">${T.url}</label>
+      <div class="v1-field">${icon("link")}<input id="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="${T.placeholder}" value="${esc(S.url)}" /></div>
+      <button class="v1-accent" type="submit">${T.find}</button></form>`;
+        if (S.probe === "probing")
+          h += `<div class="v1-plate v1-probing"><span class="spinner"></span>${T.probing}</div>`;
+        if (previewShown()) {
+          const tabs = [
+            ["video", T.videoTab],
+            ["audio", T.audioTab],
+            ["transcript", T.transcriptTab],
+          ];
+          let opts;
+          if (c.group === "transcript") {
+            opts = `<label class="v1-check">${T.transcriptLanguage} ${languageSelect("lang-t")}</label>`;
+          } else {
+            const [presets, names, key, legend] =
+              c.group === "video"
+                ? [VIDEO_PRESETS, VIDEO_NAMES, "video", T.quality]
+                : [AUDIO_PRESETS, AUDIO_NAMES, "audio", T.audioFormat];
+            opts = `<fieldset class="v1-radios"><legend>${legend}</legend>${presets
+              .map(
+                (p) =>
+                  `<label><input type="radio" name="p-${key}" id="r-${key}-${p}" value="${p}" data-change="${key}"${c[key] === p ? " checked" : ""} />${names[p]}</label>`,
+              )
+              .join("")}</fieldset>
+        <div class="v1-transcript"><label class="v1-check"><input type="checkbox" id="with-t" data-change="withTranscript"${c.withTranscript ? " checked" : ""} />${T.saveTranscript}</label>${c.withTranscript ? languageSelect("lang-w") : ""}</div>`;
+          }
+          h += `<article class="v1-plate v1-video">${thumb(VIDEO.hue, duration(VIDEO.duration))}
+      <div class="v1-vbody"><header><h2>${esc(VIDEO.title)}</h2><p class="v1-muted">${esc(VIDEO.channel)}</p></header>
+        <div class="v1-seg" role="tablist">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${c.group === k}" ${act("group", k)}>${n}</button>`).join("")}</div>
+        ${opts}
+        <div class="v1-actions"><button class="v1-accent" ${act("download")}>${icon("download")}${T.start}</button></div>
+        ${S.duplicate === true ? `<p role="alert" class="v1-status err">${T.duplicate}</p>` : ""}
+      </div></article>`;
+        }
+        if (S.probe === "failed")
+          h += `<div class="v1-infobar err" role="alert">${icon("alert")}<p>${errorText()}</p></div>`;
+        if (signInShown())
+          h += `<div class="v1-plate v1-setting"><div><label for="signin"><b>${T.signIn}</b></label><p>${signInText()}</p></div>${signInSelect("signin")}</div>`;
+        if (S.queue.length) {
+          h += `<section class="v1-queue"><header class="v1-qhead"><h2>${T.queue}</h2><span class="v1-badge num">${S.queue.length}</span>
+      ${S.queue.some((d) => d.status === "done") ? `<button class="v1-link" ${act("clearDone")}>${T.clearDone}</button>` : ""}</header>
+      <ul class="v1-list v1-plate">${S.queue.map(v1Row).join("")}</ul></section>`;
+        }
+        return h + `</div></div>`;
+      }
+      function v1Row(d) {
+        const sub = (a, label, ic, cls = "") =>
+          `<button class="v1-sub ${cls}" ${act(a, d.id)}>${icon(ic)}${label}</button>`;
+        let body = "";
+        if (d.status === "queued")
+          body = `<div class="v1-status">${T.queued}</div><div class="v1-ractions">${sub("cancel", T.cancel, "x")}</div>`;
+        if (d.status === "downloading")
+          body = `<div class="v1-bar"><b data-bar="${d.id}" style="width:${d.percent}%"></b></div>
+      <div class="v1-status"><span data-recv="${d.id}">${T.downloading[receiving(d)]}</span><span class="num" data-meta="${d.id}">${progressText(d)}</span></div>
+      <div class="v1-ractions">${sub("cancel", T.cancel, "x")}</div>`;
+        if (d.status === "processing")
+          body = `<div class="v1-bar indet"><i></i></div><div class="v1-status">${T.processing}</div>`;
+        if (d.status === "done")
+          body = `<div class="v1-status ok">${icon("check")}<span>${T.done} <span class="v1-muted">— ${esc(d.file)}</span></span></div>
+      <div class="v1-ractions">${sub("open", T.openFile, "file", "primary")}${sub("show", T.showInFolder, "folder")}${sub("remove", T.remove, "x")}</div>`;
+        if (d.status === "failed")
+          body = `<div class="v1-status err" role="alert">${icon("alert")}<span>${T.failed[d.failure]}</span></div>
+      <div class="v1-ractions">${sub("retry", T.retry, "retry", "primary")}${sub("copy", T.copyDetails, "copy")}${sub("remove", T.remove, "x")}</div>
+      ${copyNote(d) && `<div class="v1-status">${copyNote(d)}</div>`}`;
+        if (d.status === "cancelled")
+          body = `<div class="v1-status">${T.cancelled}</div><div class="v1-ractions">${sub("retry", T.retry, "retry", "primary")}${sub("remove", T.remove, "x")}</div>`;
+        if (S.duplicate === d.id)
+          body += `<div class="v1-status err" role="alert">${T.duplicate}</div>`;
+        return `<li class="v1-row${newCls(d)}">${thumb(d.hue)}<div class="v1-rmain"><div class="v1-rtitle"><h3>${esc(d.title)}</h3><span>${savesText(d.preset, d.lang)}</span></div>${body}</div></li>`;
+      }
+
+      // ───────────── Variant 2: Две панели ─────────────
+      function v2() {
+        const c = S.choice;
+        let left = `<form class="v2-url" data-form="probe">${icon("link")}<label for="url" class="sr">${T.url}</label>
+    <input id="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="${T.placeholder}" value="${esc(S.url)}" />
+    <button class="v2-btn" type="submit">${icon("search")}${T.find}</button></form>`;
+        if (S.probe === "probing") {
+          left += `<div class="v2-sk" aria-label="${T.probing}"><div class="v2-hero"><span class="thumb sk"></span><div class="v2-sk"><span class="sk" style="height:18px"></span><span class="sk" style="height:18px;width:70%"></span><span class="sk" style="height:14px;width:40%"></span></div></div>
+      <p class="v2-meta" style="margin:0"><span class="spinner"></span>${T.probing}</p></div>`;
+        } else if (previewShown()) {
+          const modes = [
+            ["video", T.videoTab, "video"],
+            ["audio", T.audioTab, "audio"],
+            ["transcript", T.transcriptTab, "transcript"],
+          ];
+          let opts;
+          if (c.group === "transcript") {
+            opts = `<span class="v2-label">${T.transcriptLanguage}</span><div>${languageSelect("lang-t")}</div>`;
+          } else {
+            const [presets, names, key, label] =
+              c.group === "video"
+                ? [VIDEO_PRESETS, VIDEO_NAMES, "video", T.quality]
+                : [AUDIO_PRESETS, AUDIO_NAMES, "audio", T.audioFormat];
+            opts = `<span class="v2-label" id="lbl-p">${label}</span><div class="v2-chips" role="radiogroup" aria-labelledby="lbl-p">${presets
+              .map(
+                (p) =>
+                  `<button class="v2-chip" role="radio" aria-checked="${c[key] === p}" ${act(key, p)}>${names[p]}</button>`,
+              )
+              .join("")}</div>
+        <div class="v2-switch"><label><input type="checkbox" role="switch" id="with-t" data-change="withTranscript"${c.withTranscript ? " checked" : ""} />${T.saveTranscript}</label>${c.withTranscript ? languageSelect("lang-w") : ""}</div>`;
+          }
+          left += `<article class="v2-card"><div class="v2-hero">${thumb(VIDEO.hue, duration(VIDEO.duration))}<div><h2>${esc(VIDEO.title)}</h2><p>${esc(VIDEO.channel)}</p></div></div>
+      <div class="v2-modes" role="radiogroup" aria-label="Что сохранить">${modes
+        .map(
+          ([k, n, ic]) =>
+            `<button class="v2-mode" role="radio" aria-checked="${c.group === k}" ${act("group", k)}>${icon(ic)}${n}</button>`,
+        )
+        .join("")}</div>${opts}
+      ${S.duplicate === true ? `<p role="alert" class="v2-err">${T.duplicate}</p>` : ""}</article>`;
+        } else if (S.probe !== "failed") {
+          left += `<div class="v2-empty">${icon("download")}<b>Вставьте ссылку и нажмите «${T.find}»</b><p>Видео, аудио или транскрипт с YouTube и других сайтов, которые поддерживает yt-dlp.</p></div>`;
+        }
+        if (S.probe === "failed")
+          left += `<div class="v2-alert" role="alert">${icon("alert")}<p>${errorText()}</p></div>`;
+        if (signInShown())
+          left += `<div class="v2-signin"><div><label for="signin"><b>${T.signIn}</b></label>${signInSelect("signin")}</div><p>${signInText()}</p></div>`;
+
+        const footer = previewShown()
+          ? `<footer class="v2-action"><div><small>Сохранится</small><b>${savesText(...chosen())}</b></div><button class="v2-btn big" ${act("download")}>${icon("download")}${T.start}</button></footer>`
+          : "";
+
+        const parts = countParts();
+        const queue = `<aside class="v2-queue" aria-labelledby="qh"><div class="v2-qhead"><div><h2 id="qh">${T.queue}</h2>
+      ${S.queue.some((d) => d.status === "done") ? `<button class="v2-ghost" ${act("clearDone")}>${T.clearDone}</button>` : ""}</div>
+      ${parts.length ? `<div class="v2-counts">${parts.map(([n, l, k]) => `<span class="v2-count"><i class="v2-dot ${k}"></i><b class="num">${n}</b> ${l}</span>`).join("")}</div>` : ""}</div>
+    ${S.queue.length ? `<ul class="v2-list" data-scroll="v2q">${S.queue.map(v2Item).join("")}</ul>` : `<div class="v2-qempty">Здесь появятся загрузки.<br />Они идут по одной, по порядку.</div>`}</aside>`;
+
+        return `<div class="v2-grid"><section class="v2-add"><header class="v2-bar"><div><b>download-video-app</b><span>${T.version}</span></div>
+    <button class="v2-icon" ${act("settings")} aria-label="Настройки" title="Настройки">${icon("settings")}</button></header>
+    <div class="v2-scroll" data-scroll="v2a">${left}</div>${footer}</section>${queue}</div>`;
+      }
+      function v2Item(d) {
+        // The narrow panel keeps "Показать в папке" and "Убрать" as icons.
+        const b = (a, label, ic, cls = "") =>
+          a === "show" || a === "remove"
+            ? `<button class="v2-ghost icon-only" ${act(a, d.id)} aria-label="${label}" title="${label}">${icon(ic)}</button>`
+            : `<button class="v2-ghost ${cls}" ${act(a, d.id)}>${icon(ic)}${label}</button>`;
+        let pill = "",
+          body = "";
+        if (d.status === "queued") {
+          pill = `<span class="v2-pill">${T.queued}</span>`;
+          body = `<div class="v2-iactions">${b("cancel", T.cancel, "x")}</div>`;
+        }
+        if (d.status === "downloading") {
+          pill = `<span class="v2-pill run" data-recv="${d.id}">${T.downloading[receiving(d)]}</span>`;
+          body = `<div class="v2-bar2"><b data-bar="${d.id}" style="width:${d.percent}%"></b></div><div class="v2-meta num" data-meta="${d.id}">${progressText(d)}</div><div class="v2-iactions">${b("cancel", T.cancel, "x")}</div>`;
+        }
+        if (d.status === "processing") {
+          pill = `<span class="v2-pill run">${T.processing}</span>`;
+          body = `<div class="v2-bar2 indet"><i></i></div>`;
+        }
+        if (d.status === "done") {
+          pill = `<span class="v2-pill ok">${icon("check")}${T.done}</span>`;
+          body = `<div class="v2-meta" title="${esc(d.file)}">${esc(d.file)}</div><div class="v2-iactions">${b("open", T.openFile, "file", "accent")}${b("show", T.showInFolder, "folder")}${b("remove", T.remove, "x")}</div>`;
+        }
+        if (d.status === "failed") {
+          pill = `<span class="v2-pill err">${icon("alert")}Не удалось</span>`;
+          body = `<p class="v2-err" role="alert">${T.failed[d.failure]}</p><div class="v2-iactions">${b("retry", T.retry, "retry", "accent")}${b("copy", T.copyDetails, "copy")}${b("remove", T.remove, "x")}</div>${copyNote(d) && `<div class="v2-meta">${copyNote(d)}</div>`}`;
+        }
+        if (d.status === "cancelled") {
+          pill = `<span class="v2-pill">${T.cancelled}</span>`;
+          body = `<div class="v2-iactions">${b("retry", T.retry, "retry", "accent")}${b("remove", T.remove, "x")}</div>`;
+        }
+        if (S.duplicate === d.id)
+          body += `<p class="v2-err" role="alert">${T.duplicate}</p>`;
+        const run =
+          d.status === "downloading" || d.status === "processing" ? " run" : "";
+        return `<li class="v2-item${run}${newCls(d)}">${thumb(d.hue)}<div class="v2-imain"><h3>${esc(d.title)}</h3><div class="v2-meta">${pill}<span>${savesText(d.preset, d.lang)}</span></div>${body}</div></li>`;
+      }
+
+      // ───────────── Variant 3: Один шаг ─────────────
+      function v3() {
+        const c = S.choice;
+        let main = "";
+        if (!previewShown()) {
+          main += `<section class="v3-drop"><h2>Вставьте ссылку на видео</h2><p>С YouTube и других сайтов. Сохраним видео, звук или текст.</p>
+      <form class="v3-url" data-form="probe"><label for="url" class="sr">${T.url}</label>
+        <input id="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="${T.placeholder}" value="${esc(S.url)}" />
+        <button class="v3-btn" type="submit">${T.find}</button></form>
+      ${S.probe === "probing" ? `<div class="v3-probing"><span class="spinner"></span>${T.probing}</div>` : `<button class="v3-soft" ${act("paste")}>${icon("clipboard")}Вставить из буфера</button>`}
+    </section>`;
+          if (S.probe === "failed")
+            main += `<div class="v3-err" role="alert"><div>${icon("alert")}<p>${errorText()}</p></div></div>`;
+          if (signInShown())
+            main += `<div class="v3-signin"><label for="signin">${T.signIn}</label>${signInSelect("signin")}<p>${signInText()}</p></div>`;
+        } else {
+          const tiles = [
+            ["video", T.videoTab, "video", VIDEO_NAMES[c.video]],
+            ["audio", T.audioTab, "audio", AUDIO_NAMES[c.audio]],
+            ["transcript", T.transcriptTab, "transcript", LANG_NAME[c.lang]],
+          ];
+          let opts;
+          if (c.group === "transcript") {
+            opts = `<span>${T.transcriptLanguage}</span><div>${languageSelect("lang-t")}</div>`;
+          } else {
+            const [presets, names, key, label] =
+              c.group === "video"
+                ? [VIDEO_PRESETS, VIDEO_NAMES, "video", T.quality]
+                : [AUDIO_PRESETS, AUDIO_NAMES, "audio", T.audioFormat];
+            opts = `<span id="lbl-p">${label}</span><div class="v3-chips" role="radiogroup" aria-labelledby="lbl-p">${presets
+              .map(
+                (p) =>
+                  `<button class="v3-chip" role="radio" aria-checked="${c[key] === p}" ${act(key, p)}>${names[p]}</button>`,
+              )
+              .join("")}</div>
+        <div class="v3-check"><label><input type="checkbox" id="with-t" data-change="withTranscript"${c.withTranscript ? " checked" : ""} />${T.saveTranscript}</label>${c.withTranscript ? languageSelect("lang-w") : ""}</div>`;
+          }
+          main += `<section class="v3-picked">${thumb(VIDEO.hue, duration(VIDEO.duration))}<div><h2>${esc(VIDEO.title)}</h2><p>${esc(VIDEO.channel)}</p>
+        <button class="v3-text" ${act("another")}>Другая ссылка</button></div></section>
+      <h3 class="v3-q" id="lbl-what">Что сохранить?</h3>
+      <div class="v3-tiles" role="radiogroup" aria-labelledby="lbl-what">${tiles
+        .map(
+          ([k, n, ic, sub]) =>
+            `<button class="v3-tile" role="radio" aria-checked="${c.group === k}" ${act("group", k)}>${icon(ic)}<b>${n}</b><span>${sub}</span></button>`,
+        )
+        .join("")}</div>
+      <div class="v3-opts">${opts}</div>
+      <button class="v3-btn wide" ${act("download")}>${icon("download")}${T.start} · ${savesText(...chosen())}</button>
+      ${S.duplicate === true ? `<p role="alert" class="v3-dup">${T.duplicate}</p>` : ""}`;
+        }
+
+        let tray = "";
+        if (S.queue.length) {
+          const r = running(),
+            parts = countParts();
+          const summary = parts.map(([n, l]) => `${n} ${l}`).join(" · ");
+          const mini = r
+            ? r.status === "processing"
+              ? `<div class="v3-minibar indet"><i></i></div>`
+              : `<div class="v3-minibar"><b data-bar="${r.id}" style="width:${r.percent}%"></b></div>`
+            : "";
+          tray = `<div class="v3-tray${S.trayOpen ? " open" : ""}">
+      <button class="v3-traybar" ${act("tray")} aria-expanded="${S.trayOpen}">${icon("download")}
+        <div class="v3-mini"><b>Загрузки</b><small>${r ? `${esc(r.title)} — ${r.status === "processing" ? T.processing : `<span class="num" data-pct="${r.id}">${Math.floor(r.percent)}%</span>`}` : summary}</small>${mini}</div>
+        <span class="v3-chev">${icon("chevron")}</span></button>
+      ${
+        S.trayOpen
+          ? `<div class="v3-trayhead"><small>${summary}</small>${S.queue.some((d) => d.status === "done") ? `<button class="v3-text" ${act("clearDone")}>${T.clearDone}</button>` : ""}</div>
+        <ul class="v3-traylist" data-scroll="v3q">${S.queue.map(v3Item).join("")}</ul>`
+          : ""
+      }
+    </div>`;
+        }
+        return `<div class="v3-scroll" data-scroll="v3"><header class="v3-head"><b>download-video-app</b>
+    <button class="v3-icon" ${act("settings")} aria-label="Настройки" title="Настройки">${icon("settings")}</button></header>
+    <main class="v3-main">${main}</main></div>${tray}`;
+      }
+      function v3Item(d) {
+        const b = (a, label, ic, cls = "") =>
+          `<button class="v3-soft ${cls}" ${act(a, d.id)}>${icon(ic)}${label}</button>`;
+        let body = "";
+        if (d.status === "queued")
+          body = `<div class="v3-st"><span>${T.queued}</span></div><div class="v3-iactions">${b("cancel", T.cancel, "x")}</div>`;
+        if (d.status === "downloading")
+          body = `<div class="v3-bar"><b data-bar="${d.id}" style="width:${d.percent}%"></b></div><div class="v3-st"><span data-recv="${d.id}">${T.downloading[receiving(d)]}</span><span class="num" data-meta="${d.id}">${progressText(d)}</span></div><div class="v3-iactions">${b("cancel", T.cancel, "x")}</div>`;
+        if (d.status === "processing")
+          body = `<div class="v3-bar indet"><i></i></div><div class="v3-st"><span>${T.processing}</span></div>`;
+        if (d.status === "done")
+          body = `<div class="v3-st ok">${icon("check")}<span>${T.done}</span></div><div class="v3-iactions">${b("open", T.openFile, "file", "primary")}${b("show", T.showInFolder, "folder")}${b("remove", T.remove, "x")}</div>`;
+        if (d.status === "failed")
+          body = `<div class="v3-st err" role="alert">${icon("alert")}<span>${T.failed[d.failure]}</span></div><div class="v3-iactions">${b("retry", T.retry, "retry", "primary")}${b("copy", T.copyDetails, "copy")}${b("remove", T.remove, "x")}</div>${copyNote(d) && `<div class="v3-st">${copyNote(d)}</div>`}`;
+        if (d.status === "cancelled")
+          body = `<div class="v3-st"><span>${T.cancelled}</span></div><div class="v3-iactions">${b("retry", T.retry, "retry", "primary")}${b("remove", T.remove, "x")}</div>`;
+        if (S.duplicate === d.id)
+          body += `<p class="v3-dup" role="alert">${T.duplicate}</p>`;
+        return `<li class="v3-item${newCls(d)}">${thumb(d.hue)}<div class="v3-imain"><h3>${esc(d.title)}</h3><span>${savesText(d.preset, d.lang)}</span>${body}</div></li>`;
+      }
+
+      // ───────────── The shell ─────────────
+      const VARIANTS = {
+        1: {
+          name: "Родной Windows",
+          line: "Светлый, как программы Windows 11. Меньше всего правок.",
+          render: v1,
+          idea: "Приложение выглядит как часть Windows 11: серый фон окна, белые плиты, синий акцент, шрифт Segoe UI. Ничего не нужно изучать — всё похоже на Параметры и загрузки в Edge.",
+          better: [
+            "Карточка Video горизонтальная: качество и «Скачать» видны без прокрутки.",
+            "Вкладки заменены сегментным переключателем, качество — сеткой радиокнопок.",
+            "Очередь — плотный список строк с тонкой полосой прогресса; в окно помещается больше загрузок.",
+            "Ошибка Probe — заметная полоса с иконкой, выбор браузера — строка в стиле Параметров.",
+          ],
+          code: [
+            "Токены в <code>src/index.css</code>: цвета, радиусы, шрифт Segoe UI вместо Geist.",
+            "<code>MainScreen</code>: колонка шире (<code>max-w-3xl</code>).",
+            "<code>VideoPreview</code>: двухколоночная раскладка, сегментные <code>Tabs</code>.",
+            "<code>DownloadCard</code>: строка списка вместо отдельной карточки.",
+          ],
+          effort: "Объём: небольшой — раскладка почти та же.",
+        },
+        2: {
+          name: "Две панели",
+          line: "Тёмный, на всю ширину окна. Очередь всегда на виду.",
+          render: v2,
+          idea: "Рабочее место для тех, кто скачивает много подряд. Слева добавляете Video, справа всегда видна Queue — со счётчиками статусов.",
+          better: [
+            "Очередь не уезжает вниз: видно, что скачивается, что ждёт и что не удалось.",
+            "Кнопка «Скачать» закреплена внизу и показывает, что сохранится: «1080p + транскрипт».",
+            "Preset выбирается одним нажатием на чип, Transcript — переключателем.",
+            "Пока идёт Probe, на месте карточки — её заготовка, а не строка текста.",
+          ],
+          code: [
+            "<code>MainScreen</code>: сетка из двух колонок на всю высоту окна, у каждой свой скролл.",
+            "<code>QueueList</code>: отдельная панель, счётчики статусов в заголовке.",
+            "Тёмная тема по умолчанию (класс <code>.dark</code>), новый шрифт через <code>@fontsource</code>.",
+            "При ширине 760px панели тесные — нужна проверка на минимальном окне.",
+          ],
+          effort: "Объём: средний — меняется раскладка экрана.",
+        },
+        3: {
+          name: "Один шаг",
+          line: "Светлый и крупный. Один очевидный путь от ссылки до файла.",
+          render: v3,
+          idea: "Для тех, кто скачивает изредка: на экране одна большая задача за раз. Сначала «Вставьте ссылку», потом «Что сохранить?», потом одна большая кнопка.",
+          better: [
+            "Крупная зона ссылки и кнопка «Вставить из буфера» — без Ctrl+V и поиска поля.",
+            "Вместо вкладок — три плитки Видео / Аудио / Транскрипт, на каждой видно текущий выбор.",
+            "На кнопке написано, что именно скачается: «Скачать · Лучшее».",
+            "Очередь свёрнута в полосу внизу с текущим прогрессом и раскрывается по нажатию.",
+          ],
+          code: [
+            "<code>VideoPreview</code>: плитки-радио вместо <code>Tabs</code>, крупная кнопка.",
+            "Новая нижняя панель очереди (shadcn <code>Drawer</code> или своя).",
+            "«Вставить из буфера»: плагин Tauri <code>clipboard-manager</code> — новая зависимость и разрешение.",
+            "Новые токены, шрифт Nunito через <code>@fontsource</code>.",
+          ],
+          effort: "Объём: средний — новая панель очереди и плагин.",
+        },
+      };
+      const SCENARIOS = [
+        ["found", "Видео найдено"],
+        ["empty", "Пустое окно"],
+        ["failed", "Ошибка Probe"],
+      ];
+      const SIZES = [
+        ["normal", "1000×700"],
+        ["min", "760×560"],
+      ];
+      const THEMES = [
+        ["auto", "Авто"],
+        ["light", "Светлая"],
+        ["dark", "Тёмная"],
+      ];
+
+      const win = document.getElementById("win");
+      const wb = document.getElementById("wb");
+      const holder = document.getElementById("holder");
+      const stage = document.getElementById("stage");
+      let scenario = "found";
+      let pendingRender = false;
+
+      function pageIsDark() {
+        const t = document.documentElement.getAttribute("data-theme");
+        if (t === "dark") return true;
+        if (t === "light") return false;
+        return matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+      // «Авто» opens «Две панели» dark, the way it is meant; the others follow the page.
+      function windowIsDark() {
+        if (S.theme !== "auto") return S.theme === "dark";
+        return S.variant === 2 || pageIsDark();
+      }
+
+      function segButtons(el, items, current, onPick) {
+        el.innerHTML = items
+          .map(
+            ([k, n]) =>
+              `<button type="button" data-k="${k}" aria-pressed="${k === current}">${n}</button>`,
+          )
+          .join("");
+        el.onclick = (e) => {
+          const b = e.target.closest("button");
+          if (b) onPick(b.dataset.k);
+        };
+      }
+      function renderShell() {
+        const nav = document.getElementById("variants");
+        nav.innerHTML = Object.entries(VARIANTS)
+          .map(
+            ([k, v]) =>
+              `<button type="button" class="variant-tab" data-k="${k}" aria-pressed="${+k === S.variant}"><small>Вариант ${k}</small><b>${v.name}</b><span>${v.line}</span></button>`,
+          )
+          .join("");
+        nav.onclick = (e) => {
+          const b = e.target.closest("button");
+          if (b) {
+            S.variant = +b.dataset.k;
+            S.toast = null;
+            renderShell();
+            render();
+          }
+        };
+        segButtons(
+          document.getElementById("ctl-scenario"),
+          SCENARIOS,
+          scenario,
+          setScenario,
+        );
+        segButtons(document.getElementById("ctl-size"), SIZES, S.size, (k) => {
+          S.size = k;
+          renderShell();
+          layout();
+        });
+        segButtons(
+          document.getElementById("ctl-theme"),
+          THEMES,
+          S.theme,
+          (k) => {
+            S.theme = k;
+            renderShell();
+            render();
+          },
+        );
+        const v = VARIANTS[S.variant];
+        document.getElementById("notes").innerHTML = `
+    <article class="note"><h2>Идея</h2><p>${v.idea}</p></article>
+    <article class="note"><h2>Чем удобнее</h2><ul>${v.better.map((x) => `<li>${x}</li>`).join("")}</ul></article>
+    <article class="note"><h2>Что поменять в коде</h2><ul>${v.code.map((x) => `<li>${x}</li>`).join("")}</ul><p class="effort">${v.effort}</p></article>`;
+      }
+      function setScenario(k) {
+        scenario = k;
+        clearTimeout(probeTimer);
+        S.duplicate = false;
+        S.previewHidden = false;
+        S.choice = freshChoice();
+        if (k === "found")
+          Object.assign(S, {
+            url: SAMPLE_URL,
+            submitted: SAMPLE_URL,
+            probe: "probed",
+            failNext: false,
+            signInBrowser: null,
+          });
+        if (k === "empty")
+          Object.assign(S, {
+            url: "",
+            submitted: null,
+            probe: "idle",
+            failNext: false,
+            signInBrowser: null,
+          });
+        if (k === "failed")
+          Object.assign(S, {
+            url: SAMPLE_URL,
+            submitted: SAMPLE_URL,
+            probe: "failed",
+            failNext: true,
+            signInBrowser: null,
+          });
+        renderShell();
+        render();
+      }
+
+      function layout() {
+        const W = S.size === "min" ? 760 : 1000;
+        const H = (S.size === "min" ? 560 : 700) + 32;
+        const cs = getComputedStyle(stage);
+        const avail =
+          stage.clientWidth -
+          parseFloat(cs.paddingLeft) -
+          parseFloat(cs.paddingRight);
+        const s = Math.min(1, avail / W);
+        win.style.width = `${W}px`;
+        win.style.height = `${H}px`;
+        win.style.transform = `scale(${s})`;
+        holder.style.width = `${W * s}px`;
+        holder.style.height = `${H * s}px`;
+        document.getElementById("stage-note").textContent =
+          s < 1
+            ? `Окно ${W}×${H - 32} уменьшено до ${Math.round(s * 100)}%, чтобы поместиться на экране.`
+            : `Окно ${W}×${H - 32} — как в tauri.conf.json.`;
+      }
+
+      function render() {
+        pendingRender = false;
+        const ae = document.activeElement;
+        let fk = null,
+          sel = null;
+        if (ae && wb.contains(ae)) {
+          fk = ae.id
+            ? `#${ae.id}`
+            : ae.dataset.fk
+              ? `[data-fk="${CSS.escape(ae.dataset.fk)}"]`
+              : null;
+          try {
+            if (typeof ae.selectionStart === "number")
+              sel = [ae.selectionStart, ae.selectionEnd];
+          } catch {
+            /* not a text field */
+          }
+        }
+        const scrolls = {};
+        wb.querySelectorAll("[data-scroll]").forEach(
+          (el) => (scrolls[el.dataset.scroll] = el.scrollTop),
+        );
+        win.className = `win v${S.variant}${windowIsDark() ? " dark" : ""}`;
+        wb.innerHTML =
+          VARIANTS[S.variant].render() +
+          (S.toast
+            ? `<div class="toast" role="status">${esc(S.toast)}</div>`
+            : "");
+        wb.querySelectorAll("[data-scroll]").forEach((el) => {
+          if (scrolls[el.dataset.scroll])
+            el.scrollTop = scrolls[el.dataset.scroll];
+        });
+        const el = fk && wb.querySelector(fk);
+        if (el) {
+          el.focus({ preventScroll: true });
+          if (sel && el.setSelectionRange)
+            try {
+              el.setSelectionRange(sel[0], sel[1]);
+            } catch {
+              /* not a text field */
+            }
+        }
+      }
+
+      let toastTimer;
+      function toast(text) {
+        S.toast = text;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          S.toast = null;
+          render();
+        }, 2600);
+        render();
+      }
+      function flash(id) {
+        S.flash = id;
+        setTimeout(() => {
+          if (S.flash === id) S.flash = null;
+        }, 1700);
+      }
+
+      // ───────────── Behaviour, after MainScreen and DownloadCard ─────────────
+      let probeTimer;
+      function submit() {
+        const t = S.url.trim();
+        if (!t) return;
+        S.submitted = t;
+        S.previewHidden = false;
+        S.duplicate = false;
+        S.probe = "probing";
+        render();
+        clearTimeout(probeTimer);
+        probeTimer = setTimeout(() => {
+          // The example's failed Probe succeeds once a sign-in browser is chosen.
+          if (S.failNext && !S.signInBrowser) S.probe = "failed";
+          else {
+            S.probe = "probed";
+            S.choice = freshChoice();
+          }
+          render();
+        }, 1200);
+      }
+      function isActive(d) {
+        return (
+          d.status === "queued" ||
+          d.status === "downloading" ||
+          d.status === "processing"
+        );
+      }
+      function download() {
+        const [preset, lang] = chosen();
+        const url = S.submitted;
+        const same = S.queue.find(
+          (d) =>
+            isActive(d) &&
+            d.url === url &&
+            d.preset === preset &&
+            d.lang === lang,
+        );
+        if (same) {
+          S.duplicate = true;
+          render();
+          return;
+        }
+        const d = {
+          id: S.nextId++,
+          title: VIDEO.title,
+          hue: VIDEO.hue,
+          url,
+          preset,
+          lang,
+          status: "queued",
+          size: preset === null ? 0 : 340,
+        };
+        S.queue.push(d);
+        S.previewHidden = true;
+        S.duplicate = false;
+        flash(d.id);
+        if (S.variant === 3)
+          toast(`Добавлено в загрузки: ${savesText(preset, lang)}`);
+        else render();
+      }
+      function queueAct(a, id) {
+        const d = S.queue.find((x) => x.id === id);
+        if (!d) return;
+        if (a === "cancel")
+          Object.assign(d, { status: "cancelled", percent: 0 });
+        if (a === "remove") S.queue = S.queue.filter((x) => x !== d);
+        if (a === "retry") {
+          const same = S.queue.find(
+            (x) =>
+              x !== d &&
+              isActive(x) &&
+              x.url === d.url &&
+              x.preset === d.preset &&
+              x.lang === d.lang,
+          );
+          S.copy = null;
+          if (same) S.duplicate = d.id;
+          // A Failed Download resumes from its Partial; a Cancelled one starts over.
+          else
+            (Object.assign(d, {
+              status: "queued",
+              percent: d.status === "failed" ? d.percent || 0 : 0,
+            }),
+              (S.duplicate = false));
+        }
+        if (a === "copy") {
+          S.copy = null;
+          const done = (ok) => {
+            S.copy = { id, ok };
+            render();
+          };
+          try {
+            navigator.clipboard.writeText(detailsText(d)).then(
+              () => done(true),
+              () => done(false),
+            );
+          } catch {
+            done(false);
+          }
+          return;
+        }
+        if (a === "open")
+          return toast(`В приложении здесь откроется «${d.file}».`);
+        if (a === "show")
+          return toast("В приложении здесь откроется папка с файлом.");
+        render();
+      }
+
+      wb.addEventListener("click", (e) => {
+        const b = e.target.closest("[data-act]");
+        if (!b) return;
+        const a = b.dataset.act,
+          v = b.dataset.v;
+        const c = S.choice;
+        switch (a) {
+          case "group":
+            c.group = v;
+            S.duplicate = false;
+            break;
+          case "video":
+            c.video = v;
+            S.duplicate = false;
+            break;
+          case "audio":
+            c.audio = v;
+            S.duplicate = false;
+            break;
+          case "download":
+            return download();
+          case "settings":
+            return toast(
+              "Здесь будут настройки из #13: папка сохранения, шаблон имени, Preset по умолчанию.",
+            );
+          case "clearDone":
+            S.queue = S.queue.filter((d) => d.status !== "done");
+            break;
+          case "tray":
+            S.trayOpen = !S.trayOpen;
+            break;
+          case "paste":
+            S.url = SAMPLE_URL;
+            return submit();
+          case "another":
+            S.url = "";
+            S.previewHidden = true;
+            S.duplicate = false;
+            render();
+            wb.querySelector("#url")?.focus();
+            return;
+          default:
+            return queueAct(a, +v);
+        }
+        render();
+      });
+      wb.addEventListener("change", (e) => {
+        const k = e.target.dataset.change;
+        if (!k) return;
+        const c = S.choice;
+        if (k === "video" || k === "audio") c[k] = e.target.value;
+        if (k === "withTranscript") c.withTranscript = e.target.checked;
+        if (k === "lang") c.lang = e.target.value;
+        if (k === "signin") S.signInBrowser = e.target.value || null;
+        S.duplicate = false;
+        render();
+      });
+      wb.addEventListener("input", (e) => {
+        if (e.target.id !== "url") return;
+        S.url = e.target.value;
+        // The same URL back in the field brings its Video back.
+        S.previewHidden = S.url.trim() !== S.submitted;
+        S.duplicate = false;
+        render();
+      });
+      wb.addEventListener("submit", (e) => {
+        e.preventDefault();
+        submit();
+      });
+      wb.addEventListener("focusout", () => {
+        if (pendingRender)
+          setTimeout(() => {
+            if (pendingRender) render();
+          });
+      });
+
+      // Downloads run one at a time; the example moves faster than real life.
+      setInterval(() => {
+        let changed = false;
+        let d = running();
+        if (!d) {
+          d = S.queue.find((x) => x.status === "queued");
+          if (!d) return;
+          Object.assign(d, { status: "downloading", percent: d.percent || 0 });
+          changed = true;
+        } else if (d.status === "downloading") {
+          d.percent = Math.min(100, d.percent + (d.preset === null ? 20 : 0.7));
+          if (d.percent >= 100)
+            (Object.assign(d, {
+              status: "processing",
+              left: d.preset === null ? 1 : 12,
+            }),
+              (changed = true));
+        } else if (--d.left <= 0) {
+          Object.assign(d, { status: "done", file: fileName(d) });
+          changed = true;
+        }
+        if (changed) {
+          if (
+            document.activeElement?.tagName === "SELECT" &&
+            wb.contains(document.activeElement)
+          )
+            pendingRender = true;
+          else render();
+          return;
+        }
+        if (d.status !== "downloading") return;
+        wb.querySelectorAll(`[data-bar="${d.id}"]`).forEach(
+          (el) => (el.style.width = `${d.percent}%`),
+        );
+        wb.querySelectorAll(`[data-meta="${d.id}"]`).forEach(
+          (el) => (el.textContent = progressText(d)),
+        );
+        wb.querySelectorAll(`[data-recv="${d.id}"]`).forEach(
+          (el) => (el.textContent = T.downloading[receiving(d)]),
+        );
+        wb.querySelectorAll(`[data-pct="${d.id}"]`).forEach(
+          (el) => (el.textContent = `${Math.floor(d.percent)}%`),
+        );
+      }, 250);
+
+      document.getElementById("reset").onclick = () => {
+        S.queue = sampleQueue();
+        S.nextId = 7;
+        S.copy = null;
+        S.duplicate = false;
+        render();
+      };
+      new ResizeObserver(layout).observe(stage);
+      matchMedia("(prefers-color-scheme: dark)").addEventListener(
+        "change",
+        render,
+      );
+      new MutationObserver(render).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+
+      renderShell();
+      layout();
+      render();
+    </script>
+  </body>
+</html>
