@@ -96,8 +96,8 @@ fn subscribe(
 }
 
 /// Prepares the tools in the background, then, once they are ready,
-/// receives the Queued Downloads that waited for them; the UI follows along
-/// through events.
+/// updates yt-dlp if it is due and receives the Queued Downloads that waited
+/// for them; the UI follows along through events.
 #[tauri::command]
 fn retry_setup(toolbox: State<'_, Arc<Toolbox>>, downloader: State<'_, Arc<Downloader>>) {
     let (toolbox, downloader) = (toolbox.inner().clone(), downloader.inner().clone());
@@ -105,6 +105,8 @@ fn retry_setup(toolbox: State<'_, Arc<Toolbox>>, downloader: State<'_, Arc<Downl
         toolbox.prepare();
         // A Queued Download would only find yt-dlp missing and be dropped.
         if toolbox.state() == SetupState::Ready {
+            // Setup that failed at launch left the check undone.
+            std::thread::spawn(move || toolbox.update_ytdlp_if_due());
             downloader.run();
         }
     });

@@ -28,7 +28,7 @@ const MANIFEST: &str = "manifest.json";
 const TEMP_SUFFIX: &str = ".download";
 /// Where an update downloads the new yt-dlp. Unlike [`TEMP_SUFFIX`], Setup
 /// doesn't remove it, so that Setup and an update may run at once.
-const YTDLP_UPDATE: &str = "yt-dlp.exe.update";
+const YTDLP_UPDATE_FILE: &str = "yt-dlp.exe.update";
 /// How long after the last check a launch checks for a newer yt-dlp again.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -381,7 +381,7 @@ impl Toolbox {
     pub fn update_ytdlp_on_request(&self) {
         self.set_update_state(YtDlpUpdateState::Updating);
         let state = self
-            .update_ytdlp_telling(&|| self.set_update_state(YtDlpUpdateState::Waiting))
+            .update_ytdlp_with_waiting(&|| self.set_update_state(YtDlpUpdateState::Waiting))
             .unwrap_or_else(|error| YtDlpUpdateState::Failed { error });
         self.set_update_state(state);
     }
@@ -398,12 +398,15 @@ impl Toolbox {
     /// it waits for the running Download to end. Returns
     /// [`YtDlpUpdateState::Updated`] or [`YtDlpUpdateState::UpToDate`].
     pub fn update_ytdlp(&self) -> Result<YtDlpUpdateState, SetupError> {
-        self.update_ytdlp_telling(&|| {})
+        self.update_ytdlp_with_waiting(&|| {})
     }
 
     /// Like [`Toolbox::update_ytdlp`], calling `on_waiting` when the new
     /// yt-dlp waits for the old one to be no longer used.
-    fn update_ytdlp_telling(&self, on_waiting: &dyn Fn()) -> Result<YtDlpUpdateState, SetupError> {
+    fn update_ytdlp_with_waiting(
+        &self,
+        on_waiting: &dyn Fn(),
+    ) -> Result<YtDlpUpdateState, SetupError> {
         let _updating = self.updating.lock().unwrap();
         let release = self.releases.latest_release(Package::YtDlp)?;
         if !Package::YtDlp.is_official(&release.url) {
@@ -418,14 +421,19 @@ impl Toolbox {
         let file = self.fetch_verified(
             Package::YtDlp,
             &release,
-            &self.dir.join(YTDLP_UPDATE),
+            &self.dir.join(YTDLP_UPDATE_FILE),
             &mut |_| {},
         )?;
-        let mut users = self.ytdlp_users.lock().unwrap();
-        users.update_waiting = true;
-        if users.count > 0 {
+        let in_use = {
+            let mut users = self.ytdlp_users.lock().unwrap();
+            users.update_waiting = true;
+            users.count > 0
+        };
+        // Told outside the lock, which a Download that ends meanwhile needs.
+        if in_use {
             on_waiting();
         }
+        let users = self.ytdlp_users.lock().unwrap();
         let mut users = self
             .ytdlp_users_changed
             .wait_while(users, |users| users.count > 0)

@@ -624,7 +624,7 @@ impl Downloader {
     fn download(&self, video: &Video, content: &Content, stopper: &Stopper) -> bool {
         // An update replaces yt-dlp only between Downloads, not between the
         // runs for the Transcript and the media.
-        let in_use = self.toolbox.use_ytdlp();
+        let ytdlp_in_use = self.toolbox.use_ytdlp();
         let ytdlp_version = self.toolbox.ytdlp_version();
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
         let mut log = self.logs.start(self.clock.now(), &video.id);
@@ -706,7 +706,7 @@ impl Downloader {
             }
             queue.running.take()
         });
-        drop(in_use);
+        drop(ytdlp_in_use);
         if updates_ytdlp && let Some(id) = id {
             self.update_ytdlp_after(id, ytdlp_version, &mut log);
         }

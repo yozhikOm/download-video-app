@@ -580,6 +580,22 @@ fn a_launch_within_a_day_of_the_last_check_doesnt_check_for_updates() {
 }
 
 #[test]
+fn a_launch_with_the_clock_set_back_before_the_last_check_checks_for_updates() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let app = app.restart_at(NOW - HOUR);
+    app.toolbox.prepare();
+
+    app.toolbox.update_ytdlp_if_due();
+
+    assert_eq!(
+        std::fs::read(app.file("yt-dlp.exe")).unwrap(),
+        NEWER_YTDLP_BYTES
+    );
+}
+
+#[test]
 fn an_update_on_request_installs_a_newer_yt_dlp_and_tells_its_version() {
     let app = App::start();
     app.toolbox.prepare();
