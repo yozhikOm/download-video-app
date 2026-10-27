@@ -521,7 +521,16 @@ impl Downloader {
                 self.update(|queue| queue.running = None);
                 return true;
             }
-            Err(Stopped::Failed(message)) => DownloadStatus::Failed { message },
+            Err(Stopped::Failed(message)) => {
+                // yt-dlp fails so when the Partial is already whole: it asks
+                // for the bytes past its end, and can't tell it is done
+                // (yt-dlp#12994). Every retry would fail the same way, so the
+                // next one starts from scratch.
+                if message.contains("HTTP Error 416") {
+                    remove_partial(&self.partials_dir, &partial_prefixes(video, content));
+                }
+                DownloadStatus::Failed { message }
+            }
             Ok(partials) => match self.save(&partials, &file_name(video)) {
                 Ok(files) => DownloadStatus::Done {
                     file: files[0].clone(),

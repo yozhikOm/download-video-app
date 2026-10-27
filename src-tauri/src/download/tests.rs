@@ -863,6 +863,32 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
     assert!(!app.save_dir().exists());
 }
 
+#[test]
+fn a_download_that_yt_dlp_cant_resume_is_failed_without_its_partial() {
+    let app = App::start();
+    app.processes.script("yt-dlp.exe", |args| {
+        let partial = PathBuf::from(after(args, "-P")).join(format!("{ID}.1080p.f137.mp4.part"));
+        fs::create_dir_all(partial.parent().unwrap()).unwrap();
+        fs::write(&partial, b"whole").unwrap();
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: b"ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable\n"
+                .to_vec(),
+        }
+    });
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Failed {
+            message: "ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into()
+        })
+    );
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
+}
+
 /// The yt-dlp runs so far, each with its arguments.
 fn ytdlp_runs(app: &App) -> Vec<Vec<OsString>> {
     app.processes
