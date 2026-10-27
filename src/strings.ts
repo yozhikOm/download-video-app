@@ -42,6 +42,28 @@ export const strings = {
   main: {
     version: (version: string) => `Версия ${version}`,
     versionFailed: "Не удалось получить версию приложения",
+    settings: "Настройки",
+  },
+  settings: {
+    title: "Настройки",
+    back: "Назад",
+    saveDir: "Папка сохранения",
+    chooseSaveDir: "Изменить…",
+    saveDirFailed: "Не удалось сохранить папку.",
+    fileName: "Имя файла",
+    fileNameHint:
+      "Шаблон, по которому называются видео, аудио и транскрипты. Нажмите на переменную, чтобы вставить её:",
+    /** What each variable of the file name template puts in. */
+    variables: {
+      "{title}": "название видео",
+      "{channel}": "канал",
+      "{date}": "дата публикации, ГГГГ-ММ-ДД",
+    },
+    fileNameFailed: "Не удалось сохранить шаблон имени.",
+    defaultVideoPreset: "Качество по умолчанию",
+    defaultVideoPresetHint:
+      "Выбирается после поиска видео. Если у видео такого нет — ближайшее меньшее.",
+    defaultVideoPresetFailed: "Не удалось сохранить качество.",
   },
   ytdlp: {
     update: "Обновить yt-dlp",

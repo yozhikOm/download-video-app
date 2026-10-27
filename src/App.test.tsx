@@ -28,6 +28,14 @@ import type {
 
 const MB = 1024 * 1024;
 
+/** The settings of an app just installed. */
+const defaultSettings: SettingsState = {
+  signInBrowser: null,
+  saveDir: "C:\\Users\\me\\Downloads",
+  fileNameTemplate: "{title}",
+  defaultVideoPreset: "1080p",
+};
+
 /**
  * A Probe that found `video`, with the Presets of a 1080p Video with sound
  * and its Transcript in English and Russian.
@@ -98,6 +106,8 @@ function mockBackend({
   const commands: string[] = [];
   const probedUrls: string[] = [];
   const signInBrowsers: (Browser | null)[] = [];
+  const fileNameTemplates: string[] = [];
+  const defaultVideoPresets: VideoPreset[] = [];
   const downloadedPresets: (Preset | null)[] = [];
   const downloadedTranscripts: (string | null)[] = [];
   /** The ids each command about one Download was sent with. */
@@ -120,6 +130,23 @@ function mockBackend({
           throw new Error("disk is full");
         }
         signInBrowsers.push((args as { browser: Browser | null }).browser);
+        return null;
+      case "choose_save_dir":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        return null;
+      case "set_file_name_template":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        fileNameTemplates.push((args as { template: string }).template);
+        return null;
+      case "set_default_video_preset":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        defaultVideoPresets.push((args as { preset: VideoPreset }).preset);
         return null;
       case "add_download":
         if (downloadFails) {
@@ -159,12 +186,16 @@ function mockBackend({
     commands,
     probedUrls,
     signInBrowsers,
+    fileNameTemplates,
+    defaultVideoPresets,
     downloadedPresets,
     downloadedTranscripts,
     downloadIds,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
-    settings: (state: SettingsState) => send({ type: "settings", data: state }),
+    /** Pushes the settings, the defaults where not told. */
+    settings: (state: Partial<SettingsState>) =>
+      send({ type: "settings", data: { ...defaultSettings, ...state } }),
     queue: (...downloads: Download[]) =>
       send({ type: "queue", data: downloads }),
     download: (state: DownloadState) =>
@@ -1756,3 +1787,182 @@ test.each([
     ).toBeEnabled();
   },
 );
+
+/** Opens the settings from the main screen. */
+async function openSettings() {
+  fireEvent.click(await screen.findByRole("button", { name: "Настройки" }));
+}
+
+test("the settings open from the main screen and go back to it as it was", async () => {
+  await startReady();
+  enterUrl(youtubeUrl);
+
+  await openSettings();
+
+  expect(
+    screen.getByRole("heading", { name: "Настройки" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("textbox", { name: "Ссылка на видео" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Назад" }));
+
+  expect(screen.getByRole("textbox", { name: "Ссылка на видео" })).toHaveValue(
+    youtubeUrl,
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Настройки" }),
+  ).not.toBeInTheDocument();
+});
+
+test("the settings show the save folder and choose another on request", async () => {
+  const backend = await startReady();
+  await backend.settings({ saveDir: "D:\\Видео" });
+  await openSettings();
+
+  expect(screen.getByText("D:\\Видео")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Изменить…" }));
+
+  await waitFor(() => expect(backend.commands).toContain("choose_save_dir"));
+});
+
+test("a save folder that can't be saved says so", async () => {
+  await startReady({ savingFails: true });
+  await openSettings();
+
+  fireEvent.click(screen.getByRole("button", { name: "Изменить…" }));
+
+  expect(await screen.findByText("Не удалось сохранить папку.")).toHaveRole(
+    "alert",
+  );
+});
+
+test("the file name template is saved once the field is left", async () => {
+  const backend = await startReady();
+  await backend.settings({});
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+  expect(field).toHaveValue("{title}");
+
+  fireEvent.change(field, { target: { value: "{date} {title}" } });
+  expect(backend.fileNameTemplates).toEqual([]);
+  fireEvent.blur(field);
+
+  await waitFor(() =>
+    expect(backend.fileNameTemplates).toEqual(["{date} {title}"]),
+  );
+  await backend.settings({ fileNameTemplate: "{date} {title}" });
+  expect(field).toHaveValue("{date} {title}");
+});
+
+test("the file name template is saved on Enter", async () => {
+  const backend = await startReady();
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+
+  fireEvent.change(field, { target: { value: "{channel} - {title}" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+
+  await waitFor(() =>
+    expect(backend.fileNameTemplates).toEqual(["{channel} - {title}"]),
+  );
+});
+
+test("a file name template saved on Enter isn't saved again once the field is left", async () => {
+  const backend = await startReady();
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+
+  fireEvent.change(field, { target: { value: "{channel} - {title}" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  fireEvent.blur(field);
+
+  await waitFor(() =>
+    expect(backend.fileNameTemplates).toEqual(["{channel} - {title}"]),
+  );
+});
+
+test("typing on after Enter keeps what was typed", async () => {
+  await startReady();
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+
+  fireEvent.change(field, { target: { value: "{date}" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  fireEvent.change(field, { target: { value: "{date} {title}" } });
+
+  // The save of "{date}" has answered by now.
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(field).toHaveValue("{date} {title}");
+});
+
+test("an unchanged file name template isn't saved again", async () => {
+  const backend = await startReady();
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+
+  fireEvent.focus(field);
+  fireEvent.blur(field);
+
+  expect(backend.fileNameTemplates).toEqual([]);
+});
+
+test("the file name template's hints tell its variables and put one in on a click", async () => {
+  const backend = await startReady();
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+  expect(screen.getByText("название видео")).toBeInTheDocument();
+  expect(screen.getByText("канал")).toBeInTheDocument();
+  expect(screen.getByText("дата публикации, ГГГГ-ММ-ДД")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "{channel}" }));
+
+  expect(field).toHaveValue("{title}{channel}");
+  await waitFor(() =>
+    expect(backend.fileNameTemplates).toEqual(["{title}{channel}"]),
+  );
+});
+
+test("a file name template that can't be saved says so and keeps what was typed", async () => {
+  await startReady({ savingFails: true });
+  await openSettings();
+  const field = screen.getByRole("textbox", { name: "Имя файла" });
+
+  fireEvent.change(field, { target: { value: "{date} {title}" } });
+  fireEvent.blur(field);
+
+  expect(
+    await screen.findByText("Не удалось сохранить шаблон имени."),
+  ).toHaveRole("alert");
+  expect(field).toHaveValue("{date} {title}");
+});
+
+test("the default Video preset shows the saved one and saves another chosen", async () => {
+  const backend = await startReady();
+  await backend.settings({ defaultVideoPreset: "720p" });
+  await openSettings();
+  const select = screen.getByRole("combobox", {
+    name: "Качество по умолчанию",
+  });
+  expect(select).toHaveDisplayValue("720p");
+
+  fireEvent.change(select, { target: { value: "best" } });
+
+  await waitFor(() => expect(backend.defaultVideoPresets).toEqual(["best"]));
+});
+
+test("a default Video preset that can't be saved says so", async () => {
+  await startReady({ savingFails: true });
+  await openSettings();
+
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Качество по умолчанию" }),
+    { target: { value: "480p" } },
+  );
+
+  expect(await screen.findByText("Не удалось сохранить качество.")).toHaveRole(
+    "alert",
+  );
+});
