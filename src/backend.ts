@@ -129,10 +129,26 @@ export type ProbeState =
  */
 export type Receiving = "transcript" | "video" | "audio";
 
+/**
+ * Why a Download failed: no network or the site doesn't answer, the site
+ * isn't supported or the Video is gone, the Video needs signing in, yt-dlp
+ * can't make out the site's page, the file can't be written, or something
+ * else.
+ */
+export type Failure =
+  | "offline"
+  | "unsupported"
+  | "signInRequired"
+  | "extractorBroken"
+  | "disk"
+  | "unknown";
+
 /** A Download in the Queue, as the main screen shows it. */
 export type Download = {
   /** Tells the Download apart from the others in the Queue. */
   id: number;
+  /** The Video's own page. */
+  url: string;
   video: VideoCard;
   /** `null` for the Transcript alone. */
   preset: Preset | null;
@@ -159,8 +175,17 @@ export type Download = {
     | { status: "processing" }
     /** `file` is the saved file's full path: the media, or the Transcript alone. */
     | { status: "done"; file: string }
-    /** `message` is for the log; the UI shows a generic text. */
-    | { status: "failed"; message: string }
+    /**
+     * The UI shows its own text for each `failure`; `message` and `output`,
+     * the last lines yt-dlp printed but its progress, go into the details
+     * the user copies.
+     */
+    | {
+        status: "failed";
+        failure: Failure;
+        message: string;
+        output: string[];
+      }
     /** Stopped by the user; its Partial is removed. */
     | { status: "cancelled" }
   );

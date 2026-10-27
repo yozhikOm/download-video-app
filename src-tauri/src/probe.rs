@@ -492,7 +492,7 @@ pub fn error_line(stderr: &str) -> String {
 }
 
 /// Tells why yt-dlp failed from its error message.
-fn read_error(stderr: &str) -> ProbeError {
+pub fn read_error(stderr: &str) -> ProbeError {
     let message = error_line(stderr);
     let lower = message.to_lowercase();
     let says = |phrases: &[&str]| phrases.iter().any(|phrase| lower.contains(phrase));

@@ -99,6 +99,7 @@ impl App {
             settings.clone(),
             dir.path().join("partials"),
             dir.path().join("Downloads"),
+            dir.path().join("logs"),
             clock.clone(),
             events.clone(),
         ));
@@ -205,6 +206,10 @@ impl App {
 
     fn partials_dir(&self) -> PathBuf {
         self.dir.path().join("partials")
+    }
+
+    fn logs_dir(&self) -> PathBuf {
+        self.dir.path().join("logs")
     }
 
     /// Adds a Download to the Queue and runs the Queue until none waits.
@@ -863,7 +868,12 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
     assert_eq!(
         app.status(),
         Some(DownloadStatus::Failed {
-            message: "ERROR: unable to download video data: Read timed out.".into()
+            failure: Failure::Offline,
+            message: "ERROR: unable to download video data: Read timed out.".into(),
+            output: vec![
+                "WARNING: retrying".into(),
+                "ERROR: unable to download video data: Read timed out.".into()
+            ],
         })
     );
     assert_eq!(
@@ -871,6 +881,354 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
         [format!("{ID}.1080p.f137.mp4.part")]
     );
     assert!(!app.save_dir().exists());
+}
+
+/// The kind of failure a Download that yt-dlp fails with `stderr` ends with.
+fn failure_of(stderr: &str) -> Failure {
+    let app = App::start();
+    app.processes.fail_with("yt-dlp.exe", stderr.as_bytes());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    match app.status() {
+        Some(DownloadStatus::Failed { failure, .. }) => failure,
+        status => panic!("not Failed: {status:?}"),
+    }
+}
+
+#[test]
+fn a_download_yt_dlp_fails_tells_what_kind_of_failure_it_is() {
+    let cases = [
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Unable to download API page: <urlopen error [Errno 11001] getaddrinfo failed> (caused by TransportError('<urlopen error [Errno 11001] getaddrinfo failed>'))",
+            Failure::Offline,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Unable to download API page: HTTPSConnectionPool(host='www.youtube.com', port=443): Max retries exceeded with url: /youtubei/v1/player (Caused by NameResolutionError(\"<urllib3.connection.HTTPSConnection object at 0x0000020F>: Failed to resolve 'www.youtube.com' ([Errno 11001] getaddrinfo failed)\")) (caused by TransportError(...))",
+            Failure::Offline,
+        ),
+        (
+            "ERROR: unable to download video data: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))",
+            Failure::Offline,
+        ),
+        (
+            "ERROR: unable to download video data: <urlopen error [WinError 10060] A connection attempt failed because the connected party did not properly respond after a period of time>",
+            Failure::Offline,
+        ),
+        (
+            "ERROR: Unsupported URL: https://example.com/",
+            Failure::Unsupported,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Video unavailable. This video has been removed by the uploader",
+            Failure::Unsupported,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication.",
+            Failure::SignInRequired,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication.",
+            Failure::SignInRequired,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Join this channel to get access to members-only content like this video, and other exclusive perks.",
+            Failure::SignInRequired,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Unable to extract initial player response; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U",
+            Failure::ExtractorBroken,
+        ),
+        (
+            "ERROR: [youtube] jNQXAC9IVRw: Requested format is not available. Use --list-formats for a list of available formats",
+            Failure::ExtractorBroken,
+        ),
+        (
+            "ERROR: unable to open for writing: [Errno 28] No space left on device",
+            Failure::Disk,
+        ),
+        (
+            "ERROR: Postprocessing: [WinError 112] There is not enough space on the disk",
+            Failure::Disk,
+        ),
+        (
+            "ERROR: unable to open for writing: [Errno 13] Permission denied: 'C:\\\\Users\\\\me\\\\AppData\\\\Local\\\\partials\\\\jNQXAC9IVRw.1080p.f137.mp4.part'",
+            Failure::Disk,
+        ),
+        (
+            "ERROR: Unable to rename file: [WinError 32] The process cannot access the file because it is being used by another process",
+            Failure::Disk,
+        ),
+        (
+            "ERROR: unable to download video data: HTTP Error 503: Service Unavailable",
+            Failure::Offline,
+        ),
+        // Geo-blocks and login walls of other sites refuse with 403 too.
+        (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            Failure::Unknown,
+        ),
+        // The Sign-in browser's cookies are about the browser, not the
+        // disk the files go to.
+        (
+            "ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info",
+            Failure::Unknown,
+        ),
+        (
+            "ERROR: Postprocessing: Conversion failed!",
+            Failure::Unknown,
+        ),
+    ];
+    for (stderr, expected) in cases {
+        assert_eq!(failure_of(&format!("{stderr}\n")), expected, "{stderr}");
+    }
+}
+
+/// Makes yt-dlp print `stdout` and `stderr` and fail.
+fn ytdlp_fails_printing(app: &App, stdout: String, stderr: String) {
+    app.processes.script("yt-dlp.exe", move |_| Output {
+        status: exit_status(1),
+        stdout: stdout.clone().into_bytes(),
+        stderr: stderr.clone().into_bytes(),
+    });
+}
+
+/// The last lines yt-dlp printed that the Download added last keeps.
+fn output(app: &App) -> Vec<String> {
+    match app.status() {
+        Some(DownloadStatus::Failed { output, .. }) => output,
+        status => panic!("not Failed: {status:?}"),
+    }
+}
+
+#[test]
+fn a_failed_download_keeps_what_yt_dlp_printed_but_its_progress() {
+    let app = App::start();
+    ytdlp_fails_printing(
+        &app,
+        format!(
+            "[info] jNQXAC9IVRw: Downloading 1 format(s): 137+140\n{}\n{}\n",
+            progress(10, 100, 1.0, 9),
+            progress(20, 100, 1.0, 8)
+        ),
+        "WARNING: [youtube] Falling back to generic n function search\nERROR: unable to download video data: Read timed out.\n".into(),
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        output(&app),
+        [
+            "[info] jNQXAC9IVRw: Downloading 1 format(s): 137+140",
+            "WARNING: [youtube] Falling back to generic n function search",
+            "ERROR: unable to download video data: Read timed out.",
+        ]
+    );
+}
+
+#[test]
+fn a_failed_download_keeps_only_the_last_twenty_lines_yt_dlp_printed() {
+    let app = App::start();
+    let lines: Vec<String> = (1..=30).map(|n| format!("WARNING: number {n}")).collect();
+    ytdlp_fails_printing(&app, String::new(), lines.join("\n") + "\n");
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(output(&app), lines[10..]);
+}
+
+#[test]
+fn a_download_in_the_queue_tells_its_videos_url() {
+    let app = App::start();
+
+    app.downloader
+        .add(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(app.downloader.state()[0].url, URL);
+}
+
+#[test]
+fn a_download_logs_all_yt_dlp_printed_under_the_time_it_started() {
+    let app = App::start();
+    // 2026-10-27 11:04:20 UTC.
+    app.clock
+        .set(SystemTime::UNIX_EPOCH + Duration::from_secs(1_793_099_060));
+    let lines: Vec<String> = (1..=30).map(|n| format!("WARNING: number {n}")).collect();
+    ytdlp_fails_printing(
+        &app,
+        "[info] jNQXAC9IVRw: Downloading 1 format(s): 137+140\n".into(),
+        lines.join("\n") + "\n",
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        file_names(&app.logs_dir()),
+        ["2026-10-27 11-04-20 jNQXAC9IVRw.log"]
+    );
+    let log =
+        fs::read_to_string(app.logs_dir().join("2026-10-27 11-04-20 jNQXAC9IVRw.log")).unwrap();
+    assert!(log.contains(URL), "{log}");
+    assert!(
+        log.contains("[info] jNQXAC9IVRw: Downloading 1 format(s): 137+140\n"),
+        "{log}"
+    );
+    assert!(log.contains(&(lines.join("\n") + "\n")), "{log}");
+}
+
+#[test]
+fn only_the_ten_newest_logs_are_kept() {
+    let app = App::start();
+    app.clock.step_by(Duration::from_secs(1));
+    app.ytdlp_downloads(ID, b"the video", &[]);
+    let zoo = video(URL, "Me at the zoo");
+    app.download(&zoo, VideoPreset::P1080.into());
+    app.download(&zoo, VideoPreset::P1080.into());
+    let oldest = file_names(&app.logs_dir());
+    assert_eq!(oldest.len(), 2);
+
+    for _ in 0..10 {
+        app.download(&zoo, VideoPreset::P1080.into());
+    }
+
+    let kept = file_names(&app.logs_dir());
+    assert_eq!(kept.len(), 10, "{kept:?}");
+    assert!(oldest.iter().all(|log| !kept.contains(log)), "{kept:?}");
+}
+
+#[test]
+fn a_yt_dlp_that_fails_without_an_error_line_is_told_by_its_last_line_not_its_warnings() {
+    assert_eq!(
+        failure_of(
+            "WARNING: [youtube] jNQXAC9IVRw: nsig extraction failed: Some formats may be missing; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q=\nTraceback (most recent call last):\n  File \"yt_dlp\\YoutubeDL.py\", line 1730, in wrapper\nKeyError: 'formats'\n"
+        ),
+        Failure::Unknown
+    );
+}
+
+#[test]
+fn a_download_runs_yt_dlp_verbose_and_logs_its_debug_lines_without_keeping_them() {
+    let app = App::start();
+    app.processes.script("yt-dlp.exe", |args| {
+        let mut stderr = String::new();
+        if args.contains(&"--verbose".into()) {
+            stderr += "[debug] yt-dlp version stable@2026.10.21 from yt-dlp/yt-dlp [8cdf4fea4] (win_exe)\n";
+        }
+        stderr += "ERROR: Postprocessing: Conversion failed!\n";
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: stderr.into_bytes(),
+        }
+    });
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(output(&app), ["ERROR: Postprocessing: Conversion failed!"]);
+    let logs = file_names(&app.logs_dir());
+    let log = fs::read_to_string(app.logs_dir().join(&logs[0])).unwrap();
+    assert!(
+        log.contains("[debug] yt-dlp version stable@2026.10.21"),
+        "{log}"
+    );
+}
+
+/// What yt-dlp `--verbose` prints after an error: the frames of where it
+/// was raised and of its cause, then the cause.
+const TRACEBACK: &str = "  File \"yt_dlp\\extractor\\common.py\", line 742, in extract
+  File \"yt_dlp\\extractor\\generic.py\", line 2393, in _real_extract
+  File \"yt_dlp\\extractor\\common.py\", line 911, in _request_webpage
+
+  File \"yt_dlp\\extractor\\common.py\", line 898, in _request_webpage
+  File \"yt_dlp\\YoutubeDL.py\", line 4172, in urlopen
+  File \"yt_dlp\\networking\\common.py\", line 117, in send
+yt_dlp.networking.exceptions.HTTPError: HTTP Error 404: Not Found
+";
+
+#[test]
+fn a_failed_download_logs_the_traceback_yt_dlp_printed_but_keeps_only_its_exception() {
+    let app = App::start();
+    ytdlp_fails_printing(
+        &app,
+        String::new(),
+        format!(
+            "WARNING: [generic] Falling back on generic information extractor\nERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found\n{TRACEBACK}"
+        ),
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        output(&app),
+        [
+            "WARNING: [generic] Falling back on generic information extractor",
+            "ERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found",
+            "yt_dlp.networking.exceptions.HTTPError: HTTP Error 404: Not Found",
+        ]
+    );
+    let logs = file_names(&app.logs_dir());
+    let log = fs::read_to_string(app.logs_dir().join(&logs[0])).unwrap();
+    assert!(log.contains(TRACEBACK), "{log}");
+}
+
+#[test]
+fn a_yt_dlp_that_crashes_is_told_by_its_exception_not_its_debug_lines_or_traceback() {
+    let app = App::start();
+    ytdlp_fails_printing(
+        &app,
+        String::new(),
+        "[debug] Command-line config: ['--verbose']\n[debug] yt-dlp version stable@2026.10.21\nTraceback (most recent call last):\n  File \"yt_dlp\\__main__.py\", line 17, in <module>\n  File \"yt_dlp\\YoutubeDL.py\", line 1730, in wrapper\nKeyError: 'formats'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"yt_dlp\\__init__.py\", line 1093, in main\nSystemExit: 1\n".into(),
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    match app.status() {
+        Some(DownloadStatus::Failed {
+            failure, message, ..
+        }) => assert_eq!(
+            (failure, message.as_str()),
+            (Failure::Unknown, "SystemExit: 1")
+        ),
+        status => panic!("not Failed: {status:?}"),
+    }
+    assert_eq!(output(&app), ["KeyError: 'formats'", "SystemExit: 1"]);
+}
+
+#[test]
+fn of_logs_started_in_the_same_second_the_oldest_go_first() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+    let zoo = video(URL, "Me at the zoo");
+    app.download(&zoo, VideoPreset::P1080.into());
+    let first = file_names(&app.logs_dir());
+
+    for _ in 0..10 {
+        app.download(&zoo, VideoPreset::P1080.into());
+    }
+
+    let kept = file_names(&app.logs_dir());
+    assert_eq!(kept.len(), 10, "{kept:?}");
+    assert!(!kept.contains(&first[0]), "{kept:?}");
+}
+
+#[test]
+fn a_download_whose_files_cant_be_saved_is_failed_for_the_disk() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+    // A file stands where the save folder should be.
+    fs::write(app.save_dir(), b"").unwrap();
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert!(
+        matches!(
+            app.status(),
+            Some(DownloadStatus::Failed {
+                failure: Failure::Disk,
+                ..
+            })
+        ),
+        "{:?}",
+        app.status()
+    );
 }
 
 #[test]
@@ -893,7 +1251,9 @@ fn a_download_that_yt_dlp_cant_resume_is_failed_without_its_partial() {
     assert_eq!(
         app.status(),
         Some(DownloadStatus::Failed {
-            message: "ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into()
+            failure: Failure::Unknown,
+            message: "ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into(),
+            output: vec!["ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into()],
         })
     );
     assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
@@ -2400,7 +2760,9 @@ fn a_failed_transcript_is_retried_with_the_media_and_the_transcript() {
     assert_eq!(
         app.status(),
         Some(DownloadStatus::Failed {
-            message: "ERROR: Unable to download video subtitles".into()
+            failure: Failure::Unknown,
+            message: "ERROR: Unable to download video subtitles".into(),
+            output: vec!["ERROR: Unable to download video subtitles".into()],
         })
     );
     app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
@@ -2520,6 +2882,7 @@ fn probe_with_real_tools(
         settings,
         dir.join("partials"),
         dir.join("Downloads"),
+        dir.join("logs"),
         Arc::new(SystemClock),
         events,
     );

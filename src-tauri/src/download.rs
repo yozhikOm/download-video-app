@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
+use crate::logs::{Log, Logs};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
-use crate::probe::{Video, VideoCard, error_line};
+use crate::probe::{self, ProbeError, Video, VideoCard, error_line};
 use crate::processes::Stopper;
 use crate::settings::{Browser, Settings};
 use crate::toolbox::{SetupState, Tool, Toolbox};
@@ -30,6 +31,8 @@ use crate::transcript::{self, TranscriptLanguage};
 pub struct Download {
     /// Tells the Download apart from the others in the Queue.
     pub id: u64,
+    /// The Video's own page.
+    pub url: String,
     pub video: VideoCard,
     /// `None` for the Transcript alone.
     pub preset: Option<Preset>,
@@ -61,9 +64,14 @@ pub enum DownloadStatus {
     Done {
         file: PathBuf,
     },
-    /// The message is for the log; the UI shows a generic text.
+    /// The UI shows its own text for each kind of failure; the message is
+    /// for the log.
     Failed {
+        failure: Failure,
         message: String,
+        /// The last lines yt-dlp printed, but its progress and what only
+        /// `--verbose` prints, for the user to copy into a bug report.
+        output: Vec<String>,
     },
     /// Stopped by the user; its Partial is removed.
     Cancelled,
@@ -87,6 +95,27 @@ impl DownloadStatus {
             eta: None,
         }
     }
+}
+
+/// Why a Download failed, as far as the user can do something about it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Failure {
+    /// No connection to the internet, or the site doesn't answer.
+    Offline,
+    /// The site isn't supported, or the Video is gone from it.
+    Unsupported,
+    /// The Video is age-restricted, private or members-only, or YouTube
+    /// asks to prove the user isn't a bot; signing in gets past it.
+    SignInRequired,
+    /// yt-dlp can't make out the site's page, likely changed since its
+    /// release; a newer yt-dlp usually can.
+    ExtractorBroken,
+    /// The file can't be written: the disk is full, or the folder or the
+    /// file is out of reach.
+    Disk,
+    /// Something else, told only by the message.
+    Unknown,
 }
 
 /// What a Downloading Download receives now.
@@ -325,7 +354,7 @@ enum Stopped {
     /// yt-dlp failed to start; the setup screen is up now.
     ToolBroken,
     /// The message is for the log.
-    Failed(String),
+    Failed(Failure, String),
 }
 
 /// How often the UI gets the speed and time left while the percent stands.
@@ -340,6 +369,7 @@ pub struct Downloader {
     settings: Arc<Settings>,
     partials_dir: PathBuf,
     save_dir: PathBuf,
+    logs: Logs,
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     queue: Mutex<Queue>,
@@ -359,6 +389,7 @@ impl Downloader {
         settings: Arc<Settings>,
         partials_dir: PathBuf,
         save_dir: PathBuf,
+        logs_dir: PathBuf,
         clock: Arc<dyn Clock>,
         events: Arc<dyn EventSink>,
     ) -> Self {
@@ -367,6 +398,7 @@ impl Downloader {
             settings,
             partials_dir,
             save_dir,
+            logs: Logs::new(logs_dir),
             clock,
             events,
             queue: Mutex::new(Queue::default()),
@@ -412,6 +444,7 @@ impl Downloader {
             queue.entries.push(Entry {
                 download: Download {
                     id,
+                    url: video.url.clone(),
                     video: video.card(),
                     preset: content.preset(),
                     transcript_language: content.transcript().map(|it| it.language.clone()),
@@ -572,7 +605,15 @@ impl Downloader {
     /// does, the user adds the Download again.
     fn download(&self, video: &Video, content: &Content, stopper: &Stopper) -> bool {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
-        let received = self.receive(video, content, sign_in_browser, stopper);
+        let mut log = self.logs.start(self.clock.now(), &video.id);
+        log.note(&format!("URL: {}", video.url));
+        if let Some(preset) = content.preset() {
+            log.note(&format!("Preset: {}", preset.name()));
+        }
+        if let Some(language) = content.transcript() {
+            log.note(&format!("Transcript: {}", language.language));
+        }
+        let received = self.receive(video, content, sign_in_browser, &mut log, stopper);
         // Once yt-dlp has ended, the Download can no longer be cancelled.
         let stopped = stopper.finish();
         let cancelled = stopped && self.running_status() == Some(DownloadStatus::Cancelled);
@@ -581,6 +622,7 @@ impl Downloader {
             // broken is cancelled all the same; the next Download tells
             // whether it is broken.
             _ if cancelled => {
+                log.note("Cancelled");
                 remove_partial(&self.partials_dir, &partial_prefixes(video, content));
                 self.update(|queue| queue.running = None);
                 return true;
@@ -592,6 +634,7 @@ impl Downloader {
                 return true;
             }
             Err(Stopped::ToolBroken) => {
+                log.note("yt-dlp failed to start");
                 self.update(|queue| {
                     let running = queue.running.take();
                     queue
@@ -601,18 +644,29 @@ impl Downloader {
                 self.toolbox.prepare();
                 return false;
             }
-            Err(Stopped::Failed(message)) => DownloadStatus::Failed { message },
+            Err(Stopped::Failed(failure, message)) => DownloadStatus::Failed {
+                failure,
+                message,
+                output: log.last_lines(),
+            },
             Ok(partials) => match self.save(&partials, &file_name(video)) {
                 Ok(files) => DownloadStatus::Done {
                     file: files[0].clone(),
                 },
                 Err(error) => DownloadStatus::Failed {
+                    failure: Failure::Disk,
                     message: format!("can't save {}: {error}", partials[0].display()),
+                    output: log.last_lines(),
                 },
             },
         };
-        if let DownloadStatus::Failed { message } = &status {
-            eprintln!("can't download {}: {message}", video.url);
+        match &status {
+            DownloadStatus::Done { file } => log.note(&format!("Done: {}", file.display())),
+            DownloadStatus::Failed { message, .. } => {
+                log.note(&format!("Failed: {message}"));
+                eprintln!("can't download {}: {message}", video.url);
+            }
+            _ => {}
         }
         self.update(|queue| {
             if let Some(entry) = queue.running_mut() {
@@ -632,11 +686,12 @@ impl Downloader {
         video: &Video,
         content: &Content,
         sign_in_browser: Option<Browser>,
+        log: &mut Log,
         stopper: &Stopper,
     ) -> Result<Vec<PathBuf>, Stopped> {
         let transcript = content
             .transcript()
-            .map(|language| self.receive_transcript(video, language, sign_in_browser, stopper))
+            .map(|language| self.receive_transcript(video, language, sign_in_browser, log, stopper))
             .transpose()?;
         let media = content
             .preset()
@@ -646,7 +701,7 @@ impl Downloader {
                 if transcript.is_some() {
                     self.set_status(DownloadStatus::starting(Receiving::of(preset)));
                 }
-                self.receive_media(video, preset, sign_in_browser, stopper)
+                self.receive_media(video, preset, sign_in_browser, log, stopper)
             })
             .transpose()?;
         Ok(media.into_iter().chain(transcript).collect())
@@ -658,6 +713,7 @@ impl Downloader {
         video: &Video,
         preset: Preset,
         sign_in_browser: Option<Browser>,
+        log: &mut Log,
         stopper: &Stopper,
     ) -> Result<PathBuf, Stopped> {
         // Dated when received, not as the site last changed the Video, so
@@ -694,27 +750,29 @@ impl Downloader {
         args.extend(["--".into(), video.url.clone().into()]);
         let mut formats = Vec::new();
         let mut final_file = None;
-        let output = self
-            .toolbox
-            .run_streaming(
-                Tool::YtDlp,
-                &args,
-                sign_in_browser,
-                &mut |line| match read_line(line) {
-                    Line::Formats(planned) => formats = planned,
-                    Line::Progress(line) => {
-                        line.note(&mut formats);
-                        self.report_progress(line.status(&formats, Receiving::of(preset)));
-                    }
-                    Line::Processing => self.set_status(DownloadStatus::Processing),
-                    Line::FinalFile(path) => final_file = Some(path),
-                    Line::Other => {}
-                },
-                stopper,
-            )
-            .map_err(|_| Stopped::ToolBroken)?;
+        let output = self.run_ytdlp(
+            &args,
+            sign_in_browser,
+            log,
+            &mut |line| match line {
+                Line::Formats(planned) => formats = planned,
+                Line::Progress(line) => {
+                    line.note(&mut formats);
+                    self.report_progress(line.status(&formats, Receiving::of(preset)));
+                }
+                Line::Processing => self.set_status(DownloadStatus::Processing),
+                Line::FinalFile(path) => final_file = Some(path),
+                Line::Other => {}
+            },
+            stopper,
+        )?;
         self.failure_resuming(&output, &media_prefix(video, preset))?;
-        final_file.ok_or_else(|| Stopped::Failed("yt-dlp didn't tell where the file is".into()))
+        final_file.ok_or_else(|| {
+            Stopped::Failed(
+                Failure::Unknown,
+                "yt-dlp didn't tell where the file is".into(),
+            )
+        })
     }
 
     /// Has yt-dlp download the subtitles or captions of `language` alone,
@@ -724,6 +782,7 @@ impl Downloader {
         video: &Video,
         language: &TranscriptLanguage,
         sign_in_browser: Option<Browser>,
+        log: &mut Log,
         stopper: &Stopper,
     ) -> Result<PathBuf, Stopped> {
         let name = transcript::ytdlp_name(language, &video.transcripts);
@@ -756,12 +815,8 @@ impl Downloader {
             "--".into(),
             video.url.clone().into(),
         ]);
-        // Streamed only so that the user can stop it; it prints nothing the
-        // app reads.
-        let output = self
-            .toolbox
-            .run_streaming(Tool::YtDlp, &args, sign_in_browser, &mut |_| {}, stopper)
-            .map_err(|_| Stopped::ToolBroken)?;
+        // It prints nothing the app reads.
+        let output = self.run_ytdlp(&args, sign_in_browser, log, &mut |_| {}, stopper)?;
         self.failure_resuming(&output, &transcript_prefix(video, language))?;
         // yt-dlp prints no path without the media, and succeeds without a
         // file when the site has no subtitles in the language; it puts the
@@ -772,15 +827,68 @@ impl Downloader {
         let text = fs::read(&subtitles)
             .map(|bytes| transcript::text(&String::from_utf8_lossy(&bytes)))
             .map_err(|error| {
-                Stopped::Failed(format!("no subtitles at {}: {error}", subtitles.display()))
+                Stopped::Failed(
+                    Failure::Unknown,
+                    format!("no subtitles at {}: {error}", subtitles.display()),
+                )
             })?;
         let file = subtitles.with_extension("txt");
-        fs::write(&file, text)
-            .map_err(|error| Stopped::Failed(format!("can't write {}: {error}", file.display())))?;
+        fs::write(&file, text).map_err(|error| {
+            Stopped::Failed(
+                Failure::Disk,
+                format!("can't write {}: {error}", file.display()),
+            )
+        })?;
         if let Err(error) = fs::remove_file(&subtitles) {
             eprintln!("can't remove {}: {error}", subtitles.display());
         }
         Ok(file)
+    }
+
+    /// Runs yt-dlp with `args`, so that `stopper` can stop it, and hands
+    /// what each line of its stdout tells to `on_line`; everything it prints
+    /// but its progress goes to `log`, its stderr once it has exited, and
+    /// all but what only `--verbose` prints are kept among the last ones.
+    fn run_ytdlp(
+        &self,
+        args: &[OsString],
+        sign_in_browser: Option<Browser>,
+        log: &mut Log,
+        on_line: &mut dyn FnMut(Line),
+        stopper: &Stopper,
+    ) -> Result<Output, Stopped> {
+        // Verbose, so that the log tells the versions of yt-dlp and ffmpeg
+        // and what ffmpeg printed.
+        let args: Vec<OsString> = std::iter::once("--verbose".into())
+            .chain(args.iter().cloned())
+            .collect();
+        let command: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+        log.note(&format!("> yt-dlp {}", command.join(" ")));
+        let output = self
+            .toolbox
+            .run_streaming(
+                Tool::YtDlp,
+                &args,
+                sign_in_browser,
+                &mut |line| {
+                    let read = read_line(line);
+                    if !matches!(read, Line::Progress(_)) {
+                        log.output(line);
+                    }
+                    on_line(read);
+                },
+                stopper,
+            )
+            .map_err(|_| Stopped::ToolBroken)?;
+        for line in String::from_utf8_lossy(&output.stderr).lines() {
+            if verbose_only(line) {
+                log.note(line);
+            } else {
+                log.output(line);
+            }
+        }
+        log.note(&format!("yt-dlp exited: {}", output.status));
+        Ok(output)
     }
 
     /// Like [`failure`], for yt-dlp resuming the part of the Partial whose
@@ -790,7 +898,7 @@ impl Downloader {
     /// so the part is removed, and the next one receives it from scratch.
     fn failure_resuming(&self, output: &Output, prefix: &str) -> Result<(), Stopped> {
         failure(output).inspect_err(|stopped| {
-            if let Stopped::Failed(message) = stopped
+            if let Stopped::Failed(_, message) = stopped
                 && message.contains("HTTP Error 416")
             {
                 remove_partial(&self.partials_dir, &[prefix.to_owned()]);
@@ -920,14 +1028,92 @@ impl Downloader {
     }
 }
 
-/// The line of yt-dlp's stderr that tells why it failed, when it did.
+/// The line of yt-dlp's stderr that tells why it failed, when it did, and
+/// what kind of failure it tells of.
 fn failure(output: &Output) -> Result<(), Stopped> {
     if output.status.success() {
-        Ok(())
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut message = error_line(&stderr);
+    // Without an error line, such as when yt-dlp crashes, its last line
+    // tells why rather than the warnings before it.
+    if !message.starts_with("ERROR:") {
+        message = stderr
+            .lines()
+            .rfind(|line| !verbose_only(line))
+            .unwrap_or_default()
+            .to_owned();
+    }
+    Err(Stopped::Failed(read_failure(&message), message))
+}
+
+/// Whether a line of yt-dlp's stderr is one only `--verbose` prints and
+/// tells nothing of what happened on its own: a debug line, or a frame of
+/// the Python traceback printed after an error. They are too many to leave
+/// room among the last lines for the ones that do tell, such as the
+/// exception that ends a traceback.
+fn verbose_only(line: &str) -> bool {
+    line.starts_with("[debug] ")
+        || line.starts_with(char::is_whitespace)
+        || line.is_empty()
+        || line == "Traceback (most recent call last):"
+        || line.starts_with("During handling of the above exception")
+        || line.starts_with("The above exception was the direct cause")
+}
+
+/// The kind of failure yt-dlp's error message tells of. A Video that needs
+/// signing in or isn't there is told as a Probe tells it.
+fn read_failure(message: &str) -> Failure {
+    match probe::read_error(message) {
+        ProbeError::SignInRequired | ProbeError::BotCheck => return Failure::SignInRequired,
+        ProbeError::Unsupported | ProbeError::TruncatedUrl => return Failure::Unsupported,
+        // About the Sign-in browser, not the disk the files go to.
+        ProbeError::CookiesUnreadable { .. } => return Failure::Unknown,
+        _ => {}
+    }
+    let lower = message.to_lowercase();
+    let says = |phrases: &[&str]| phrases.iter().any(|phrase| lower.contains(phrase));
+    if says(&[
+        "no space left",
+        "not enough space",
+        "disk quota exceeded",
+        "permission denied",
+        "access is denied",
+        "read-only file system",
+        "being used by another process",
+    ]) {
+        Failure::Disk
+    } else if says(&[
+        "getaddrinfo failed",
+        "failed to resolve",
+        "name resolution",
+        "timed out",
+        "connection attempt failed",
+        "connection aborted",
+        "connection reset",
+        "connection refused",
+        "forcibly closed",
+        "network is unreachable",
+        "no route to host",
+        "remote end closed connection",
+        "incompleteread",
+        "transporterror",
+        "http error 500",
+        "http error 502",
+        "http error 503",
+        "http error 504",
+    ]) {
+        Failure::Offline
+    } else if says(&[
+        "please report this issue",
+        "unable to extract",
+        "extraction failed",
+        "requested format is not available",
+    ]) {
+        Failure::ExtractorBroken
     } else {
-        Err(Stopped::Failed(error_line(&String::from_utf8_lossy(
-            &output.stderr,
-        ))))
+        Failure::Unknown
     }
 }
 
