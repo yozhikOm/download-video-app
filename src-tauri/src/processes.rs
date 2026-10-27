@@ -3,13 +3,15 @@
 
 #[cfg(test)]
 pub mod fake;
+#[cfg(windows)]
+mod job;
 #[cfg(test)]
 mod tests;
 
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::Mutex;
 
 pub trait Processes: Send + Sync {
@@ -88,12 +90,19 @@ impl Stopper {
     }
 }
 
-/// [`Processes`] started by the operating system, without a console window.
+/// [`Processes`] started by the operating system, without a console window,
+/// and killed with the programs they started when the app ends.
 pub struct SystemProcesses;
 
 impl Processes for SystemProcesses {
     fn run(&self, program: &Path, args: &[OsString]) -> io::Result<Output> {
-        command(program, args).output()
+        spawn(
+            command(program, args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )?
+        .wait_with_output()
     }
 
     fn run_streaming(
@@ -103,11 +112,12 @@ impl Processes for SystemProcesses {
         on_line: &mut dyn FnMut(&str),
         stopper: &Stopper,
     ) -> io::Result<Output> {
-        let mut child = command(program, args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut child = spawn(
+            command(program, args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )?;
         let pid = child.id();
         stopper.on_stop(move || kill_tree(pid));
         // Read on its own thread, so that a program that fills the stderr
@@ -161,13 +171,40 @@ fn kill_tree(pid: u32) {
     }
 }
 
+/// Starts a Tool. On Windows it runs in the job that dies with the app: a
+/// yt-dlp left running after the app has ended would keep its Partials
+/// open, so that the next try of the Download can't finish its file.
+fn spawn(command: &mut Command) -> io::Result<Child> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Suspended until it is in the job, so that it can't start a
+        // program outside the job first.
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        let mut child = command.spawn()?;
+        // A Tool that could outlive the app isn't run at all.
+        if let Err(error) = job::adopt(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(child)
+    }
+    #[cfg(not(windows))]
+    command.spawn()
+}
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const CREATE_SUSPENDED: u32 = 0x0000_0004;
+
 fn command(program: &Path, args: &[OsString]) -> Command {
     let mut command = Command::new(program);
     command.args(args);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command
