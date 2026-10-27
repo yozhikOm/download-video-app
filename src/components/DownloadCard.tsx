@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -66,6 +66,27 @@ function savesText({ preset, transcriptLanguage }: Download) {
 }
 
 /**
+ * What the user pastes into a GitHub issue about a Failed Download: its
+ * URL, what it saves, why it failed and the last lines yt-dlp printed.
+ */
+function detailsText(download: Extract<Download, { status: "failed" }>) {
+  const { details } = strings.download;
+  return [
+    details.url(download.url),
+    ...(download.preset === null ? [] : [details.preset(download.preset)]),
+    ...(download.transcriptLanguage === null
+      ? []
+      : [details.transcript(download.transcriptLanguage)]),
+    details.message(download.message),
+    "",
+    details.output,
+    "```",
+    ...download.output,
+    "```",
+  ].join("\n");
+}
+
+/**
  * A Download in the `queue`: its Video, what it saves and its status.
  */
 export function DownloadCard({
@@ -77,6 +98,8 @@ export function DownloadCard({
 }) {
   const titleId = useId();
   const [actionFailed, setActionFailed] = useState(false);
+  /** How copying the details of a Failed Download ended, once it has. */
+  const [copying, setCopying] = useState<"copied" | "failed" | null>(null);
   const duplicate = useDuplicateWarning(queue);
 
   function openOrShowFile(action: (id: number) => Promise<void>) {
@@ -92,6 +115,14 @@ export function DownloadCard({
       // Queue's next event shows, and for a Cancelled one whose yt-dlp is
       // still exiting, which can be retried in a moment.
       .catch(() => {});
+  }
+
+  function copyDetails(failed: Extract<Download, { status: "failed" }>) {
+    setCopying(null);
+    navigator.clipboard.writeText(detailsText(failed)).then(
+      () => setCopying("copied"),
+      () => setCopying("failed"),
+    );
   }
 
   function cancel() {
@@ -114,10 +145,11 @@ export function DownloadCard({
     </Button>
   );
 
-  const retryOrRemoveButtons = (
+  const retryOrRemoveButtons = (more?: ReactNode) => (
     <>
       <div className="flex flex-wrap gap-2">
         <Button onClick={retry}>{strings.download.retry}</Button>
+        {more}
         {removeButton}
       </div>
       {duplicate.shown && (
@@ -208,9 +240,23 @@ export function DownloadCard({
           {download.status === "failed" && (
             <>
               <p role="alert" className="text-destructive">
-                {strings.download.failed}
+                {strings.download.failed[download.failure]}
               </p>
-              {retryOrRemoveButtons}
+              {retryOrRemoveButtons(
+                <Button variant="outline" onClick={() => copyDetails(download)}>
+                  {strings.download.copyDetails}
+                </Button>,
+              )}
+              {copying === "copied" && (
+                <p role="status" className="text-muted-foreground">
+                  {strings.download.detailsCopied}
+                </p>
+              )}
+              {copying === "failed" && (
+                <p role="alert" className="text-destructive">
+                  {strings.download.copyFailed}
+                </p>
+              )}
             </>
           )}
           {download.status === "cancelled" && (
@@ -218,7 +264,7 @@ export function DownloadCard({
               <p className="text-muted-foreground">
                 {strings.download.cancelled}
               </p>
-              {retryOrRemoveButtons}
+              {retryOrRemoveButtons()}
             </>
           )}
         </div>

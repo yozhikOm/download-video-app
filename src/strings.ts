@@ -1,6 +1,7 @@
 import type {
   AudioPreset,
   Browser,
+  Failure,
   Package,
   Receiving,
   Tool,
@@ -112,7 +113,29 @@ export const strings = {
     done: "Готово",
     openFile: "Открыть файл",
     showInFolder: "Показать в папке",
-    failed: "Не удалось скачать видео. Попробуйте ещё раз.",
+    /** Why a Download failed, one text for each kind of failure. */
+    failed: {
+      offline:
+        "Нет подключения к интернету или сайт не отвечает. Проверьте сеть и повторите.",
+      unsupported: "Сайт не поддерживается или видео больше недоступно.",
+      signInRequired:
+        "Видео доступно только после входа в аккаунт. Если это YouTube, выберите в «Вход в YouTube» браузер, в котором вы вошли, и повторите.",
+      extractorBroken:
+        "yt-dlp не смог разобрать страницу видео — похоже, сайт изменился. Обычно это исправляет новая версия yt-dlp.",
+      disk: "Не удалось записать файл — на диске нет места или нет доступа к папке.",
+      unknown: "Не удалось скачать видео. Попробуйте ещё раз.",
+    } satisfies Record<Failure, string>,
+    copyDetails: "Скопировать подробности",
+    detailsCopied: "Подробности скопированы",
+    copyFailed: "Не удалось скопировать подробности.",
+    /** The details of a Failed Download, to paste into a GitHub issue. */
+    details: {
+      url: (url: string) => `Ссылка: ${url}`,
+      preset: (preset: string) => `Preset: ${preset}`,
+      transcript: (language: string) => `Транскрипт: ${language}`,
+      message: (message: string) => `Ошибка: ${message}`,
+      output: "Последние строки вывода yt-dlp:",
+    },
     retry: "Повторить",
     cancel: "Отменить",
     cancelled: "Отменено",

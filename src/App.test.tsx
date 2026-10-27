@@ -58,18 +58,21 @@ function probed(
 /** A Download as the backend sends it, without what tells it apart. */
 type DownloadState = Download extends infer D
   ? D extends Download
-    ? Omit<D, "id" | "preset" | "transcriptLanguage">
+    ? Omit<D, "id" | "url" | "preset" | "transcriptLanguage">
     : never
   : never;
 
-/** A Download in the Queue: of 1080p without a Transcript unless told. */
+/**
+ * A Download in the Queue: of 1080p without a Transcript unless told, of
+ * the Video at `youtubeUrl`.
+ */
 function queued(
   id: number,
   state: DownloadState,
   preset: Preset | null = "1080p",
   transcriptLanguage: string | null = null,
 ): Download {
-  return { id, preset, transcriptLanguage, ...state };
+  return { id, url: youtubeUrl, preset, transcriptLanguage, ...state };
 }
 
 /**
@@ -698,6 +701,19 @@ test("a failed Probe names the browser it ran with, not the one chosen since", a
   );
 });
 
+/** How a Download that timed out fails. */
+const readTimedOut: Pick<
+  Extract<Download, { status: "failed" }>,
+  "failure" | "message" | "output"
+> = {
+  failure: "offline",
+  message: "ERROR: unable to download video data: Read timed out.",
+  output: [
+    "WARNING: [youtube] Retrying (1/3)...",
+    "ERROR: unable to download video data: Read timed out.",
+  ],
+};
+
 const zoo = {
   title: "Me at the zoo",
   channel: "jawed",
@@ -1166,7 +1182,7 @@ test("a Done Download is removed from the Queue by its own «Убрать»", as
 });
 
 test.each([
-  [{ status: "failed", message: "ERROR: unable to download video data" }],
+  [{ status: "failed", ...readTimedOut }],
   [{ status: "cancelled" }],
 ] as const)(
   "a Failed or Cancelled Download is removed by its own «Убрать» (%o)",
@@ -1238,18 +1254,104 @@ test("a Done Download opens its file or shows it in its folder", async () => {
   );
 });
 
-test("a Failed Download says so", async () => {
+test.each([
+  ["offline", "Нет подключения к интернету или сайт не отвечает"],
+  ["unsupported", "Сайт не поддерживается или видео больше недоступно"],
+  ["signInRequired", "Видео доступно только после входа в аккаунт"],
+  ["extractorBroken", "yt-dlp не смог разобрать страницу видео"],
+  ["disk", "Не удалось записать файл"],
+  ["unknown", "Не удалось скачать видео"],
+] as const)("a Download Failed as %s says why", async (failure, text) => {
   const backend = await startReady();
 
   await backend.download({
     video: zoo,
     status: "failed",
-    message: "ERROR: unable to download video data",
+    ...readTimedOut,
+    failure,
   });
 
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Не удалось скачать видео",
+  expect(screen.getByRole("alert")).toHaveTextContent(text);
+});
+
+/** Makes the clipboard take the texts written to it, or fail when told. */
+function mockClipboard({ fails = false } = {}) {
+  const written: string[] = [];
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText(text: string) {
+        if (fails) {
+          return Promise.reject(new Error("not allowed"));
+        }
+        written.push(text);
+        return Promise.resolve();
+      },
+    },
+  });
+  return written;
+}
+
+test("a Failed Download's details copy its URL, Preset and what yt-dlp printed last", async () => {
+  const clipboard = mockClipboard();
+  const backend = await startReady();
+  await backend.queue(
+    queued(1, { video: zoo, status: "failed", ...readTimedOut }, "mp3", "en"),
   );
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Скопировать подробности" }),
+  );
+
+  await waitFor(() =>
+    expect(clipboard).toEqual([
+      [
+        "Ссылка: https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "Preset: mp3",
+        "Транскрипт: en",
+        "Ошибка: ERROR: unable to download video data: Read timed out.",
+        "",
+        "Последние строки вывода yt-dlp:",
+        "```",
+        "WARNING: [youtube] Retrying (1/3)...",
+        "ERROR: unable to download video data: Read timed out.",
+        "```",
+      ].join("\n"),
+    ]),
+  );
+  expect(
+    await screen.findByText("Подробности скопированы"),
+  ).toBeInTheDocument();
+});
+
+test("the details of a Failed Transcript alone name no Preset", async () => {
+  const clipboard = mockClipboard();
+  const backend = await startReady();
+  await backend.queue(
+    queued(1, { video: zoo, status: "failed", ...readTimedOut }, null, "en"),
+  );
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Скопировать подробности" }),
+  );
+
+  await waitFor(() => expect(clipboard).toHaveLength(1));
+  expect(clipboard[0]).not.toContain("Preset");
+  expect(clipboard[0]).toContain("Транскрипт: en");
+});
+
+test("details that can't be copied say so", async () => {
+  mockClipboard({ fails: true });
+  const backend = await startReady();
+  await backend.download({ video: zoo, status: "failed", ...readTimedOut });
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Скопировать подробности" }),
+  );
+
+  expect(
+    await screen.findByText("Не удалось скопировать подробности."),
+  ).toBeInTheDocument();
 });
 
 test("a Failed Download is retried from its card", async () => {
@@ -1257,7 +1359,7 @@ test("a Failed Download is retried from its card", async () => {
   await backend.download({
     video: zoo,
     status: "failed",
-    message: "ERROR: unable to download video data",
+    ...readTimedOut,
   });
 
   fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
@@ -1270,7 +1372,7 @@ test("a Failed Download is retried from its card", async () => {
 const failedZoo = queued(1, {
   video: zoo,
   status: "failed",
-  message: "ERROR: unable to download video data",
+  ...readTimedOut,
 });
 
 test("a Failed Download whose duplicate is in the Queue says so on retry", async () => {
@@ -1383,7 +1485,7 @@ test("a URL whose Probe can't start says so instead of the previous Video", asyn
 
 test.each([
   [{ status: "done", file: "C:\\Downloads\\Me at the zoo.mp4" }],
-  [{ status: "failed", message: "ERROR: unable to download video data" }],
+  [{ status: "failed", ...readTimedOut }],
   [{ status: "processing" }],
 ] as const)(
   "the Queue stays on screen when a new URL is entered (%o)",
