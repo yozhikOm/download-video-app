@@ -169,7 +169,7 @@ fn cancel_download(id: u64, downloader: State<'_, Arc<Downloader>>) -> Result<()
     }
 }
 
-/// Takes the Done Download out of the Queue.
+/// Takes the Done, Failed or Cancelled Download out of the Queue.
 #[tauri::command]
 fn remove_download(id: u64, downloader: State<'_, Arc<Downloader>>) {
     downloader.remove(id);

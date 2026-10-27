@@ -107,10 +107,17 @@ export function DownloadCard({
     </div>
   );
 
-  const retryButton = (
+  const removeButton = (
+    <Button variant="ghost" onClick={() => void removeDownload(download.id)}>
+      {strings.download.remove}
+    </Button>
+  );
+
+  const retryOrRemoveButtons = (
     <>
-      <div>
+      <div className="flex flex-wrap gap-2">
         <Button onClick={retry}>{strings.download.retry}</Button>
+        {removeButton}
       </div>
       {duplicate.shown && (
         <p role="alert" className="text-destructive">
@@ -188,12 +195,7 @@ export function DownloadCard({
                 >
                   {strings.download.showInFolder}
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void removeDownload(download.id)}
-                >
-                  {strings.download.remove}
-                </Button>
+                {removeButton}
               </div>
               {actionFailed && (
                 <p role="alert" className="text-destructive">
@@ -207,7 +209,7 @@ export function DownloadCard({
               <p role="alert" className="text-destructive">
                 {strings.download.failed}
               </p>
-              {retryButton}
+              {retryOrRemoveButtons}
             </>
           )}
           {download.status === "cancelled" && (
@@ -215,7 +217,7 @@ export function DownloadCard({
               <p className="text-muted-foreground">
                 {strings.download.cancelled}
               </p>
-              {retryButton}
+              {retryOrRemoveButtons}
             </>
           )}
         </div>

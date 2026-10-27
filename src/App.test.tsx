@@ -1165,11 +1165,27 @@ test("a Done Download is removed from the Queue by its own «Убрать»", as
 });
 
 test.each([
-  [{ status: "queued" }],
-  [{ status: "processing" }],
   [{ status: "failed", message: "ERROR: unable to download video data" }],
+  [{ status: "cancelled" }],
 ] as const)(
-  "a Download that isn't Done can't be removed (%o)",
+  "a Failed or Cancelled Download is removed by its own «Убрать» (%o)",
+  async (status) => {
+    const backend = await startReady();
+    await backend.queue(queued(1, { video: zoo, ...status }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Убрать" }));
+
+    await waitFor(() =>
+      expect(backend.downloadIds["remove_download"]).toEqual([1]),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Очистить завершённые" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+test.each([[{ status: "queued" }], [{ status: "processing" }]] as const)(
+  "a Download that hasn't ended can't be removed (%o)",
   async (status) => {
     const backend = await startReady();
 

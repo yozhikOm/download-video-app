@@ -1597,24 +1597,48 @@ fn a_download_cancelled_while_its_transcript_downloads_doesnt_receive_the_media(
 }
 
 #[test]
-fn a_done_download_is_removed_and_the_others_stay() {
+fn an_ended_download_is_removed_and_the_others_stay() {
     let app = App::start();
     ytdlp_fails_for(&app, Some("failed"));
     for id in ["done", "failed"] {
         app.download(&video_with_id(id, id), VideoPreset::P1080.into());
     }
-    app.downloader.add(
-        &video_with_id("queued", "queued"),
-        VideoPreset::P1080.into(),
-    );
+    for id in ["cancelled", "queued"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
     let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
+    assert!(app.downloader.cancel(ids[2]));
 
     for id in &ids {
         app.downloader.remove(*id);
     }
 
-    assert_eq!(titles(&app.downloader), ["failed", "queued"]);
-    assert_eq!(app.queues().last().unwrap().len(), 2, "the change is sent");
+    assert_eq!(titles(&app.downloader), ["queued"]);
+    assert_eq!(app.queues().last().unwrap().len(), 1, "the change is sent");
+}
+
+#[test]
+fn a_removed_failed_download_keeps_its_partial() {
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    fs::write(
+        app.partials_dir().join(format!("{ID}.1080p.f137.mp4.part")),
+        b"half",
+    )
+    .unwrap();
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    let id = app.downloader.state()[0].id;
+
+    app.downloader.remove(id);
+
+    assert_eq!(titles(&app.downloader), Vec::<String>::new());
+    assert_eq!(
+        file_names(&app.partials_dir()),
+        [format!("{ID}.1080p.f137.mp4.part")]
+    );
 }
 
 #[test]

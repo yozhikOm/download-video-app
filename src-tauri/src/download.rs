@@ -210,6 +210,14 @@ impl Entry {
     fn is_done(&self) -> bool {
         matches!(self.download.status, DownloadStatus::Done { .. })
     }
+
+    /// Done, Failed or Cancelled: nothing more happens to it unless retried.
+    fn has_ended(&self) -> bool {
+        matches!(
+            self.download.status,
+            DownloadStatus::Done { .. } | DownloadStatus::Failed { .. } | DownloadStatus::Cancelled
+        )
+    }
 }
 
 impl Queue {
@@ -452,12 +460,15 @@ impl Downloader {
         });
     }
 
-    /// Takes a Done Download out of the Queue; its files stay.
+    /// Takes a Done, Failed or Cancelled Download out of the Queue; its
+    /// files stay, and so does a Failed one's Partial, which a later Download
+    /// of the same Video with the same Preset resumes. A Cancelled one's
+    /// yt-dlp may still be exiting; its Partial is removed once it has.
     pub fn remove(&self, id: u64) {
         self.update(|queue| {
             queue
                 .entries
-                .retain(|entry| entry.download.id != id || !entry.is_done());
+                .retain(|entry| entry.download.id != id || !entry.has_ended());
         });
     }
 
