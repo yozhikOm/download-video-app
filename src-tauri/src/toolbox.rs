@@ -19,7 +19,7 @@ use zip::ZipArchive;
 
 use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
-use crate::processes::Processes;
+use crate::processes::{Processes, Stopper};
 use crate::releases::{Package, Release, Releases, ReleasesError};
 use crate::settings::Browser;
 
@@ -203,17 +203,18 @@ impl Toolbox {
     }
 
     /// Like [`Toolbox::run`], but hands each line the tool prints to stdout
-    /// to `on_line` as soon as it is printed.
+    /// to `on_line` as soon as it is printed, and `stopper` kills it.
     pub fn run_streaming(
         &self,
         tool: Tool,
         args: &[OsString],
         sign_in_browser: Option<Browser>,
         on_line: &mut dyn FnMut(&str),
+        stopper: &Stopper,
     ) -> Result<Output, ToolBroken> {
         let args = self.full_args(tool, args, sign_in_browser);
         self.processes
-            .run_streaming(&self.path(tool), &args, on_line)
+            .run_streaming(&self.path(tool), &args, on_line, stopper)
             .map_err(|_| self.broke(tool))
     }
 

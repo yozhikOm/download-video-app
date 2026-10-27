@@ -114,6 +114,8 @@ export const strings = {
     showInFolder: "Показать в папке",
     failed: "Не удалось скачать видео. Попробуйте ещё раз.",
     retry: "Повторить",
+    cancel: "Отменить",
+    cancelled: "Отменено",
     actionFailed:
       "Не удалось открыть файл — возможно, его переместили или удалили.",
     duplicate:

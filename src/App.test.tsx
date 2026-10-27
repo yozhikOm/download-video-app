@@ -128,6 +128,8 @@ function mockBackend({
         return added;
       case "retry_download":
         return added;
+      case "cancel_download":
+        return null;
       case "open_downloaded_file":
         if (openingFails) {
           throw new Error("file is gone");
@@ -1163,11 +1165,27 @@ test("a Done Download is removed from the Queue by its own «Убрать»", as
 });
 
 test.each([
-  [{ status: "queued" }],
-  [{ status: "processing" }],
   [{ status: "failed", message: "ERROR: unable to download video data" }],
+  [{ status: "cancelled" }],
 ] as const)(
-  "a Download that isn't Done can't be removed (%o)",
+  "a Failed or Cancelled Download is removed by its own «Убрать» (%o)",
+  async (status) => {
+    const backend = await startReady();
+    await backend.queue(queued(1, { video: zoo, ...status }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Убрать" }));
+
+    await waitFor(() =>
+      expect(backend.downloadIds["remove_download"]).toEqual([1]),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Очистить завершённые" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+test.each([[{ status: "queued" }], [{ status: "processing" }]] as const)(
+  "a Download that hasn't ended can't be removed (%o)",
   async (status) => {
     const backend = await startReady();
 
@@ -1282,6 +1300,54 @@ test("a Failed Download's duplicate warning goes once its duplicate is Done", as
   );
 
   expect(failed).not.toHaveTextContent("уже скачивается или ждёт в очереди");
+});
+
+test("a Queued or Downloading Download is cancelled from its card", async () => {
+  const backend = await startReady();
+  await backend.queue(
+    queued(1, {
+      video: zoo,
+      status: "downloading",
+      receiving: "video",
+      percent: 25,
+      speed: null,
+      eta: null,
+    }),
+    queued(2, { video: zoo, status: "queued" }),
+  );
+
+  for (const card of screen.getAllByRole("region", { name: "Me at the zoo" })) {
+    fireEvent.click(within(card).getByRole("button", { name: "Отменить" }));
+  }
+
+  await waitFor(() =>
+    expect(backend.downloadIds["cancel_download"]).toEqual([1, 2]),
+  );
+});
+
+test("a Download being processed or Done can't be cancelled", async () => {
+  const backend = await startReady();
+
+  await backend.queue(
+    queued(1, { video: zoo, status: "processing" }),
+    queued(2, { video: zoo, status: "done", file: "C:\\Downloads\\a.mp4" }),
+  );
+
+  expect(screen.queryByRole("button", { name: "Отменить" })).toBeNull();
+});
+
+test("a Cancelled Download says so and is retried from its card", async () => {
+  const backend = await startReady();
+  await backend.download({ video: zoo, status: "cancelled" });
+
+  expect(
+    screen.getByRole("region", { name: "Me at the zoo" }),
+  ).toHaveTextContent("Отменено");
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+
+  await waitFor(() =>
+    expect(backend.downloadIds["retry_download"]).toEqual([1]),
+  );
 });
 
 const nextUrl = "https://www.youtube.com/watch?v=-moW9jvvMr4";

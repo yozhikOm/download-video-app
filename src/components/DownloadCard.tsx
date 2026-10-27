@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
+  cancelDownload,
   openDownloadedFile,
   removeDownload,
   retryDownload,
@@ -87,10 +88,45 @@ export function DownloadCard({
     duplicate.clear();
     retryDownload(download.id)
       .then(duplicate.note)
-      // It fails only for a Download no longer Failed, which the Queue's
-      // next event shows.
+      // It fails for a Download no longer Failed or Cancelled, which the
+      // Queue's next event shows, and for a Cancelled one whose yt-dlp is
+      // still exiting, which can be retried in a moment.
       .catch(() => {});
   }
+
+  function cancel() {
+    // It fails only for a Download no longer Queued or Downloading, which
+    // the Queue's next event shows.
+    cancelDownload(download.id).catch(() => {});
+  }
+
+  const cancelButton = (
+    <div>
+      <Button variant="outline" onClick={cancel}>
+        {strings.download.cancel}
+      </Button>
+    </div>
+  );
+
+  const removeButton = (
+    <Button variant="ghost" onClick={() => void removeDownload(download.id)}>
+      {strings.download.remove}
+    </Button>
+  );
+
+  const retryOrRemoveButtons = (
+    <>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={retry}>{strings.download.retry}</Button>
+        {removeButton}
+      </div>
+      {duplicate.shown && (
+        <p role="alert" className="text-destructive">
+          {strings.download.duplicate}
+        </p>
+      )}
+    </>
+  );
 
   return (
     <Card size="sm" role="region" aria-labelledby={titleId}>
@@ -112,7 +148,10 @@ export function DownloadCard({
             <CardDescription>{savesText(download)}</CardDescription>
           </div>
           {download.status === "queued" && (
-            <p className="text-muted-foreground">{strings.download.queued}</p>
+            <>
+              <p className="text-muted-foreground">{strings.download.queued}</p>
+              {cancelButton}
+            </>
           )}
           {download.status === "downloading" && (
             <>
@@ -129,6 +168,7 @@ export function DownloadCard({
                   {progressText(download)}
                 </span>
               </p>
+              {cancelButton}
             </>
           )}
           {download.status === "processing" && (
@@ -156,12 +196,7 @@ export function DownloadCard({
                 >
                   {strings.download.showInFolder}
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void removeDownload(download.id)}
-                >
-                  {strings.download.remove}
-                </Button>
+                {removeButton}
               </div>
               {actionFailed && (
                 <p role="alert" className="text-destructive">
@@ -175,14 +210,15 @@ export function DownloadCard({
               <p role="alert" className="text-destructive">
                 {strings.download.failed}
               </p>
-              <div>
-                <Button onClick={retry}>{strings.download.retry}</Button>
-              </div>
-              {duplicate.shown && (
-                <p role="alert" className="text-destructive">
-                  {strings.download.duplicate}
-                </p>
-              )}
+              {retryOrRemoveButtons}
+            </>
+          )}
+          {download.status === "cancelled" && (
+            <>
+              <p className="text-muted-foreground">
+                {strings.download.cancelled}
+              </p>
+              {retryOrRemoveButtons}
             </>
           )}
         </div>

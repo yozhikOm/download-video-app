@@ -19,6 +19,7 @@ use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::{Video, VideoCard, error_line};
+use crate::processes::Stopper;
 use crate::settings::{Browser, Settings};
 use crate::toolbox::{SetupState, Tool, Toolbox};
 use crate::transcript::{self, TranscriptLanguage};
@@ -64,6 +65,8 @@ pub enum DownloadStatus {
     Failed {
         message: String,
     },
+    /// Stopped by the user; its Partial is removed.
+    Cancelled,
 }
 
 impl DownloadStatus {
@@ -192,6 +195,8 @@ struct Queue {
     has_worker: bool,
     /// The id of the Download being received.
     running: Option<u64>,
+    /// Stops the yt-dlp of the Download being received.
+    stopper: Arc<Stopper>,
     next_id: u64,
 }
 
@@ -205,6 +210,14 @@ impl Entry {
     fn is_done(&self) -> bool {
         matches!(self.download.status, DownloadStatus::Done { .. })
     }
+
+    /// Done, Failed or Cancelled: nothing more happens to it unless retried.
+    fn has_ended(&self) -> bool {
+        matches!(
+            self.download.status,
+            DownloadStatus::Done { .. } | DownloadStatus::Failed { .. } | DownloadStatus::Cancelled
+        )
+    }
 }
 
 impl Queue {
@@ -212,6 +225,25 @@ impl Queue {
         self.entries
             .iter()
             .map(|entry| entry.download.clone())
+            .collect()
+    }
+
+    fn running(&self) -> Option<&Entry> {
+        let id = self.running?;
+        self.entries.iter().find(|entry| entry.download.id == id)
+    }
+
+    /// The name prefixes of the Partial of `entry`, which isn't running,
+    /// that the running Download doesn't use: it may receive the same
+    /// Transcript.
+    fn unused_partial(&self, entry: &Entry) -> Vec<String> {
+        let in_use = self
+            .running()
+            .map(|running| partial_prefixes(&running.video, &running.content))
+            .unwrap_or_default();
+        partial_prefixes(&entry.video, &entry.content)
+            .into_iter()
+            .filter(|prefix| !in_use.contains(prefix))
             .collect()
     }
 
@@ -236,8 +268,8 @@ impl Queue {
     }
 
     /// Starts the first Queued Download and returns what it saves of which
-    /// Video; when none waits, the worker stops.
-    fn start_next(&mut self) -> Option<(Video, Content)> {
+    /// Video, and what stops its yt-dlp; when none waits, the worker stops.
+    fn start_next(&mut self) -> Option<(Video, Content, Arc<Stopper>)> {
         let Some(entry) = self
             .entries
             .iter_mut()
@@ -248,7 +280,12 @@ impl Queue {
         };
         entry.download.status = DownloadStatus::starting(entry.content.first());
         self.running = Some(entry.download.id);
-        Some((entry.video.clone(), entry.content.clone()))
+        self.stopper = Arc::default();
+        Some((
+            entry.video.clone(),
+            entry.content.clone(),
+            self.stopper.clone(),
+        ))
     }
 }
 
@@ -262,6 +299,9 @@ enum Stopped {
 
 /// How often the UI gets the speed and time left while the percent stands.
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long a Partial untouched is kept for a later Download to resume.
+const PARTIAL_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Keeps the Queue and downloads its Videos with yt-dlp.
 pub struct Downloader {
@@ -342,19 +382,31 @@ impl Downloader {
         })
     }
 
-    /// Puts a Failed Download back at the end of the Queue, to download its
-    /// Video with its Preset and Transcript again; yt-dlp resumes from its
-    /// Partial. `None` when it isn't Failed; nothing changes for a duplicate
-    /// of a Queued or running Download, as with [`Downloader::add`].
+    /// Puts a Failed or Cancelled Download back at the end of the Queue, to
+    /// download its Video with its Preset and Transcript again: yt-dlp
+    /// resumes from a Failed one's Partial, and starts a Cancelled one from
+    /// scratch. `None` when it is neither, or while a cancelled one's
+    /// yt-dlp is still exiting; nothing changes for a duplicate of a Queued
+    /// or running Download, as with [`Downloader::add`].
     pub fn retry(&self, id: u64) -> Option<Added> {
         self.update(|queue| {
             let at = queue.entries.iter().position(|entry| {
                 entry.download.id == id
-                    && matches!(entry.download.status, DownloadStatus::Failed { .. })
+                    && matches!(
+                        entry.download.status,
+                        DownloadStatus::Failed { .. } | DownloadStatus::Cancelled
+                    )
             })?;
-            let failed = &queue.entries[at];
-            if let Some(of) = queue.duplicate_of(&failed.video, &failed.content) {
+            if queue.running == Some(id) {
+                return None;
+            }
+            let retried = &queue.entries[at];
+            if let Some(of) = queue.duplicate_of(&retried.video, &retried.content) {
                 return Some(Added::Duplicate { of });
+            }
+            if retried.download.status == DownloadStatus::Cancelled {
+                // Its Partial may have been in use when it was cancelled.
+                remove_partial(&self.partials_dir, &queue.unused_partial(retried));
             }
             let mut entry = queue.entries.remove(at);
             entry.download.status = DownloadStatus::Queued;
@@ -363,12 +415,60 @@ impl Downloader {
         })
     }
 
-    /// Takes a Done Download out of the Queue; its files stay.
+    /// Cancels a Queued or Downloading Download and removes its Partial, so
+    /// that retrying it starts from scratch: a Downloading one's yt-dlp is
+    /// killed, and its Partial is removed once it has exited. `false` when
+    /// it is neither, or once its yt-dlp has ended.
+    pub fn cancel(&self, id: u64) -> bool {
+        self.update(|queue| {
+            let Some(at) = queue
+                .entries
+                .iter()
+                .position(|entry| entry.download.id == id)
+            else {
+                return false;
+            };
+            let entry = &queue.entries[at];
+            match entry.download.status {
+                DownloadStatus::Queued => {
+                    remove_partial(&self.partials_dir, &queue.unused_partial(entry));
+                }
+                DownloadStatus::Downloading { .. } if queue.running == Some(id) => {
+                    if !queue.stopper.stop() {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+            queue.entries[at].download.status = DownloadStatus::Cancelled;
+            true
+        })
+    }
+
+    /// Removes the Partials untouched for longer than [`PARTIAL_LIFETIME`].
+    /// Called at launch, before any Download is received.
+    pub fn discard_old_partials(&self) {
+        let now = self.clock.now();
+        remove_partials_where(&self.partials_dir, |entry| {
+            entry
+                .metadata()
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|untouched| untouched > PARTIAL_LIFETIME)
+        });
+    }
+
+    /// Takes a Done, Failed or Cancelled Download out of the Queue; its
+    /// files stay, and so does a Failed one's Partial, which a later Download
+    /// of the same Video with the same Preset resumes. A Cancelled one's
+    /// yt-dlp may still be exiting; its Partial is removed once it has.
     pub fn remove(&self, id: u64) {
         self.update(|queue| {
             queue
                 .entries
-                .retain(|entry| entry.download.id != id || !entry.is_done());
+                .retain(|entry| entry.download.id != id || !entry.has_ended());
         });
     }
 
@@ -388,10 +488,10 @@ impl Downloader {
             }
             queue.has_worker = true;
         }
-        while let Some((video, content)) = self.update(Queue::start_next) {
+        while let Some((video, content, stopper)) = self.update(Queue::start_next) {
             // Each Download's first progress goes out at once.
             *self.progress_sent.lock().unwrap() = None;
-            if !self.download(&video, &content) {
+            if !self.download(&video, &content, &stopper) {
                 // Setup has ended, this call's or one already running; when
                 // it failed, the rest wait until Setup is retried and runs
                 // the Queue. Its state is read under the Queue's lock, so that a
@@ -407,12 +507,23 @@ impl Downloader {
     }
 
     /// Receives `content` of `video` for the running Download and saves its
-    /// files. `false` when yt-dlp failed to start: the Download is dropped
-    /// and Setup restores yt-dlp; once it does, the user adds the Download
-    /// again.
-    fn download(&self, video: &Video, content: &Content) -> bool {
+    /// files, unless `stopper` stops it first. `false` when yt-dlp failed to
+    /// start: the Download is dropped and Setup restores yt-dlp; once it
+    /// does, the user adds the Download again.
+    fn download(&self, video: &Video, content: &Content, stopper: &Stopper) -> bool {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
-        let status = match self.receive(video, content, sign_in_browser) {
+        let received = self.receive(video, content, sign_in_browser, stopper);
+        // Once yt-dlp has ended, the Download can no longer be cancelled.
+        let cancelled = stopper.finish();
+        let status = match received {
+            // Nothing uses its files now. A yt-dlp killed and then found
+            // broken is cancelled all the same; the next Download tells
+            // whether it is broken.
+            _ if cancelled => {
+                remove_partial(&self.partials_dir, &partial_prefixes(video, content));
+                self.update(|queue| queue.running = None);
+                return true;
+            }
             Err(Stopped::ToolBroken) => {
                 self.update(|queue| {
                     let running = queue.running.take();
@@ -454,10 +565,11 @@ impl Downloader {
         video: &Video,
         content: &Content,
         sign_in_browser: Option<Browser>,
+        stopper: &Stopper,
     ) -> Result<Vec<PathBuf>, Stopped> {
         let transcript = content
             .transcript()
-            .map(|language| self.receive_transcript(video, language, sign_in_browser))
+            .map(|language| self.receive_transcript(video, language, sign_in_browser, stopper))
             .transpose()?;
         let media = content
             .preset()
@@ -467,7 +579,7 @@ impl Downloader {
                 if transcript.is_some() {
                     self.set_status(DownloadStatus::starting(Receiving::of(preset)));
                 }
-                self.receive_media(video, preset, sign_in_browser)
+                self.receive_media(video, preset, sign_in_browser, stopper)
             })
             .transpose()?;
         Ok(media.into_iter().chain(transcript).collect())
@@ -479,8 +591,11 @@ impl Downloader {
         video: &Video,
         preset: Preset,
         sign_in_browser: Option<Browser>,
+        stopper: &Stopper,
     ) -> Result<PathBuf, Stopped> {
-        let mut args: Vec<OsString> = vec!["--no-playlist".into()];
+        // Dated when received, not as the site last changed the Video, so
+        // that a fresh Partial isn't discarded as old.
+        let mut args: Vec<OsString> = vec!["--no-playlist".into(), "--no-mtime".into()];
         args.extend(preset_args(preset));
         args.extend::<[OsString; _]>([
             "-P".into(),
@@ -528,9 +643,10 @@ impl Downloader {
                     Line::FinalFile(path) => final_file = Some(path),
                     Line::Other => {}
                 },
+                stopper,
             )
             .map_err(|_| Stopped::ToolBroken)?;
-        failure(&output)?;
+        self.failure_resuming(&output, &media_prefix(video, preset))?;
         final_file.ok_or_else(|| Stopped::Failed("yt-dlp didn't tell where the file is".into()))
     }
 
@@ -541,6 +657,7 @@ impl Downloader {
         video: &Video,
         language: &TranscriptLanguage,
         sign_in_browser: Option<Browser>,
+        stopper: &Stopper,
     ) -> Result<PathBuf, Stopped> {
         let name = transcript::ytdlp_name(language, &video.transcripts);
         let write = if language.automatic {
@@ -572,11 +689,13 @@ impl Downloader {
             "--".into(),
             video.url.clone().into(),
         ]);
+        // Streamed only so that the user can stop it; it prints nothing the
+        // app reads.
         let output = self
             .toolbox
-            .run(Tool::YtDlp, &args, sign_in_browser)
+            .run_streaming(Tool::YtDlp, &args, sign_in_browser, &mut |_| {}, stopper)
             .map_err(|_| Stopped::ToolBroken)?;
-        failure(&output)?;
+        self.failure_resuming(&output, &transcript_prefix(video, language))?;
         // yt-dlp prints no path without the media, and succeeds without a
         // file when the site has no subtitles in the language; it puts the
         // language before the extension.
@@ -595,6 +714,21 @@ impl Downloader {
             eprintln!("can't remove {}: {error}", subtitles.display());
         }
         Ok(file)
+    }
+
+    /// Like [`failure`], for yt-dlp resuming the part of the Partial whose
+    /// names begin with `prefix`. yt-dlp fails with HTTP Error 416 when that
+    /// part is already whole: it asks for the bytes past its end, and can't
+    /// tell it is done (yt-dlp#12994). Every retry would fail the same way,
+    /// so the part is removed, and the next one receives it from scratch.
+    fn failure_resuming(&self, output: &Output, prefix: &str) -> Result<(), Stopped> {
+        failure(output).inspect_err(|stopped| {
+            if let Stopped::Failed(message) = stopped
+                && message.contains("HTTP Error 416")
+            {
+                remove_partial(&self.partials_dir, &[prefix.to_owned()]);
+            }
+        })
     }
 
     /// Moves the final files out of the Partials folder under the first
@@ -686,10 +820,12 @@ impl Downloader {
         Some(queue.running_mut()?.download.status.clone())
     }
 
-    /// Sets the status of the running Download.
+    /// Sets the status of the running Download, unless it is cancelled.
     fn set_status(&self, status: DownloadStatus) {
         self.update(|queue| {
-            if let Some(entry) = queue.running_mut() {
+            if let Some(entry) = queue.running_mut()
+                && entry.download.status != DownloadStatus::Cancelled
+            {
                 entry.download.status = status;
             }
         });
@@ -778,6 +914,55 @@ fn format_sort(preset: VideoPreset) -> String {
         None => "res".into(),
     };
     format!("{resolution},vcodec:h264,acodec:aac")
+}
+
+/// The beginnings of the names of the files that a Download of `content` of
+/// `video` leaves in the Partials folder: `<id>.<preset>.` for the media and
+/// `<id>.transcript.<language>.` for the Transcript.
+fn partial_prefixes(video: &Video, content: &Content) -> Vec<String> {
+    let media = content.preset().map(|preset| media_prefix(video, preset));
+    let transcript = content
+        .transcript()
+        .map(|language| transcript_prefix(video, language));
+    media.into_iter().chain(transcript).collect()
+}
+
+fn media_prefix(video: &Video, preset: Preset) -> String {
+    format!("{}.{}.", video.id, preset.name())
+}
+
+fn transcript_prefix(video: &Video, language: &TranscriptLanguage) -> String {
+    let name = transcript::ytdlp_name(language, &video.transcripts);
+    format!("{}.transcript.{name}.", video.id)
+}
+
+/// Removes the files in the Partials folder whose names begin with one of
+/// `prefixes`.
+fn remove_partial(partials_dir: &Path, prefixes: &[String]) {
+    remove_partials_where(partials_dir, |entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        prefixes
+            .iter()
+            .any(|prefix| name.starts_with(prefix.as_str()))
+    });
+}
+
+/// Removes the files in the Partials folder that `remove` picks.
+fn remove_partials_where(partials_dir: &Path, remove: impl Fn(&fs::DirEntry) -> bool) {
+    let Ok(entries) = fs::read_dir(partials_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if remove(&entry)
+            && let Err(error) = fs::remove_file(entry.path())
+        {
+            eprintln!(
+                "can't remove the Partial {}: {error}",
+                entry.path().display()
+            );
+        }
+    }
 }
 
 /// Longer titles are cut, so that the path fits Windows' limit.

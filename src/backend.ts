@@ -161,6 +161,8 @@ export type Download = {
     | { status: "done"; file: string }
     /** `message` is for the log; the UI shows a generic text. */
     | { status: "failed"; message: string }
+    /** Stopped by the user; its Partial is removed. */
+    | { status: "cancelled" }
   );
 
 /** What the backend pushes to the UI; the backend owns the state. */
@@ -221,14 +223,22 @@ export function addDownload(
 }
 
 /**
- * Puts the Failed Download back at the end of the Queue to download its
- * Video again, resuming from its Partial.
+ * Puts the Failed or Cancelled Download back at the end of the Queue to
+ * download its Video again, resuming from a Failed one's Partial.
  */
 export function retryDownload(id: number): Promise<Added> {
   return invoke<Added>("retry_download", { id });
 }
 
-/** Takes the Done Download out of the Queue; its files stay. */
+/**
+ * Cancels the Queued or Downloading Download, stopping yt-dlp and removing
+ * its Partial; rejects once it is neither.
+ */
+export function cancelDownload(id: number): Promise<void> {
+  return invoke("cancel_download", { id });
+}
+
+/** Takes the Done, Failed or Cancelled Download out of the Queue; its files stay. */
 export function removeDownload(id: number): Promise<void> {
   return invoke("remove_download", { id });
 }

@@ -50,6 +50,10 @@ impl SteppingClock {
     fn step_by(&self, step: Duration) {
         *self.step.lock().unwrap() = step;
     }
+
+    fn set(&self, now: SystemTime) {
+        *self.now.lock().unwrap() = now;
+    }
 }
 
 impl Clock for SteppingClock {
@@ -859,6 +863,52 @@ fn a_download_that_yt_dlp_fails_is_failed_and_keeps_its_partial() {
     assert!(!app.save_dir().exists());
 }
 
+#[test]
+fn a_download_that_yt_dlp_cant_resume_is_failed_without_its_partial() {
+    let app = App::start();
+    app.processes.script("yt-dlp.exe", |args| {
+        let partial = PathBuf::from(after(args, "-P")).join(format!("{ID}.1080p.f137.mp4.part"));
+        fs::create_dir_all(partial.parent().unwrap()).unwrap();
+        fs::write(&partial, b"whole").unwrap();
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: b"ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable\n"
+                .to_vec(),
+        }
+    });
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Failed {
+            message: "ERROR: unable to download video data: HTTP Error 416: Requested range not satisfiable".into()
+        })
+    );
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
+}
+
+#[test]
+fn a_transcript_yt_dlp_cant_resume_leaves_the_medias_partial() {
+    let app = App::start();
+    let media = format!("{ID}.1080p.f137.mp4.part");
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    fs::write(app.partials_dir().join(&media), b"half").unwrap();
+    app.processes.fail_with(
+        "yt-dlp.exe",
+        b"ERROR: Unable to download video subtitles: HTTP Error 416: Requested range not satisfiable\n",
+    );
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+
+    assert!(matches!(app.status(), Some(DownloadStatus::Failed { .. })));
+    assert_eq!(file_names(&app.partials_dir()), [media]);
+}
+
 /// The yt-dlp runs so far, each with its arguments.
 fn ytdlp_runs(app: &App) -> Vec<Vec<OsString>> {
     app.processes
@@ -1250,7 +1300,7 @@ fn a_failed_download_is_not_retried_while_its_duplicate_is_queued() {
 }
 
 #[test]
-fn only_a_failed_download_is_retried() {
+fn only_a_failed_or_cancelled_download_is_retried() {
     let app = App::start();
     app.ytdlp_downloads(ID, b"the video", &[]);
     app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
@@ -1263,25 +1313,383 @@ fn only_a_failed_download_is_retried() {
     assert_eq!(app.downloader.retry(99), None);
 }
 
+/// Leaves a Partial in the Partials folder, as a Download of the Video
+/// with this id in 1080p that stopped would; returns its file's name.
+fn leave_partial(app: &App, id: &str) -> String {
+    let name = format!("{id}.1080p.f137.mp4.part");
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    fs::write(app.partials_dir().join(&name), b"half").unwrap();
+    name
+}
+
 #[test]
-fn a_done_download_is_removed_and_the_others_stay() {
+fn a_queued_download_cancelled_is_never_received_and_its_partial_is_removed() {
+    let app = App::start();
+    ytdlp_downloads_any(&app);
+    leave_partial(&app, "second");
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    let second = app.downloader.state()[1].id;
+
+    assert!(app.downloader.cancel(second));
+    app.downloader.run();
+
+    assert_eq!(ids_received(&app), ["first"]);
+    assert_eq!(statuses(&app.downloader)[1..], [DownloadStatus::Cancelled]);
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
+}
+
+/// Makes yt-dlp leave a Partial of the Video with the id `cancelled` and
+/// have its Download cancelled while it receives it, and act like it
+/// downloads any other Video, saving its id as its content.
+fn ytdlp_cancelled_for(app: &App, cancelled: &'static str) {
+    let downloader = Arc::downgrade(&app.downloader);
+    app.processes.script("yt-dlp.exe", move |args| {
+        let id = id_of(args);
+        let dir = PathBuf::from(after(args, "-P"));
+        let name = after(args, "-o").to_str().unwrap().replace("%(id)s", id);
+        fs::create_dir_all(&dir).unwrap();
+        if id == cancelled {
+            fs::write(dir.join(name.replace("%(ext)s", "f137.mp4.part")), b"half").unwrap();
+            let downloader = downloader.upgrade().unwrap();
+            let running = downloader
+                .state()
+                .into_iter()
+                .find(|download| matches!(download.status, DownloadStatus::Downloading { .. }))
+                .unwrap();
+            assert!(downloader.cancel(running.id));
+        }
+        let file = dir.join(name.replace("%(ext)s", "mp4"));
+        fs::write(&file, id).unwrap();
+        Output {
+            status: exit_status(0),
+            stdout: format!("{}\n", serde_json::to_string(&file).unwrap()).into_bytes(),
+            stderr: Vec::new(),
+        }
+    });
+}
+
+#[test]
+fn a_download_cancelled_while_downloading_stops_yt_dlp_and_removes_its_partial() {
+    let app = App::start();
+    ytdlp_cancelled_for(&app, "first");
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+
+    app.downloader.run();
+
+    assert_eq!(app.processes.kills(), 1);
+    assert_eq!(
+        statuses(&app.downloader),
+        [
+            DownloadStatus::Cancelled,
+            DownloadStatus::Done {
+                file: app.save_dir().join("second.mp4")
+            }
+        ]
+    );
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
+    assert_eq!(file_names(&app.save_dir()), ["second.mp4"]);
+}
+
+#[test]
+fn a_download_cancelled_as_its_yt_dlp_breaks_stays_cancelled() {
+    let app = App::start();
+    let downloader = Arc::downgrade(&app.downloader);
+    let processes = Arc::downgrade(&app.processes);
+    app.processes.script("yt-dlp.exe", move |args| {
+        let dir = PathBuf::from(after(args, "-P"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{ID}.1080p.f137.mp4.part")), b"half").unwrap();
+        let downloader = downloader.upgrade().unwrap();
+        assert!(downloader.cancel(downloader.state()[0].id));
+        processes.upgrade().unwrap().break_tool("yt-dlp.exe");
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+    let fetched_before = app.releases.fetches().len();
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(app.status(), Some(DownloadStatus::Cancelled));
+    assert_eq!(
+        app.releases.fetches().len(),
+        fetched_before,
+        "Setup doesn't run"
+    );
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
+}
+
+/// Makes yt-dlp act like it downloads any Video, saving its id as its
+/// content; returns the files it finds in the Partials folder each time it
+/// starts.
+fn ytdlp_finds_partials(app: &App) -> Arc<Mutex<Vec<Vec<String>>>> {
+    let found = Arc::new(Mutex::new(Vec::new()));
+    let found_by_ytdlp = found.clone();
+    app.processes.script("yt-dlp.exe", move |args| {
+        let dir = PathBuf::from(after(args, "-P"));
+        fs::create_dir_all(&dir).unwrap();
+        found_by_ytdlp.lock().unwrap().push(file_names(&dir));
+        let id = id_of(args);
+        let name = after(args, "-o").to_str().unwrap().replace("%(id)s", id);
+        let file = dir.join(name.replace("%(ext)s", "mp4"));
+        fs::write(&file, id).unwrap();
+        Output {
+            status: exit_status(0),
+            stdout: format!("{}\n", serde_json::to_string(&file).unwrap()).into_bytes(),
+            stderr: Vec::new(),
+        }
+    });
+    found
+}
+
+#[test]
+fn a_queued_download_cancelled_leaves_the_transcript_the_running_one_receives() {
+    let app = App::start();
+    let zoo = video(URL, "Me at the zoo");
+    app.downloader.add(
+        &zoo,
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+    app.downloader.add(&zoo, Content::Transcript(manual("en")));
+    let downloader = Arc::downgrade(&app.downloader);
+    app.processes.script("yt-dlp.exe", move |args| {
+        let downloader = downloader.upgrade().unwrap();
+        if args.contains(&"--skip-download".into()) {
+            let output = write_subtitles(args, ID, Some(TED_SUBTITLES));
+            if let [running, queued] = &downloader.state()[..]
+                && queued.status == DownloadStatus::Queued
+            {
+                assert_eq!(
+                    running.status,
+                    DownloadStatus::starting(Receiving::Transcript)
+                );
+                assert!(downloader.cancel(queued.id));
+            }
+            return output;
+        }
+        let file = PathBuf::from(after(args, "-P")).join(format!("{ID}.1080p.mp4"));
+        fs::write(&file, b"the video").unwrap();
+        Output {
+            status: exit_status(0),
+            stdout: format!("{}\n", serde_json::to_string(&file).unwrap()).into_bytes(),
+            stderr: Vec::new(),
+        }
+    });
+
+    app.downloader.run();
+
+    assert_eq!(
+        statuses(&app.downloader),
+        [
+            DownloadStatus::Done {
+                file: app.save_dir().join("Me at the zoo.mp4")
+            },
+            DownloadStatus::Cancelled
+        ]
+    );
+    assert_eq!(
+        file_names(&app.save_dir()),
+        ["Me at the zoo.mp4", "Me at the zoo.txt"]
+    );
+}
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[test]
+fn partials_untouched_for_seven_days_are_discarded_and_newer_ones_stay() {
+    let app = App::start();
+    // At first launch there is no Partials folder yet.
+    app.downloader.discard_old_partials();
+    let now = SystemTime::UNIX_EPOCH + 100 * DAY;
+    app.clock.set(now);
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    for (name, untouched) in [
+        ("month.1080p.f137.mp4.part", 30 * DAY),
+        (
+            "week.1080p.f137.mp4.part",
+            7 * DAY + Duration::from_secs(60),
+        ),
+        (
+            "days.1080p.f137.mp4.part",
+            7 * DAY - Duration::from_secs(60),
+        ),
+        ("today.mp3.webm.part", Duration::ZERO),
+    ] {
+        let file = fs::File::create(app.partials_dir().join(name)).unwrap();
+        file.set_modified(now - untouched).unwrap();
+    }
+
+    app.downloader.discard_old_partials();
+
+    assert_eq!(
+        file_names(&app.partials_dir()),
+        ["days.1080p.f137.mp4.part", "today.mp3.webm.part"]
+    );
+}
+
+#[test]
+fn a_done_failed_or_cancelled_download_isnt_cancelled() {
+    let app = App::start();
+    ytdlp_fails_for(&app, Some("failed"));
+    for id in ["done", "failed", "cancelled"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    let cancelled = app.downloader.state()[2].id;
+    app.downloader.cancel(cancelled);
+    app.downloader.run();
+    leave_partial(&app, "failed");
+    let before = app.downloader.state();
+
+    for download in &before {
+        assert!(!app.downloader.cancel(download.id));
+    }
+    assert!(!app.downloader.cancel(99));
+
+    assert_eq!(app.downloader.state(), before);
+    assert_eq!(
+        file_names(&app.partials_dir()),
+        ["failed.1080p.f137.mp4.part"]
+    );
+}
+
+#[test]
+fn a_failed_download_is_retried_from_its_partial() {
+    let app = App::start();
+    ytdlp_fails_for(&app, Some("first"));
+    let partial = leave_partial(&app, "first");
+    app.download(&video_with_id("first", "first"), VideoPreset::P1080.into());
+    let found = ytdlp_finds_partials(&app);
+
+    app.retry();
+
+    assert_eq!(*found.lock().unwrap(), [[partial]]);
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("first.mp4")
+        })
+    );
+}
+
+#[test]
+fn a_cancelled_download_isnt_retried_until_its_yt_dlp_has_exited() {
+    let app = App::start();
+    let downloader = Arc::downgrade(&app.downloader);
+    let retried = Arc::new(Mutex::new(None));
+    let retried_meanwhile = retried.clone();
+    app.processes.script("yt-dlp.exe", move |_| {
+        let downloader = downloader.upgrade().unwrap();
+        let id = downloader.state()[0].id;
+        assert!(downloader.cancel(id));
+        *retried_meanwhile.lock().unwrap() = Some(downloader.retry(id));
+        Output {
+            status: exit_status(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(*retried.lock().unwrap(), Some(None));
+    assert_eq!(app.status(), Some(DownloadStatus::Cancelled));
+    ytdlp_downloads_any(&app);
+    app.retry();
+    assert!(matches!(app.status(), Some(DownloadStatus::Done { .. })));
+}
+
+#[test]
+fn a_cancelled_download_is_retried_from_scratch() {
+    let app = App::start();
+    ytdlp_cancelled_for(&app, "first");
+    app.download(&video_with_id("first", "first"), VideoPreset::P1080.into());
+    let found = ytdlp_finds_partials(&app);
+
+    app.retry();
+
+    assert_eq!(*found.lock().unwrap(), [Vec::<String>::new()]);
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("first.mp4")
+        })
+    );
+}
+
+#[test]
+fn a_download_cancelled_while_its_transcript_downloads_doesnt_receive_the_media() {
+    let app = App::start();
+    let downloader = Arc::downgrade(&app.downloader);
+    app.processes.script("yt-dlp.exe", move |args| {
+        let output = write_subtitles(args, ID, Some(TED_SUBTITLES));
+        let downloader = downloader.upgrade().unwrap();
+        assert!(downloader.cancel(downloader.state()[0].id));
+        output
+    });
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+
+    assert_eq!(app.status(), Some(DownloadStatus::Cancelled));
+    assert_eq!(ytdlp_runs(&app).len(), 1, "the media isn't downloaded");
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
+    assert!(!app.save_dir().exists());
+}
+
+#[test]
+fn an_ended_download_is_removed_and_the_others_stay() {
     let app = App::start();
     ytdlp_fails_for(&app, Some("failed"));
     for id in ["done", "failed"] {
         app.download(&video_with_id(id, id), VideoPreset::P1080.into());
     }
-    app.downloader.add(
-        &video_with_id("queued", "queued"),
-        VideoPreset::P1080.into(),
-    );
+    for id in ["cancelled", "queued"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
     let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
+    assert!(app.downloader.cancel(ids[2]));
 
     for id in &ids {
         app.downloader.remove(*id);
     }
 
-    assert_eq!(titles(&app.downloader), ["failed", "queued"]);
-    assert_eq!(app.queues().last().unwrap().len(), 2, "the change is sent");
+    assert_eq!(titles(&app.downloader), ["queued"]);
+    assert_eq!(app.queues().last().unwrap().len(), 1, "the change is sent");
+}
+
+#[test]
+fn a_removed_failed_download_keeps_its_partial() {
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    fs::write(
+        app.partials_dir().join(format!("{ID}.1080p.f137.mp4.part")),
+        b"half",
+    )
+    .unwrap();
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+    let id = app.downloader.state()[0].id;
+
+    app.downloader.remove(id);
+
+    assert_eq!(titles(&app.downloader), Vec::<String>::new());
+    assert_eq!(
+        file_names(&app.partials_dir()),
+        [format!("{ID}.1080p.f137.mp4.part")]
+    );
 }
 
 #[test]
@@ -1332,6 +1740,18 @@ fn a_download_asks_yt_dlp_for_this_one_video_merged_into_an_mp4() {
     assert_eq!(after(&args, "--merge-output-format"), "mp4");
     // The URL comes after `--`, so yt-dlp never reads it as an option.
     assert_eq!(args[args.len() - 2..], [OsString::from("--"), url.into()]);
+}
+
+#[test]
+fn a_download_dates_its_files_when_received_so_its_partial_isnt_taken_for_old() {
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    let (_, args) = app.processes.runs().pop().unwrap();
+    // Otherwise yt-dlp may date them as the site last changed the Video.
+    assert!(args.contains(&"--no-mtime".into()), "{args:?}");
 }
 
 #[test]
