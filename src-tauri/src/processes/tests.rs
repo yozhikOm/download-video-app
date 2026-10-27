@@ -53,6 +53,29 @@ fn a_program_started_once_stopped_is_killed_at_once() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
+#[cfg(windows)]
+#[test]
+fn a_program_runs_in_the_job_that_dies_with_the_app() {
+    let mut child =
+        super::spawn(&mut super::command(Path::new("cmd"), &ping_through_cmd())).unwrap();
+
+    let held = super::job::holds(&child);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(held.unwrap());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_program_started_in_the_job_runs_to_its_end() {
+    let output = SystemProcesses
+        .run(Path::new("cmd"), &["/C".into(), "echo started".into()])
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "started");
+}
+
 #[test]
 fn a_finished_stopper_no_longer_stops() {
     let stopper = Stopper::default();
