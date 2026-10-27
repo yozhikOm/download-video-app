@@ -889,6 +889,26 @@ fn a_download_that_yt_dlp_cant_resume_is_failed_without_its_partial() {
     assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
 }
 
+#[test]
+fn a_transcript_yt_dlp_cant_resume_leaves_the_medias_partial() {
+    let app = App::start();
+    let media = format!("{ID}.1080p.f137.mp4.part");
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    fs::write(app.partials_dir().join(&media), b"half").unwrap();
+    app.processes.fail_with(
+        "yt-dlp.exe",
+        b"ERROR: Unable to download video subtitles: HTTP Error 416: Requested range not satisfiable\n",
+    );
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+
+    assert!(matches!(app.status(), Some(DownloadStatus::Failed { .. })));
+    assert_eq!(file_names(&app.partials_dir()), [media]);
+}
+
 /// The yt-dlp runs so far, each with its arguments.
 fn ytdlp_runs(app: &App) -> Vec<Vec<OsString>> {
     app.processes
@@ -1374,6 +1394,37 @@ fn a_download_cancelled_while_downloading_stops_yt_dlp_and_removes_its_partial()
     );
     assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
     assert_eq!(file_names(&app.save_dir()), ["second.mp4"]);
+}
+
+#[test]
+fn a_download_cancelled_as_its_yt_dlp_breaks_stays_cancelled() {
+    let app = App::start();
+    let downloader = Arc::downgrade(&app.downloader);
+    let processes = Arc::downgrade(&app.processes);
+    app.processes.script("yt-dlp.exe", move |args| {
+        let dir = PathBuf::from(after(args, "-P"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{ID}.1080p.f137.mp4.part")), b"half").unwrap();
+        let downloader = downloader.upgrade().unwrap();
+        assert!(downloader.cancel(downloader.state()[0].id));
+        processes.upgrade().unwrap().break_tool("yt-dlp.exe");
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+    let fetched_before = app.releases.fetches().len();
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(app.status(), Some(DownloadStatus::Cancelled));
+    assert_eq!(
+        app.releases.fetches().len(),
+        fetched_before,
+        "Setup doesn't run"
+    );
+    assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
 }
 
 /// Makes yt-dlp act like it downloads any Video, saving its id as its

@@ -516,6 +516,14 @@ impl Downloader {
         // Once yt-dlp has ended, the Download can no longer be cancelled.
         let cancelled = stopper.finish();
         let status = match received {
+            // Nothing uses its files now. A yt-dlp killed and then found
+            // broken is cancelled all the same; the next Download tells
+            // whether it is broken.
+            _ if cancelled => {
+                remove_partial(&self.partials_dir, &partial_prefixes(video, content));
+                self.update(|queue| queue.running = None);
+                return true;
+            }
             Err(Stopped::ToolBroken) => {
                 self.update(|queue| {
                     let running = queue.running.take();
@@ -526,22 +534,7 @@ impl Downloader {
                 self.toolbox.prepare();
                 return false;
             }
-            // Nothing uses its files now.
-            _ if cancelled => {
-                remove_partial(&self.partials_dir, &partial_prefixes(video, content));
-                self.update(|queue| queue.running = None);
-                return true;
-            }
-            Err(Stopped::Failed(message)) => {
-                // yt-dlp fails so when the Partial is already whole: it asks
-                // for the bytes past its end, and can't tell it is done
-                // (yt-dlp#12994). Every retry would fail the same way, so the
-                // next one starts from scratch.
-                if message.contains("HTTP Error 416") {
-                    remove_partial(&self.partials_dir, &partial_prefixes(video, content));
-                }
-                DownloadStatus::Failed { message }
-            }
+            Err(Stopped::Failed(message)) => DownloadStatus::Failed { message },
             Ok(partials) => match self.save(&partials, &file_name(video)) {
                 Ok(files) => DownloadStatus::Done {
                     file: files[0].clone(),
@@ -653,7 +646,7 @@ impl Downloader {
                 stopper,
             )
             .map_err(|_| Stopped::ToolBroken)?;
-        failure(&output)?;
+        self.failure_resuming(&output, &media_prefix(video, preset))?;
         final_file.ok_or_else(|| Stopped::Failed("yt-dlp didn't tell where the file is".into()))
     }
 
@@ -702,7 +695,7 @@ impl Downloader {
             .toolbox
             .run_streaming(Tool::YtDlp, &args, sign_in_browser, &mut |_| {}, stopper)
             .map_err(|_| Stopped::ToolBroken)?;
-        failure(&output)?;
+        self.failure_resuming(&output, &transcript_prefix(video, language))?;
         // yt-dlp prints no path without the media, and succeeds without a
         // file when the site has no subtitles in the language; it puts the
         // language before the extension.
@@ -721,6 +714,21 @@ impl Downloader {
             eprintln!("can't remove {}: {error}", subtitles.display());
         }
         Ok(file)
+    }
+
+    /// Like [`failure`], for yt-dlp resuming the part of the Partial whose
+    /// names begin with `prefix`. yt-dlp fails with HTTP Error 416 when that
+    /// part is already whole: it asks for the bytes past its end, and can't
+    /// tell it is done (yt-dlp#12994). Every retry would fail the same way,
+    /// so the part is removed, and the next one receives it from scratch.
+    fn failure_resuming(&self, output: &Output, prefix: &str) -> Result<(), Stopped> {
+        failure(output).inspect_err(|stopped| {
+            if let Stopped::Failed(message) = stopped
+                && message.contains("HTTP Error 416")
+            {
+                remove_partial(&self.partials_dir, &[prefix.to_owned()]);
+            }
+        })
     }
 
     /// Moves the final files out of the Partials folder under the first
@@ -912,14 +920,20 @@ fn format_sort(preset: VideoPreset) -> String {
 /// `video` leaves in the Partials folder: `<id>.<preset>.` for the media and
 /// `<id>.transcript.<language>.` for the Transcript.
 fn partial_prefixes(video: &Video, content: &Content) -> Vec<String> {
-    let media = content
-        .preset()
-        .map(|preset| format!("{}.{}.", video.id, preset.name()));
-    let transcript = content.transcript().map(|language| {
-        let name = transcript::ytdlp_name(language, &video.transcripts);
-        format!("{}.transcript.{name}.", video.id)
-    });
+    let media = content.preset().map(|preset| media_prefix(video, preset));
+    let transcript = content
+        .transcript()
+        .map(|language| transcript_prefix(video, language));
     media.into_iter().chain(transcript).collect()
+}
+
+fn media_prefix(video: &Video, preset: Preset) -> String {
+    format!("{}.{}.", video.id, preset.name())
+}
+
+fn transcript_prefix(video: &Video, language: &TranscriptLanguage) -> String {
+    let name = transcript::ytdlp_name(language, &video.transcripts);
+    format!("{}.transcript.{name}.", video.id)
 }
 
 /// Removes the files in the Partials folder whose names begin with one of

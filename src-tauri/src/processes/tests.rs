@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -51,6 +52,30 @@ fn a_program_started_once_stopped_is_killed_at_once() {
 
     assert!(!output.status.success());
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_stopped_program_has_let_go_of_its_files_once_it_returns() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let file = dir.path().join("ping.txt");
+    // `ping` writes the file, so that `cmd`'s pipes don't wait for it.
+    let mut args: Vec<OsString> = ["/C", "ping", "-n", "30", "127.0.0.1", ">"]
+        .map(OsString::from)
+        .into();
+    args.extend([file.clone().into_os_string(), "2>&1".into()]);
+    let stopper = Stopper::default();
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(500));
+            stopper.stop();
+        });
+        SystemProcesses
+            .run_streaming(Path::new("cmd"), &args, &mut |_| {}, &stopper)
+            .unwrap();
+        fs::remove_file(&file).unwrap();
+    });
 }
 
 #[cfg(windows)]

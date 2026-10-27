@@ -88,8 +88,9 @@ export function DownloadCard({
     duplicate.clear();
     retryDownload(download.id)
       .then(duplicate.note)
-      // It fails only for a Download no longer Failed, which the Queue's
-      // next event shows.
+      // It fails for a Download no longer Failed or Cancelled, which the
+      // Queue's next event shows, and for a Cancelled one whose yt-dlp is
+      // still exiting, which can be retried in a moment.
       .catch(() => {});
   }
 

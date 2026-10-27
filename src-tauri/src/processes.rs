@@ -147,7 +147,8 @@ impl Processes for SystemProcesses {
 
 /// Kills the program with the process id `pid` and the programs it started,
 /// such as the ffmpeg yt-dlp runs, which would otherwise keep its files
-/// open. Returns without waiting for them to exit.
+/// open. Returns once they are killed, so that whoever goes on after the
+/// program has exited finds its files let go, whatever order they die in.
 fn kill_tree(pid: u32) {
     #[cfg(windows)]
     let killer = command(
@@ -161,7 +162,7 @@ fn kill_tree(pid: u32) {
     )
     .stdout(Stdio::null())
     .stderr(Stdio::null())
-    .spawn();
+    .status();
     // Elsewhere only the program itself is killed.
     #[cfg(not(windows))]
     let killer = command(Path::new("kill"), &["-KILL".into(), pid.to_string().into()]).status();
