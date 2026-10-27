@@ -10,7 +10,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -197,6 +197,8 @@ struct Queue {
     running: Option<u64>,
     /// Stops the yt-dlp of the Download being received.
     stopper: Arc<Stopper>,
+    /// The app is closing: no Queued Download starts.
+    closing: bool,
     next_id: u64,
 }
 
@@ -226,6 +228,14 @@ impl Queue {
             .iter()
             .map(|entry| entry.download.clone())
             .collect()
+    }
+
+    fn has_unfinished(&self) -> bool {
+        !self.closing
+            && self
+                .entries
+                .iter()
+                .any(|entry| entry.download.status.is_active())
     }
 
     fn running(&self) -> Option<&Entry> {
@@ -268,12 +278,14 @@ impl Queue {
     }
 
     /// Starts the first Queued Download and returns what it saves of which
-    /// Video, and what stops its yt-dlp; when none waits, the worker stops.
+    /// Video, and what stops its yt-dlp; when none waits, or the app is
+    /// closing, the worker stops.
     fn start_next(&mut self) -> Option<(Video, Content, Arc<Stopper>)> {
         let Some(entry) = self
             .entries
             .iter_mut()
             .find(|entry| entry.download.status == DownloadStatus::Queued)
+            .filter(|_| !self.closing)
         else {
             self.has_worker = false;
             return None;
@@ -312,6 +324,9 @@ pub struct Downloader {
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
     queue: Mutex<Queue>,
+    /// Notified on every change to the Queue, such as the running Download
+    /// ending.
+    changed: Condvar,
     /// When the UI last got the progress.
     progress_sent: Mutex<Option<SystemTime>>,
     /// Held while changing the state and sending it, so that the UI gets
@@ -336,6 +351,7 @@ impl Downloader {
             clock,
             events,
             queue: Mutex::new(Queue::default()),
+            changed: Condvar::new(),
             progress_sent: Mutex::new(None),
             sending: Mutex::new(()),
         }
@@ -343,6 +359,12 @@ impl Downloader {
 
     pub fn state(&self) -> Vec<Download> {
         self.queue.lock().unwrap().shown()
+    }
+
+    /// Whether closing the app would leave a Download unfinished: one is
+    /// Queued, Downloading or Processing, and the app isn't closing yet.
+    pub fn has_unfinished(&self) -> bool {
+        self.queue.lock().unwrap().has_unfinished()
     }
 
     /// The saved file of the Download, once it is Done.
@@ -418,13 +440,15 @@ impl Downloader {
     /// Cancels a Queued or Downloading Download and removes its Partial, so
     /// that retrying it starts from scratch: a Downloading one's yt-dlp is
     /// killed, and its Partial is removed once it has exited. `false` when
-    /// it is neither, or once its yt-dlp has ended.
+    /// it is neither, once its yt-dlp has ended, or once the app is closing,
+    /// which keeps the Partials.
     pub fn cancel(&self, id: u64) -> bool {
         self.update(|queue| {
             let Some(at) = queue
                 .entries
                 .iter()
                 .position(|entry| entry.download.id == id)
+                .filter(|_| !queue.closing)
             else {
                 return false;
             };
@@ -443,6 +467,22 @@ impl Downloader {
             queue.entries[at].download.status = DownloadStatus::Cancelled;
             true
         })
+    }
+
+    /// Stops the Queue for the app to close: the running Download's yt-dlp
+    /// is killed, with the ffmpeg it runs, and no Queued one starts. Unlike
+    /// [`Downloader::cancel`], it keeps the Partials, so that a Download of
+    /// the same Video with the same Preset after the next launch resumes.
+    /// Returns once the running Download has stopped, so that nothing has
+    /// its files open or half moved.
+    pub fn close(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.closing = true;
+        queue.stopper.stop();
+        let _stopped = self
+            .changed
+            .wait_while(queue, |queue| queue.running.is_some())
+            .unwrap();
     }
 
     /// Removes the Partials untouched for longer than [`PARTIAL_LIFETIME`].
@@ -514,13 +554,20 @@ impl Downloader {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
         let received = self.receive(video, content, sign_in_browser, stopper);
         // Once yt-dlp has ended, the Download can no longer be cancelled.
-        let cancelled = stopper.finish();
+        let stopped = stopper.finish();
+        let cancelled = stopped && self.running_status() == Some(DownloadStatus::Cancelled);
         let status = match received {
             // Nothing uses its files now. A yt-dlp killed and then found
             // broken is cancelled all the same; the next Download tells
             // whether it is broken.
             _ if cancelled => {
                 remove_partial(&self.partials_dir, &partial_prefixes(video, content));
+                self.update(|queue| queue.running = None);
+                return true;
+            }
+            // Stopped by the app closing, which keeps the Partial for the
+            // next launch; one whose yt-dlp ended first is saved.
+            Err(_) if stopped => {
                 self.update(|queue| queue.running = None);
                 return true;
             }
@@ -840,6 +887,7 @@ impl Downloader {
             let mut queue = self.queue.lock().unwrap();
             let before = queue.shown();
             let result = change(&mut queue);
+            self.changed.notify_all();
             let after = queue.shown();
             (result, (after != before).then_some(after))
         };
