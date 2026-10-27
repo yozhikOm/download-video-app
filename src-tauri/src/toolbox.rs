@@ -191,6 +191,9 @@ pub struct Toolbox {
     /// Held while installing or replacing tools and recording it in the
     /// manifest, so that Setup and an update don't do it at once.
     installing: Mutex<()>,
+    /// Held from reading the manifest to writing it back, so that an update
+    /// recording its check doesn't write back a tool forgotten meanwhile.
+    manifest: Mutex<()>,
 }
 
 impl Toolbox {
@@ -215,6 +218,7 @@ impl Toolbox {
             ytdlp_users: Mutex::new(YtDlpUsers::default()),
             ytdlp_users_changed: Condvar::new(),
             installing: Mutex::new(()),
+            manifest: Mutex::new(()),
         }
     }
 
@@ -458,6 +462,7 @@ impl Toolbox {
             }
             return Err(other("Setup isn't Ready"));
         }
+        let _manifest = self.manifest.lock().unwrap();
         let mut manifest = self.load_manifest();
         if let Some((file, release)) = new {
             let installed = self.install_file(Tool::YtDlp, file, release)?;
@@ -472,11 +477,13 @@ impl Toolbox {
     /// Drops a tool that failed to start from the manifest, so that the next
     /// [`Toolbox::prepare`], in this launch or a later one, reinstalls it.
     fn forget(&self, tool: Tool) {
+        let lock = self.manifest.lock().unwrap();
         let mut manifest = self.load_manifest();
         manifest.files.remove(tool.file_name());
         if let Err(error) = self.save_manifest(&manifest) {
             eprintln!("can't forget broken {}: {error:?}", tool.file_name());
         }
+        drop(lock);
         *self.broken.lock().unwrap() = Some(tool);
         self.report_progress(0, 0);
     }

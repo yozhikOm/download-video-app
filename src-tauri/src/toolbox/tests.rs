@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 
 use super::*;
-use crate::clock::FixedClock;
+use crate::clock::{Clock, FixedClock};
 use crate::events::{AppEvent, RecordingSink};
 use crate::processes::fake::FakeProcesses;
 use crate::releases::fake::{
@@ -30,7 +30,7 @@ impl App {
             Arc::new(FakeReleases::new()),
             Arc::new(FakeProcesses::new()),
             TempDir::new().unwrap(),
-            NOW,
+            Arc::new(FixedClock(SystemTime::UNIX_EPOCH + NOW)),
         )
     }
 
@@ -41,21 +41,26 @@ impl App {
 
     /// Like [`App::restart`], with the clock at `now` since the Unix epoch.
     fn restart_at(self, now: Duration) -> Self {
-        Self::start_with(self.releases, self.processes, self.dir, now)
+        self.restart_with(Arc::new(FixedClock(SystemTime::UNIX_EPOCH + now)))
+    }
+
+    /// Like [`App::restart`], with `clock` telling the time.
+    fn restart_with(self, clock: Arc<dyn Clock>) -> Self {
+        Self::start_with(self.releases, self.processes, self.dir, clock)
     }
 
     fn start_with(
         releases: Arc<FakeReleases>,
         processes: Arc<FakeProcesses>,
         dir: TempDir,
-        now: Duration,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let events = Arc::new(RecordingSink::default());
         let toolbox = Toolbox::new(
             dir.path().join("tools"),
             releases.clone(),
             processes.clone(),
-            Arc::new(FixedClock(SystemTime::UNIX_EPOCH + now)),
+            clock,
             events.clone(),
         );
         Self {
@@ -791,4 +796,72 @@ fn an_update_waits_for_a_running_yt_dlp_to_exit() {
         std::fs::read(app.file("yt-dlp.exe")).unwrap(),
         NEWER_YTDLP_BYTES
     );
+}
+
+/// A clock that, once armed, holds up the first caller to read it until
+/// the test lets it go on.
+struct PausingClock {
+    now: SystemTime,
+    armed: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+}
+
+impl PausingClock {
+    fn new(now: Duration) -> Self {
+        Self {
+            now: SystemTime::UNIX_EPOCH + now,
+            armed: Mutex::new(None),
+        }
+    }
+
+    /// Tells `reading` when the time is read, then waits for `go_on`.
+    fn arm(&self, reading: mpsc::Sender<()>, go_on: mpsc::Receiver<()>) {
+        *self.armed.lock().unwrap() = Some((reading, go_on));
+    }
+}
+
+impl Clock for PausingClock {
+    fn now(&self) -> SystemTime {
+        let armed = self.armed.lock().unwrap().take();
+        if let Some((reading, go_on)) = armed {
+            reading.send(()).unwrap();
+            go_on.recv().unwrap();
+        }
+        self.now
+    }
+}
+
+#[test]
+fn yt_dlp_failing_to_start_while_an_update_records_its_check_is_still_restored() {
+    let app = App::start();
+    app.toolbox.prepare();
+    let clock = Arc::new(PausingClock::new(NOW + HOUR));
+    let app = app.restart_with(clock.clone());
+    app.toolbox.prepare();
+    app.processes.break_tool("yt-dlp.exe");
+    let (reading, read) = mpsc::channel();
+    let (go_on, gone_on) = mpsc::channel();
+    clock.arm(reading, gone_on);
+
+    std::thread::scope(|scope| {
+        let toolbox = &app.toolbox;
+        // The update finds yt-dlp up to date and stops as it records the
+        // check, between reading the manifest and writing it.
+        let update = scope.spawn(|| toolbox.update_ytdlp());
+        read.recv().unwrap();
+        let run = scope.spawn(|| toolbox.run(Tool::YtDlp, &[], None));
+        // Gives the run the time to forget yt-dlp, unless it waits for the
+        // update to record the check.
+        let start = std::time::Instant::now();
+        while !run.is_finished() && start.elapsed() < Duration::from_millis(200) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        go_on.send(()).unwrap();
+        assert_eq!(run.join().unwrap().unwrap_err(), ToolBroken(Tool::YtDlp));
+        update.join().unwrap().unwrap();
+    });
+    let fetched_before = app.releases.fetches().len();
+
+    app.toolbox.prepare();
+
+    assert_eq!(app.fetches_after(fetched_before), [YTDLP_URL]);
 }
