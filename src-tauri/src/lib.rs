@@ -16,7 +16,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Builder, Manager, Runtime, State, WindowEvent};
 
 use crate::clock::SystemClock;
-use crate::download::{Added, Content, Downloader};
+use crate::download::{Added, Content, Downloader, OnClose};
 use crate::events::{AppEvent, EventSink};
 use crate::preset::Preset;
 use crate::probe::Prober;
@@ -315,13 +315,19 @@ pub fn run() {
             // With a Download unfinished, the UI asks first; `close_app`
             // closes the app once the user confirms. Without a page to ask
             // in, the window closes, so that it can't get stuck open.
-            if let WindowEvent::CloseRequested { api, .. } = event
-                && window.state::<Arc<Downloader>>().has_unfinished()
-                && window
-                    .state::<Arc<Subscribers>>()
-                    .deliver(AppEvent::CloseRequested)
-            {
-                api.prevent_close();
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let keep_open = match window.state::<Arc<Downloader>>().on_close() {
+                    OnClose::Close => false,
+                    OnClose::Ask => window
+                        .state::<Arc<Subscribers>>()
+                        .deliver(AppEvent::CloseRequested),
+                    // `close_app` exits once the Queue has stopped; closing
+                    // the window before would cut a file's move short.
+                    OnClose::Wait => true,
+                };
+                if keep_open {
+                    api.prevent_close();
+                }
             }
         })
         .run(tauri::generate_context!())

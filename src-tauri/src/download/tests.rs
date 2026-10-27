@@ -1743,9 +1743,13 @@ fn a_removed_download_no_longer_opens_its_file() {
 }
 
 #[test]
-fn a_queued_or_downloading_download_is_unfinished_and_an_ended_one_isnt() {
+fn closing_asks_while_a_download_is_queued_or_downloading_and_not_once_they_end() {
     let app = App::start();
-    assert!(!app.downloader.has_unfinished(), "the Queue is empty");
+    assert_eq!(
+        app.downloader.on_close(),
+        OnClose::Close,
+        "the Queue is empty"
+    );
     ytdlp_fails_for(&app, Some("failed"));
     for id in ["done", "failed"] {
         app.download(&video_with_id(id, id), VideoPreset::P1080.into());
@@ -1754,16 +1758,15 @@ fn a_queued_or_downloading_download_is_unfinished_and_an_ended_one_isnt() {
         &video_with_id("cancelled", "cancelled"),
         VideoPreset::P1080.into(),
     );
-    assert!(app.downloader.has_unfinished(), "one is Queued");
+    assert_eq!(app.downloader.on_close(), OnClose::Ask, "one is Queued");
     assert!(app.downloader.cancel(app.downloader.state()[2].id));
-    assert!(!app.downloader.has_unfinished());
+    assert_eq!(app.downloader.on_close(), OnClose::Close);
 
     let downloader = Arc::downgrade(&app.downloader);
-    let unfinished = Arc::new(Mutex::new(None));
-    let unfinished_meanwhile = unfinished.clone();
+    let on_close = Arc::new(Mutex::new(None));
+    let on_close_meanwhile = on_close.clone();
     app.processes.script("yt-dlp.exe", move |_| {
-        *unfinished_meanwhile.lock().unwrap() =
-            Some(downloader.upgrade().unwrap().has_unfinished());
+        *on_close_meanwhile.lock().unwrap() = Some(downloader.upgrade().unwrap().on_close());
         Output {
             status: exit_status(0),
             stdout: Vec::new(),
@@ -1773,8 +1776,8 @@ fn a_queued_or_downloading_download_is_unfinished_and_an_ended_one_isnt() {
     app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
     assert_eq!(
-        *unfinished.lock().unwrap(),
-        Some(true),
+        *on_close.lock().unwrap(),
+        Some(OnClose::Ask),
         "one is Downloading"
     );
 }
@@ -1825,8 +1828,9 @@ fn closing_the_app_stops_yt_dlp_keeps_its_partial_and_starts_nothing_more() {
     close_while_downloading(&app, &started);
 
     assert_eq!(ids_received(&app), ["first"]);
-    assert!(
-        !app.downloader.has_unfinished(),
+    assert_eq!(
+        app.downloader.on_close(),
+        OnClose::Wait,
         "nothing more to ask about"
     );
     let second = app.downloader.state()[1].id;
@@ -1845,6 +1849,37 @@ fn closing_the_app_stops_yt_dlp_keeps_its_partial_and_starts_nothing_more() {
         )),
         "closing is neither cancelling nor failing"
     );
+}
+
+#[test]
+fn a_close_request_while_the_app_is_closing_waits_for_the_queue_to_stop() {
+    let app = App::start();
+    let (started_tx, started) = mpsc::channel();
+    let downloader = Arc::downgrade(&app.downloader);
+    let processes = Arc::downgrade(&app.processes);
+    let on_close = Arc::new(Mutex::new(None));
+    let on_close_meanwhile = on_close.clone();
+    app.processes.script("yt-dlp.exe", move |_| {
+        started_tx.send(()).unwrap();
+        processes.upgrade().unwrap().wait_until_killed();
+        *on_close_meanwhile.lock().unwrap() = Some(downloader.upgrade().unwrap().on_close());
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+    app.downloader
+        .add(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    close_while_downloading(&app, &started);
+
+    assert_eq!(
+        *on_close.lock().unwrap(),
+        Some(OnClose::Wait),
+        "the window stays until yt-dlp has exited"
+    );
+    assert_eq!(app.downloader.on_close(), OnClose::Wait, "and after");
 }
 
 #[test]

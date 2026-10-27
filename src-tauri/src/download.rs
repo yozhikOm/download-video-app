@@ -187,6 +187,19 @@ pub enum Added {
     Duplicate { of: u64 },
 }
 
+/// What a request to close the window leads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnClose {
+    /// No Download is unfinished: the window closes.
+    Close,
+    /// A Download is Queued, Downloading or Processing: the user is asked
+    /// first.
+    Ask,
+    /// The app is closing already: the window stays until
+    /// [`Downloader::close`] has stopped the Queue and the app exits.
+    Wait,
+}
+
 /// The Downloads in the order they run.
 #[derive(Default)]
 struct Queue {
@@ -230,12 +243,18 @@ impl Queue {
             .collect()
     }
 
-    fn has_unfinished(&self) -> bool {
-        !self.closing
-            && self
-                .entries
-                .iter()
-                .any(|entry| entry.download.status.is_active())
+    fn on_close(&self) -> OnClose {
+        if self.closing {
+            OnClose::Wait
+        } else if self
+            .entries
+            .iter()
+            .any(|entry| entry.download.status.is_active())
+        {
+            OnClose::Ask
+        } else {
+            OnClose::Close
+        }
     }
 
     fn running(&self) -> Option<&Entry> {
@@ -361,10 +380,11 @@ impl Downloader {
         self.queue.lock().unwrap().shown()
     }
 
-    /// Whether closing the app would leave a Download unfinished: one is
-    /// Queued, Downloading or Processing, and the app isn't closing yet.
-    pub fn has_unfinished(&self) -> bool {
-        self.queue.lock().unwrap().has_unfinished()
+    /// What a request to close the window leads to: the user is asked while
+    /// a Download is unfinished, and once the app is closing, the window
+    /// waits for [`Downloader::close`].
+    pub fn on_close(&self) -> OnClose {
+        self.queue.lock().unwrap().on_close()
     }
 
     /// The saved file of the Download, once it is Done.
