@@ -238,7 +238,7 @@ export function cancelDownload(id: number): Promise<void> {
   return invoke("cancel_download", { id });
 }
 
-/** Takes the Done Download out of the Queue; its files stay. */
+/** Takes the Done, Failed or Cancelled Download out of the Queue; its files stay. */
 export function removeDownload(id: number): Promise<void> {
   return invoke("remove_download", { id });
 }
