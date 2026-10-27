@@ -23,6 +23,7 @@ import type {
   TranscriptLanguage,
   VideoCard,
   VideoPreset,
+  YtDlpUpdate,
 } from "./backend";
 
 const MB = 1024 * 1024;
@@ -704,7 +705,7 @@ test("a failed Probe names the browser it ran with, not the one chosen since", a
 /** How a Download that timed out fails. */
 const readTimedOut: Pick<
   Extract<Download, { status: "failed" }>,
-  "failure" | "message" | "output"
+  "failure" | "message" | "output" | "ytdlpUpdate"
 > = {
   failure: "offline",
   message: "ERROR: unable to download video data: Read timed out.",
@@ -712,6 +713,7 @@ const readTimedOut: Pick<
     "WARNING: [youtube] Retrying (1/3)...",
     "ERROR: unable to download video data: Read timed out.",
   ],
+  ytdlpUpdate: null,
 };
 
 const zoo = {
@@ -1702,3 +1704,41 @@ test("declining to close keeps the app open and asks again next time", async () 
   await backend.closeRequested();
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 });
+
+test("the main screen offers no update of yt-dlp, which updates on its own", async () => {
+  await startReady();
+
+  await screen.findByRole("heading", { name: "download-video-app" });
+
+  expect(
+    screen.queryByRole("button", { name: "Обновить yt-dlp" }),
+  ).not.toBeInTheDocument();
+});
+
+test.each([
+  ["updating", "Обновляю yt-dlp…"],
+  ["updated", "yt-dlp обновлён, попробуйте ещё раз."],
+  ["upToDate", "Исправления в новой версии yt-dlp пока нет"],
+  ["failed", "Обновить yt-dlp не удалось"],
+] satisfies [YtDlpUpdate, string][])(
+  "a Download Failed with a broken extractor tells when yt-dlp is %s",
+  async (ytdlpUpdate, text) => {
+    const backend = await startReady();
+
+    await backend.download({
+      video: zoo,
+      status: "failed",
+      ...readTimedOut,
+      failure: "extractorBroken",
+      ytdlpUpdate,
+    });
+
+    const card = screen.getByRole("region", { name: "Me at the zoo" });
+    expect(within(card).getByRole("alert")).toHaveTextContent(text);
+    // The user retries it.
+    expect(backend.commands).not.toContain("retry_download");
+    expect(
+      within(card).getByRole("button", { name: "Повторить" }),
+    ).toBeEnabled();
+  },
+);

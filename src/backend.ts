@@ -22,6 +22,21 @@ export type SetupState =
   | { status: "failed"; error: SetupError; broken: Tool | null }
   | { status: "ready" };
 
+/** How the update of yt-dlp the user asked for goes. */
+export type YtDlpUpdateState =
+  /** None was asked for since launch. */
+  | { status: "idle" }
+  | { status: "updating" }
+  /**
+   * The new yt-dlp is downloaded and verified; it replaces the old one once
+   * the running Download ends.
+   */
+  | { status: "waiting" }
+  | { status: "updated"; version: string }
+  /** The latest release is installed already. */
+  | { status: "upToDate"; version: string }
+  | { status: "failed"; error: SetupError };
+
 /** What the user sees of a probed Video to confirm it's the right one. */
 export type VideoCard = {
   title: string;
@@ -143,6 +158,13 @@ export type Failure =
   | "disk"
   | "unknown";
 
+/**
+ * What became of the update of yt-dlp that a Download failed with a broken
+ * extractor starts: it runs, a newer yt-dlp is installed, the latest one
+ * failed already, or it couldn't be updated. The user retries the Download.
+ */
+export type YtDlpUpdate = "updating" | "updated" | "upToDate" | "failed";
+
 /** A Download in the Queue, as the main screen shows it. */
 export type Download = {
   /** Tells the Download apart from the others in the Queue. */
@@ -178,13 +200,14 @@ export type Download = {
     /**
      * The UI shows its own text for each `failure`; `message` and `output`,
      * the last lines yt-dlp printed but its progress, go into the details
-     * the user copies.
+     * the user copies. `ytdlpUpdate` is `null` but for a broken extractor.
      */
     | {
         status: "failed";
         failure: Failure;
         message: string;
         output: string[];
+        ytdlpUpdate: YtDlpUpdate | null;
       }
     /** Stopped by the user; its Partial is removed. */
     | { status: "cancelled" }
@@ -193,6 +216,7 @@ export type Download = {
 /** What the backend pushes to the UI; the backend owns the state. */
 export type AppEvent =
   | { type: "setup"; data: SetupState }
+  | { type: "ytDlpUpdate"; data: YtDlpUpdateState }
   | { type: "probe"; data: ProbeState }
   | { type: "settings"; data: SettingsState }
   /** The Downloads in the Queue, in the order they run. */
@@ -231,6 +255,14 @@ export function subscribe(onEvent: (event: AppEvent) => void): () => void {
 
 export function retrySetup(): Promise<void> {
   return invoke("retry_setup");
+}
+
+/**
+ * Updates yt-dlp once the running Download ends; how it goes arrives as
+ * ytDlpUpdate events.
+ */
+export function updateYtdlp(): Promise<void> {
+  return invoke("update_ytdlp");
 }
 
 /** Asks the backend to Probe a URL; the result arrives as a probe event. */

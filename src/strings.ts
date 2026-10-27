@@ -6,6 +6,7 @@ import type {
   Receiving,
   Tool,
   VideoPreset,
+  YtDlpUpdate,
 } from "@/backend";
 
 /** Every piece of UI text. */
@@ -41,6 +42,19 @@ export const strings = {
   main: {
     version: (version: string) => `Версия ${version}`,
     versionFailed: "Не удалось получить версию приложения",
+  },
+  ytdlp: {
+    update: "Обновить yt-dlp",
+    updating: "Обновляю yt-dlp…",
+    waiting:
+      "Новая версия yt-dlp установится, когда закончится текущая загрузка.",
+    updated: (version: string) => `yt-dlp обновлён до версии ${version}.`,
+    upToDate: (version: string) =>
+      `Установлена последняя версия yt-dlp: ${version}.`,
+    offline: "Не удалось обновить yt-dlp: нет подключения к интернету.",
+    checksumMismatch:
+      "Не удалось обновить yt-dlp: скачанный файл не прошёл проверку контрольной суммы.",
+    other: "Не удалось обновить yt-dlp. Попробуйте ещё раз.",
   },
   probe: {
     url: "Ссылка на видео",
@@ -125,6 +139,17 @@ export const strings = {
       disk: "Не удалось записать файл — на диске нет места или нет доступа к папке.",
       unknown: "Не удалось скачать видео. Попробуйте ещё раз.",
     } satisfies Record<Failure, string>,
+    /** A broken extractor, by what became of the update of yt-dlp it started. */
+    extractorBroken: {
+      updating:
+        "yt-dlp не смог разобрать страницу видео — похоже, сайт изменился. Обновляю yt-dlp…",
+      updated:
+        "yt-dlp не смог разобрать страницу видео — похоже, сайт изменился. yt-dlp обновлён, попробуйте ещё раз.",
+      upToDate:
+        "yt-dlp не смог разобрать страницу видео — похоже, сайт изменился. Исправления в новой версии yt-dlp пока нет — попробуйте позже.",
+      failed:
+        "yt-dlp не смог разобрать страницу видео — похоже, сайт изменился. Обновить yt-dlp не удалось — попробуйте позже.",
+    } satisfies Record<YtDlpUpdate, string>,
     copyDetails: "Скопировать подробности",
     detailsCopied: "Подробности скопированы",
     copyFailed: "Не удалось скопировать подробности.",

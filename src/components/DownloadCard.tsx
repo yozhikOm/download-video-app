@@ -249,7 +249,10 @@ export function DownloadCard({
           {download.status === "failed" && (
             <>
               <p role="alert" className="text-destructive">
-                {strings.download.failed[download.failure]}
+                {download.failure === "extractorBroken" &&
+                download.ytdlpUpdate !== null
+                  ? strings.download.extractorBroken[download.ytdlpUpdate]
+                  : strings.download.failed[download.failure]}
               </p>
               {retryOrRemoveButtons(
                 <Button variant="outline" onClick={() => copyDetails(download)}>

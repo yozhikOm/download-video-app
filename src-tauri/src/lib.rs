@@ -87,6 +87,7 @@ fn subscribe(
     subscribers.add(events, || {
         vec![
             AppEvent::Setup(toolbox.state()),
+            AppEvent::YtDlpUpdate(toolbox.ytdlp_update_state()),
             AppEvent::Probe(prober.state()),
             AppEvent::Settings(settings.state()),
             AppEvent::Queue(downloader.state()),
@@ -95,8 +96,8 @@ fn subscribe(
 }
 
 /// Prepares the tools in the background, then, once they are ready,
-/// receives the Queued Downloads that waited for them; the UI follows along
-/// through events.
+/// updates yt-dlp if it is due and receives the Queued Downloads that waited
+/// for them; the UI follows along through events.
 #[tauri::command]
 fn retry_setup(toolbox: State<'_, Arc<Toolbox>>, downloader: State<'_, Arc<Downloader>>) {
     let (toolbox, downloader) = (toolbox.inner().clone(), downloader.inner().clone());
@@ -104,9 +105,19 @@ fn retry_setup(toolbox: State<'_, Arc<Toolbox>>, downloader: State<'_, Arc<Downl
         toolbox.prepare();
         // A Queued Download would only find yt-dlp missing and be dropped.
         if toolbox.state() == SetupState::Ready {
+            // Setup that failed at launch left the check undone.
+            std::thread::spawn(move || toolbox.update_ytdlp_if_due());
             downloader.run();
         }
     });
+}
+
+/// Updates yt-dlp in the background, once the running Download ends; the UI
+/// follows along through events.
+#[tauri::command]
+fn update_ytdlp(toolbox: State<'_, Arc<Toolbox>>) {
+    let toolbox = toolbox.inner().clone();
+    std::thread::spawn(move || toolbox.update_ytdlp_on_request());
 }
 
 /// Probes a URL in the background; the UI follows along through events.
@@ -235,9 +246,15 @@ fn set_sign_in_browser(
     })
 }
 
-/// Prepares the tools in the background; the UI follows along through events.
+/// Prepares the tools in the background, then, once they are ready, updates
+/// yt-dlp if it is due; the UI follows along through events.
 fn spawn_prepare(toolbox: Arc<Toolbox>) {
-    std::thread::spawn(move || toolbox.prepare());
+    std::thread::spawn(move || {
+        toolbox.prepare();
+        if toolbox.state() == SetupState::Ready {
+            toolbox.update_ytdlp_if_due();
+        }
+    });
 }
 
 /// Receives the Queued Downloads in the background, unless another thread
@@ -254,6 +271,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             app_info,
             subscribe,
             retry_setup,
+            update_ytdlp,
             probe,
             set_sign_in_browser,
             add_download,

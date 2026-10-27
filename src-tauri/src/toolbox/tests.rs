@@ -1,19 +1,20 @@
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 
 use super::*;
-use crate::clock::FixedClock;
+use crate::clock::{Clock, FixedClock};
 use crate::events::{AppEvent, RecordingSink};
 use crate::processes::fake::FakeProcesses;
 use crate::releases::fake::{
-    DENO_BYTES, DENO_URL, FFMPEG_BYTES, FFMPEG_URL, FFPROBE_BYTES, FakeReleases, YTDLP_BYTES,
-    YTDLP_URL,
+    DENO_BYTES, DENO_URL, FFMPEG_BYTES, FFMPEG_URL, FFPROBE_BYTES, FakeReleases, NEWER_YTDLP_BYTES,
+    NEWER_YTDLP_URL, NEWER_YTDLP_VERSION, YTDLP_BYTES, YTDLP_URL,
 };
 use crate::settings::Browser;
 
 const NOW: Duration = Duration::from_secs(1_790_000_000);
+const HOUR: Duration = Duration::from_secs(60 * 60);
 
 struct App {
     dir: TempDir,
@@ -29,25 +30,37 @@ impl App {
             Arc::new(FakeReleases::new()),
             Arc::new(FakeProcesses::new()),
             TempDir::new().unwrap(),
+            Arc::new(FixedClock(SystemTime::UNIX_EPOCH + NOW)),
         )
     }
 
     /// Starts the app again on the same data folder, like a relaunch.
     fn restart(self) -> Self {
-        Self::start_with(self.releases, self.processes, self.dir)
+        self.restart_at(NOW)
+    }
+
+    /// Like [`App::restart`], with the clock at `now` since the Unix epoch.
+    fn restart_at(self, now: Duration) -> Self {
+        self.restart_with(Arc::new(FixedClock(SystemTime::UNIX_EPOCH + now)))
+    }
+
+    /// Like [`App::restart`], with `clock` telling the time.
+    fn restart_with(self, clock: Arc<dyn Clock>) -> Self {
+        Self::start_with(self.releases, self.processes, self.dir, clock)
     }
 
     fn start_with(
         releases: Arc<FakeReleases>,
         processes: Arc<FakeProcesses>,
         dir: TempDir,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let events = Arc::new(RecordingSink::default());
         let toolbox = Toolbox::new(
             dir.path().join("tools"),
             releases.clone(),
             processes.clone(),
-            Arc::new(FixedClock(SystemTime::UNIX_EPOCH + NOW)),
+            clock,
             events.clone(),
         );
         Self {
@@ -66,6 +79,18 @@ impl App {
     /// Asset URLs fetched after the first `skip` fetches.
     fn fetches_after(&self, skip: usize) -> Vec<String> {
         self.releases.fetches().split_off(skip)
+    }
+
+    /// The states of the updates of yt-dlp asked for, as each event sent it.
+    fn update_states(&self) -> Vec<YtDlpUpdateState> {
+        let events = self.events.events();
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                AppEvent::YtDlpUpdate(state) => Some(state),
+                _ => None,
+            })
+            .collect()
     }
 
     fn states(&self) -> Vec<SetupState> {
@@ -513,4 +538,330 @@ fn unverified_files_left_by_an_interrupted_launch_are_removed() {
     assert!(!app.file("yt-dlp.exe.download").exists());
     assert!(!app.file("ffmpeg.zip.download").exists());
     assert!(!app.file("deno.zip.download").exists());
+}
+
+#[test]
+fn a_launch_more_than_a_day_after_the_last_check_installs_a_newer_yt_dlp() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let later = NOW + 24 * HOUR + Duration::from_secs(1);
+    let app = app.restart_at(later);
+    app.toolbox.prepare();
+
+    app.toolbox.update_ytdlp_if_due();
+
+    assert_eq!(
+        std::fs::read(app.file("yt-dlp.exe")).unwrap(),
+        NEWER_YTDLP_BYTES
+    );
+    assert_eq!(
+        app.toolbox.ytdlp_checked_at(),
+        Some(SystemTime::UNIX_EPOCH + later)
+    );
+    assert_eq!(
+        app.toolbox.ytdlp_version().as_deref(),
+        Some(NEWER_YTDLP_VERSION)
+    );
+}
+
+#[test]
+fn a_launch_within_a_day_of_the_last_check_doesnt_check_for_updates() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let fetched_before = app.releases.fetches().len();
+    let app = app.restart_at(NOW + 24 * HOUR);
+    app.toolbox.prepare();
+
+    app.toolbox.update_ytdlp_if_due();
+
+    assert_eq!(std::fs::read(app.file("yt-dlp.exe")).unwrap(), YTDLP_BYTES);
+    assert_eq!(app.fetches_after(fetched_before), Vec::<String>::new());
+    assert_eq!(
+        app.toolbox.ytdlp_checked_at(),
+        Some(SystemTime::UNIX_EPOCH + NOW)
+    );
+}
+
+#[test]
+fn a_launch_with_the_clock_set_back_before_the_last_check_checks_for_updates() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let app = app.restart_at(NOW - HOUR);
+    app.toolbox.prepare();
+
+    app.toolbox.update_ytdlp_if_due();
+
+    assert_eq!(
+        std::fs::read(app.file("yt-dlp.exe")).unwrap(),
+        NEWER_YTDLP_BYTES
+    );
+}
+
+#[test]
+fn an_update_on_request_installs_a_newer_yt_dlp_and_tells_its_version() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+
+    app.toolbox.update_ytdlp_on_request();
+
+    assert_eq!(
+        app.update_states(),
+        [
+            YtDlpUpdateState::Updating,
+            YtDlpUpdateState::Updated {
+                version: NEWER_YTDLP_VERSION.into()
+            },
+        ]
+    );
+    assert_eq!(app.toolbox.ytdlp_update_state(), app.update_states()[1]);
+    assert_eq!(
+        std::fs::read(app.file("yt-dlp.exe")).unwrap(),
+        NEWER_YTDLP_BYTES
+    );
+    assert_eq!(app.releases.fetches().last().unwrap(), NEWER_YTDLP_URL);
+}
+
+#[test]
+fn an_update_on_request_with_the_latest_installed_downloads_nothing() {
+    let app = App::start();
+    app.toolbox.prepare();
+    let fetched_before = app.releases.fetches().len();
+    let later = NOW + HOUR;
+    let app = app.restart_at(later);
+    app.toolbox.prepare();
+
+    app.toolbox.update_ytdlp_on_request();
+
+    assert_eq!(
+        app.toolbox.ytdlp_update_state(),
+        YtDlpUpdateState::UpToDate {
+            version: "2026.08.19".into()
+        }
+    );
+    assert_eq!(app.fetches_after(fetched_before), Vec::<String>::new());
+    assert_eq!(
+        app.toolbox.ytdlp_checked_at(),
+        Some(SystemTime::UNIX_EPOCH + later)
+    );
+}
+
+#[test]
+fn an_update_that_fails_its_checksum_keeps_the_installed_yt_dlp() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    app.releases.tamper_checksum(Package::YtDlp);
+
+    app.toolbox.update_ytdlp_on_request();
+
+    assert_eq!(
+        app.toolbox.ytdlp_update_state(),
+        YtDlpUpdateState::Failed {
+            error: SetupError::ChecksumMismatch {
+                package: Package::YtDlp
+            }
+        }
+    );
+    assert_eq!(std::fs::read(app.file("yt-dlp.exe")).unwrap(), YTDLP_BYTES);
+    assert!(!app.file("yt-dlp.exe.update").exists());
+    // The tools stay usable.
+    assert_eq!(app.toolbox.state(), SetupState::Ready);
+}
+
+#[test]
+fn an_update_offline_fails_and_leaves_the_check_to_the_next_launch() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.set_online(false);
+    let app = app.restart_at(NOW + 25 * HOUR);
+    app.toolbox.prepare();
+
+    app.toolbox.update_ytdlp_on_request();
+
+    assert_eq!(
+        app.toolbox.ytdlp_update_state(),
+        YtDlpUpdateState::Failed {
+            error: SetupError::Offline
+        }
+    );
+    assert_eq!(
+        app.toolbox.ytdlp_checked_at(),
+        Some(SystemTime::UNIX_EPOCH + NOW)
+    );
+}
+
+/// Waits until `done` holds, failing the test after a few seconds.
+fn wait_until(done: impl Fn() -> bool) {
+    let start = std::time::Instant::now();
+    while !done() {
+        assert!(start.elapsed() < Duration::from_secs(5), "timed out");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn an_update_replaces_yt_dlp_only_once_it_is_no_longer_in_use() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let in_use = app.toolbox.use_ytdlp();
+
+    std::thread::scope(|scope| {
+        let toolbox = &app.toolbox;
+        let update = scope.spawn(|| toolbox.update_ytdlp_on_request());
+        wait_until(|| toolbox.ytdlp_update_state() == YtDlpUpdateState::Waiting);
+        assert_eq!(std::fs::read(app.file("yt-dlp.exe")).unwrap(), YTDLP_BYTES);
+
+        drop(in_use);
+        update.join().unwrap();
+    });
+
+    assert_eq!(
+        std::fs::read(app.file("yt-dlp.exe")).unwrap(),
+        NEWER_YTDLP_BYTES
+    );
+    assert_eq!(
+        app.update_states(),
+        [
+            YtDlpUpdateState::Updating,
+            YtDlpUpdateState::Waiting,
+            YtDlpUpdateState::Updated {
+                version: NEWER_YTDLP_VERSION.into()
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_use_of_yt_dlp_starting_while_an_update_waits_gets_the_new_yt_dlp() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let in_use = app.toolbox.use_ytdlp();
+
+    std::thread::scope(|scope| {
+        let toolbox = &app.toolbox;
+        let file = app.file("yt-dlp.exe");
+        let update = scope.spawn(|| toolbox.update_ytdlp_on_request());
+        wait_until(|| toolbox.ytdlp_update_state() == YtDlpUpdateState::Waiting);
+        let (used, found) = std::sync::mpsc::channel();
+        scope.spawn(move || {
+            let _next = toolbox.use_ytdlp();
+            used.send(std::fs::read(file).unwrap()).unwrap();
+        });
+        let started_early = found.recv_timeout(Duration::from_millis(200));
+        drop(in_use);
+        assert_eq!(started_early.ok(), None, "it didn't wait for the update");
+        assert_eq!(found.recv().unwrap(), NEWER_YTDLP_BYTES);
+        update.join().unwrap();
+    });
+}
+
+#[test]
+fn an_update_waits_for_a_running_yt_dlp_to_exit() {
+    let app = App::start();
+    app.toolbox.prepare();
+    app.releases.publish_newer_ytdlp();
+    let (started, running) = std::sync::mpsc::channel();
+    let (exit, exited) = std::sync::mpsc::channel::<()>();
+    let (started, exited) = (Mutex::new(started), Mutex::new(exited));
+    app.processes.script("yt-dlp.exe", move |_| {
+        started.lock().unwrap().send(()).unwrap();
+        exited.lock().unwrap().recv().unwrap();
+        Output {
+            status: crate::processes::fake::exit_status(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+
+    std::thread::scope(|scope| {
+        let toolbox = &app.toolbox;
+        let run = scope.spawn(|| toolbox.run(Tool::YtDlp, &["--version".into()], None));
+        running.recv().unwrap();
+        let update = scope.spawn(|| toolbox.update_ytdlp_on_request());
+        wait_until(|| toolbox.ytdlp_update_state() == YtDlpUpdateState::Waiting);
+        assert_eq!(std::fs::read(app.file("yt-dlp.exe")).unwrap(), YTDLP_BYTES);
+
+        exit.send(()).unwrap();
+        run.join().unwrap().unwrap();
+        update.join().unwrap();
+    });
+
+    assert_eq!(
+        std::fs::read(app.file("yt-dlp.exe")).unwrap(),
+        NEWER_YTDLP_BYTES
+    );
+}
+
+/// A clock that, once armed, holds up the first caller to read it until
+/// the test lets it go on.
+struct PausingClock {
+    now: SystemTime,
+    armed: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+}
+
+impl PausingClock {
+    fn new(now: Duration) -> Self {
+        Self {
+            now: SystemTime::UNIX_EPOCH + now,
+            armed: Mutex::new(None),
+        }
+    }
+
+    /// Tells `reading` when the time is read, then waits for `go_on`.
+    fn arm(&self, reading: mpsc::Sender<()>, go_on: mpsc::Receiver<()>) {
+        *self.armed.lock().unwrap() = Some((reading, go_on));
+    }
+}
+
+impl Clock for PausingClock {
+    fn now(&self) -> SystemTime {
+        let armed = self.armed.lock().unwrap().take();
+        if let Some((reading, go_on)) = armed {
+            reading.send(()).unwrap();
+            go_on.recv().unwrap();
+        }
+        self.now
+    }
+}
+
+#[test]
+fn yt_dlp_failing_to_start_while_an_update_records_its_check_is_still_restored() {
+    let app = App::start();
+    app.toolbox.prepare();
+    let clock = Arc::new(PausingClock::new(NOW + HOUR));
+    let app = app.restart_with(clock.clone());
+    app.toolbox.prepare();
+    app.processes.break_tool("yt-dlp.exe");
+    let (reading, read) = mpsc::channel();
+    let (go_on, gone_on) = mpsc::channel();
+    clock.arm(reading, gone_on);
+
+    std::thread::scope(|scope| {
+        let toolbox = &app.toolbox;
+        // The update finds yt-dlp up to date and stops as it records the
+        // check, between reading the manifest and writing it.
+        let update = scope.spawn(|| toolbox.update_ytdlp());
+        read.recv().unwrap();
+        let run = scope.spawn(|| toolbox.run(Tool::YtDlp, &[], None));
+        // Gives the run the time to forget yt-dlp, unless it waits for the
+        // update to record the check.
+        let start = std::time::Instant::now();
+        while !run.is_finished() && start.elapsed() < Duration::from_millis(200) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        go_on.send(()).unwrap();
+        assert_eq!(run.join().unwrap().unwrap_err(), ToolBroken(Tool::YtDlp));
+        update.join().unwrap().unwrap();
+    });
+    let fetched_before = app.releases.fetches().len();
+
+    app.toolbox.prepare();
+
+    assert_eq!(app.fetches_after(fetched_before), [YTDLP_URL]);
 }
