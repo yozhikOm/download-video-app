@@ -33,6 +33,7 @@ impl App {
         let events = Arc::new(RecordingSink::default());
         let settings = Arc::new(Settings::load(
             dir.path().join("settings.json"),
+            dir.path().join("Downloads"),
             events.clone(),
         ));
         let toolbox = Arc::new(Toolbox::new(
@@ -297,6 +298,76 @@ fn without_1080p_or_lower_the_nearest_higher_video_preset_is_chosen() {
             VideoPreset::P1440
         )
     );
+}
+
+#[test]
+fn the_default_video_preset_from_the_settings_is_chosen() {
+    let app = App::start();
+    app.settings
+        .set_default_video_preset(VideoPreset::P480)
+        .unwrap();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(offered_presets(&app).1, VideoPreset::P480);
+}
+
+#[test]
+fn without_the_default_video_preset_from_the_settings_the_nearest_lower_is_chosen() {
+    let app = App::start();
+    app.settings
+        .set_default_video_preset(VideoPreset::P2160)
+        .unwrap();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(offered_presets(&app).1, VideoPreset::P1080);
+}
+
+#[test]
+fn a_default_video_preset_below_any_the_video_has_gives_way_to_the_nearest_higher() {
+    let app = App::start();
+    app.settings
+        .set_default_video_preset(VideoPreset::P360)
+        .unwrap();
+    app.ytdlp_prints(&video_with_formats(|formats| {
+        formats.retain(|format| format["height"].is_null());
+        formats.extend([
+            serde_json::json!({"format_id": "271", "ext": "webm", "vcodec": "vp9", "acodec": "none", "width": 2560, "height": 1440}),
+            serde_json::json!({"format_id": "401", "ext": "mp4", "vcodec": "av01.0.12M.08", "acodec": "none", "width": 3840, "height": 2160}),
+        ])
+    }));
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    assert_eq!(offered_presets(&app).1, VideoPreset::P1440);
+}
+
+#[test]
+fn a_default_of_the_best_chooses_the_videos_best_or_else_its_highest_preset() {
+    let above_2160p = video_with_formats(|formats| {
+        formats.push(serde_json::json!({"format_id": "571", "ext": "mp4", "vcodec": "av01.0.16M.08", "acodec": "none", "width": 7680, "height": 4320}))
+    });
+    for (answer, chosen) in [
+        (above_2160p.as_slice(), VideoPreset::Best),
+        (VIDEO, VideoPreset::P1080),
+    ] {
+        let app = App::start();
+        app.settings
+            .set_default_video_preset(VideoPreset::Best)
+            .unwrap();
+        app.ytdlp_prints(answer);
+
+        app.prober
+            .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+        assert_eq!(offered_presets(&app).1, chosen);
+    }
 }
 
 #[test]

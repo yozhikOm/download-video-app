@@ -81,10 +81,6 @@ const RESOLUTIONS: [(VideoPreset, u32); 6] = [
     (VideoPreset::P360, 360),
 ];
 
-/// The resolution of the Video preset chosen at first, when the Video has
-/// it.
-const PREFERRED_RESOLUTION: u32 = 1080;
-
 impl VideoPreset {
     /// The highest resolution this Preset saves, as yt-dlp counts it: the
     /// smaller side of the picture. `None` for the Video's best.
@@ -171,16 +167,20 @@ pub fn video_presets(formats: &[Format]) -> Vec<VideoPreset> {
 }
 
 /// The Video preset chosen at first among `presets`, as [`video_presets`]
-/// orders them: 1080p, or the nearest lower one, or the nearest higher one
-/// when there is none lower, or the Video's best when there is no other.
-pub fn default_video_preset(presets: &[VideoPreset]) -> VideoPreset {
+/// orders them: `preferred`, or the nearest lower one, or the nearest
+/// higher one when there is none lower, or the Video's best when there is
+/// no other. Preferring the Video's best chooses it, or else the highest.
+pub fn default_video_preset(presets: &[VideoPreset], preferred: VideoPreset) -> VideoPreset {
     let with_resolution = || {
         presets
             .iter()
             .filter_map(|preset| Some((*preset, preset.resolution()?)))
     };
+    let Some(preferred) = preferred.resolution() else {
+        return presets.first().copied().unwrap_or(VideoPreset::Best);
+    };
     with_resolution()
-        .find(|(_, resolution)| *resolution <= PREFERRED_RESOLUTION)
+        .find(|(_, resolution)| *resolution <= preferred)
         .or_else(|| with_resolution().next_back())
         .map_or(VideoPreset::Best, |(preset, _)| preset)
 }

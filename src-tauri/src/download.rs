@@ -1,6 +1,7 @@
 //! The Queue of Downloads of probed Videos, received one at a time: yt-dlp
 //! works in the Partials folder, and the final files, the media and its
-//! Transcript, are moved to the save folder under the Video's title.
+//! Transcript, are moved to the save folder under the name the settings'
+//! template gives the Video.
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::Clock;
 use crate::events::{AppEvent, EventSink};
+use crate::file_name::file_name;
 use crate::logs::{Log, Logs};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::{self, ProbeError, Video, VideoCard, error_line};
@@ -386,7 +388,6 @@ pub struct Downloader {
     toolbox: Arc<Toolbox>,
     settings: Arc<Settings>,
     partials_dir: PathBuf,
-    save_dir: PathBuf,
     logs: Logs,
     clock: Arc<dyn Clock>,
     events: Arc<dyn EventSink>,
@@ -406,7 +407,6 @@ impl Downloader {
         toolbox: Arc<Toolbox>,
         settings: Arc<Settings>,
         partials_dir: PathBuf,
-        save_dir: PathBuf,
         logs_dir: PathBuf,
         clock: Arc<dyn Clock>,
         events: Arc<dyn EventSink>,
@@ -415,7 +415,6 @@ impl Downloader {
             toolbox,
             settings,
             partials_dir,
-            save_dir,
             logs: Logs::new(logs_dir),
             clock,
             events,
@@ -673,7 +672,7 @@ impl Downloader {
                 ytdlp_update: (failure == Failure::ExtractorBroken)
                     .then_some(YtDlpUpdate::Updating),
             },
-            Ok(partials) => match self.save(&partials, &file_name(video)) {
+            Ok(partials) => match self.save(&partials, video) {
                 Ok(files) => DownloadStatus::Done {
                     file: files[0].clone(),
                 },
@@ -976,21 +975,24 @@ impl Downloader {
         })
     }
 
-    /// Moves the final files out of the Partials folder under the first
-    /// name free for all of them, each with its own extension: the title,
-    /// then the title with " (1)", " (2)"…
-    fn save(&self, partials: &[PathBuf], name: &str) -> io::Result<Vec<PathBuf>> {
-        fs::create_dir_all(&self.save_dir)?;
+    /// Moves the final files of `video` out of the Partials folder to the
+    /// save folder under the first name free for all of them, each with its
+    /// own extension: the name the template gives, then that name with
+    /// " (1)", " (2)"…
+    fn save(&self, partials: &[PathBuf], video: &Video) -> io::Result<Vec<PathBuf>> {
+        let save_dir = self.settings.save_dir();
+        let name = file_name(&self.settings.file_name_template(), video);
+        fs::create_dir_all(&save_dir)?;
         for number in 0.. {
             let name = match number {
-                0 => name.to_owned(),
+                0 => name.clone(),
                 _ => format!("{name} ({number})"),
             };
             let files: Vec<PathBuf> = partials
                 .iter()
                 .map(|partial| {
                     let extension = partial.extension().unwrap_or_default().to_string_lossy();
-                    self.save_dir.join(format!("{name}.{extension}"))
+                    save_dir.join(format!("{name}.{extension}"))
                 })
                 .collect();
             // Creating the files takes the names, so that another program
@@ -1287,56 +1289,6 @@ fn remove_partials_where(partials_dir: &Path, remove: impl Fn(&fs::DirEntry) -> 
             );
         }
     }
-}
-
-/// Longer titles are cut, so that the path fits Windows' limit.
-const MAX_NAME_CHARS: usize = 150;
-
-/// The saved file's name without its extension: the Video's title with the
-/// characters Windows forbids replaced by lookalikes, as yt-dlp does, or the
-/// Video's id when the title can't be a file name.
-fn file_name(video: &Video) -> String {
-    let replaced: String = video
-        .title
-        .chars()
-        .map(|c| match c {
-            '"' => '＂',
-            '*' => '＊',
-            ':' => '：',
-            '<' => '＜',
-            '>' => '＞',
-            '?' => '？',
-            '|' => '｜',
-            '/' => '⧸',
-            '\\' => '⧹',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .take(MAX_NAME_CHARS)
-        .collect();
-    // Windows drops a trailing dot or space from a file name.
-    let name = replaced
-        .trim_start()
-        .trim_end_matches(|c: char| c == '.' || c.is_whitespace());
-    if name.is_empty() || is_reserved(name) {
-        if video.id.is_empty() {
-            "video".into()
-        } else {
-            video.id.clone()
-        }
-    } else {
-        name.into()
-    }
-}
-
-/// Names that Windows keeps for devices, whatever extension follows them.
-fn is_reserved(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or_default().trim_end();
-    let upper = stem.to_ascii_uppercase();
-    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.len() == 4
-            && upper[3..].chars().all(|c| ('1'..='9').contains(&c)))
 }
 
 /// Removes the empty files taken for a save that won't happen.

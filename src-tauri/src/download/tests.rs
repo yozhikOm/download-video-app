@@ -83,6 +83,7 @@ impl App {
         let events = Arc::new(RecordingSink::default());
         let settings = Arc::new(Settings::load(
             dir.path().join("settings.json"),
+            dir.path().join("Downloads"),
             events.clone(),
         ));
         let toolbox = Arc::new(Toolbox::new(
@@ -98,7 +99,6 @@ impl App {
             toolbox.clone(),
             settings.clone(),
             dir.path().join("partials"),
-            dir.path().join("Downloads"),
             dir.path().join("logs"),
             clock.clone(),
             events.clone(),
@@ -328,6 +328,7 @@ fn video(url: &str, title: &str) -> Video {
         url: url.into(),
         title: title.into(),
         channel: Some("jawed".into()),
+        upload_date: Some("20050424".into()),
         thumbnail: None,
         duration: Some(19.0),
         formats: Vec::new(),
@@ -817,35 +818,65 @@ fn a_failed_copy_across_drives_leaves_a_file_named_like_its_temporary_alone() {
 }
 
 #[test]
-fn characters_windows_forbids_in_a_title_are_replaced_by_lookalikes() {
+fn a_download_is_saved_to_the_save_folder_chosen_in_the_settings() {
     let app = App::start();
+    let chosen = app.dir.path().join("Videos");
+    app.settings.set_save_dir(chosen.clone()).unwrap();
     app.ytdlp_downloads(ID, b"the video", &[]);
 
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    let saved = chosen.join("Me at the zoo.mp4");
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: saved.clone()
+        })
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the video");
+    assert!(!app.save_dir().exists());
+}
+
+#[test]
+fn the_media_and_its_transcript_are_named_by_the_file_name_template() {
+    let app = App::start();
+    app.settings
+        .set_file_name_template("{date} {channel} - {title}".into())
+        .unwrap();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
     app.download(
-        &video(URL, "Why? A/B: \"test\" | <1> * \\ end. "),
-        VideoPreset::P1080.into(),
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
     );
 
     assert_eq!(
         file_names(&app.save_dir()),
-        ["Why？ A⧸B： ＂test＂ ｜ ＜1＞ ＊ ⧹ end.mp4"]
+        [
+            "2005-04-24 jawed - Me at the zoo.mp4",
+            "2005-04-24 jawed - Me at the zoo.txt"
+        ]
     );
 }
 
 #[test]
-fn a_title_that_cant_be_a_file_name_gives_way_to_the_video_id() {
-    for title in ["", " . ", "CON", "nul"] {
-        let app = App::start();
-        app.ytdlp_downloads(ID, b"the video", &[]);
+fn a_name_from_the_template_that_is_taken_gets_a_number() {
+    let app = App::start();
+    app.settings
+        .set_file_name_template("{channel} - {title}".into())
+        .unwrap();
+    fs::create_dir_all(app.save_dir()).unwrap();
+    fs::write(app.save_dir().join("jawed - Me at the zoo.mp4"), b"first").unwrap();
+    app.ytdlp_downloads(ID, b"second", &[]);
 
-        app.download(&video(URL, title), VideoPreset::P1080.into());
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
 
-        assert_eq!(
-            file_names(&app.save_dir()),
-            [format!("{ID}.mp4")],
-            "{title:?}"
-        );
-    }
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("jawed - Me at the zoo (1).mp4")
+        })
+    );
 }
 
 #[test]
@@ -2861,7 +2892,11 @@ fn probe_with_real_tools(
     use crate::processes::SystemProcesses;
     use crate::releases::github::GithubReleases;
 
-    let settings = Arc::new(Settings::load(dir.join("settings.json"), events.clone()));
+    let settings = Arc::new(Settings::load(
+        dir.join("settings.json"),
+        dir.join("Downloads"),
+        events.clone(),
+    ));
     if let Ok(browser) = std::env::var("SMOKE_SIGN_IN_BROWSER") {
         let browser: Browser = serde_json::from_value(browser.into()).unwrap();
         settings.set_sign_in_browser(Some(browser)).unwrap();
@@ -2884,7 +2919,6 @@ fn probe_with_real_tools(
         toolbox.clone(),
         settings,
         dir.join("partials"),
-        dir.join("Downloads"),
         dir.join("logs"),
         Arc::new(SystemClock),
         events,

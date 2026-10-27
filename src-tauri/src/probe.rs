@@ -108,6 +108,8 @@ pub struct Video {
     pub url: String,
     pub title: String,
     pub channel: Option<String>,
+    /// The day the Video was uploaded, as yt-dlp tells it: `YYYYMMDD`.
+    pub upload_date: Option<String>,
     pub thumbnail: Option<String>,
     /// Seconds.
     pub duration: Option<f64>,
@@ -290,7 +292,10 @@ impl Prober {
                     let transcript_languages = video.transcript_languages();
                     let state = ProbeState::Probed {
                         video: video.card(),
-                        default_video_preset: preset::default_video_preset(&video_presets),
+                        default_video_preset: preset::default_video_preset(
+                            &video_presets,
+                            self.settings.default_video_preset(),
+                        ),
                         video_presets,
                         audio_presets: video.audio_presets(),
                         m4a_keeps_sound: video.m4a_keeps_sound(),
@@ -359,6 +364,7 @@ struct Info {
     title: Option<String>,
     channel: Option<String>,
     uploader: Option<String>,
+    upload_date: Option<String>,
     thumbnail: Option<String>,
     duration: Option<f64>,
     formats: Option<Vec<InfoFormat>>,
@@ -409,6 +415,7 @@ impl Info {
             url: self.webpage_url.unwrap_or_else(|| url.into()),
             title: self.title.unwrap_or_default(),
             channel: self.channel.or(self.uploader),
+            upload_date: self.upload_date,
             thumbnail: self.thumbnail,
             duration: self.duration,
             formats: self
