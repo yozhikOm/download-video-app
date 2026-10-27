@@ -5,6 +5,7 @@ import {
   type ProbeState,
   type SettingsState,
   type SetupState,
+  type YtDlpUpdateState,
 } from "@/backend";
 import { CloseDialog } from "@/components/CloseDialog";
 import { MainScreen } from "@/screens/MainScreen";
@@ -12,6 +13,9 @@ import { SetupScreen } from "@/screens/SetupScreen";
 
 function App() {
   const [setup, setSetup] = useState<SetupState>({ status: "checking" });
+  const [ytdlpUpdate, setYtdlpUpdate] = useState<YtDlpUpdateState>({
+    status: "idle",
+  });
   const [probe, setProbe] = useState<ProbeState>({ status: "idle" });
   const [settings, setSettings] = useState<SettingsState>({
     signInBrowser: null,
@@ -25,6 +29,9 @@ function App() {
         switch (event.type) {
           case "setup":
             setSetup(event.data);
+            break;
+          case "ytDlpUpdate":
+            setYtdlpUpdate(event.data);
             break;
           case "probe":
             setProbe(event.data);
@@ -49,7 +56,12 @@ function App() {
         <SetupScreen state={setup} />
       )}
       {setup.status === "ready" && (
-        <MainScreen probe={probe} settings={settings} queue={queue} />
+        <MainScreen
+          probe={probe}
+          settings={settings}
+          queue={queue}
+          ytdlpUpdate={ytdlpUpdate}
+        />
       )}
       <CloseDialog
         open={closeRequested}

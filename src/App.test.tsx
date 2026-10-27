@@ -23,6 +23,8 @@ import type {
   TranscriptLanguage,
   VideoCard,
   VideoPreset,
+  YtDlpUpdate,
+  YtDlpUpdateState,
 } from "./backend";
 
 const MB = 1024 * 1024;
@@ -131,6 +133,8 @@ function mockBackend({
         return added;
       case "retry_download":
         return added;
+      case "update_ytdlp":
+        return null;
       case "cancel_download":
         return null;
       case "open_downloaded_file":
@@ -162,6 +166,8 @@ function mockBackend({
     downloadedTranscripts,
     downloadIds,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
+    ytDlpUpdate: (state: YtDlpUpdateState) =>
+      send({ type: "ytDlpUpdate", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
     settings: (state: SettingsState) => send({ type: "settings", data: state }),
     queue: (...downloads: Download[]) =>
@@ -704,7 +710,7 @@ test("a failed Probe names the browser it ran with, not the one chosen since", a
 /** How a Download that timed out fails. */
 const readTimedOut: Pick<
   Extract<Download, { status: "failed" }>,
-  "failure" | "message" | "output"
+  "failure" | "message" | "output" | "ytdlpUpdate"
 > = {
   failure: "offline",
   message: "ERROR: unable to download video data: Read timed out.",
@@ -712,6 +718,7 @@ const readTimedOut: Pick<
     "WARNING: [youtube] Retrying (1/3)...",
     "ERROR: unable to download video data: Read timed out.",
   ],
+  ytdlpUpdate: null,
 };
 
 const zoo = {
@@ -1702,3 +1709,93 @@ test("declining to close keeps the app open and asks again next time", async () 
   await backend.closeRequested();
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 });
+
+test("yt-dlp updates on request, telling how it goes", async () => {
+  const backend = await startReady();
+  const button = await screen.findByRole("button", { name: "Обновить yt-dlp" });
+
+  fireEvent.click(button);
+  await waitFor(() => expect(backend.commands).toContain("update_ytdlp"));
+  await backend.ytDlpUpdate({ status: "updating" });
+
+  expect(button).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Обновляю yt-dlp…");
+
+  await backend.ytDlpUpdate({ status: "waiting" });
+
+  expect(button).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Новая версия yt-dlp установится, когда закончится текущая загрузка.",
+  );
+
+  await backend.ytDlpUpdate({ status: "updated", version: "2026.10.20" });
+
+  expect(button).toBeEnabled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "yt-dlp обновлён до версии 2026.10.20.",
+  );
+});
+
+test.each([
+  [
+    { status: "upToDate", version: "2026.08.19" },
+    "status",
+    "Установлена последняя версия yt-dlp: 2026.08.19.",
+  ],
+  [
+    { status: "failed", error: { kind: "offline" } },
+    "alert",
+    "Не удалось обновить yt-dlp: нет подключения к интернету.",
+  ],
+  [
+    { status: "failed", error: { kind: "checksumMismatch", package: "ytDlp" } },
+    "alert",
+    "Не удалось обновить yt-dlp: скачанный файл не прошёл проверку контрольной суммы.",
+  ],
+  [
+    { status: "failed", error: { kind: "other", message: "disk is full" } },
+    "alert",
+    "Не удалось обновить yt-dlp. Попробуйте ещё раз.",
+  ],
+] as const)(
+  "an update of yt-dlp that ends as %o says so",
+  async (state, role, text) => {
+    const backend = await startReady();
+    await screen.findByRole("button", { name: "Обновить yt-dlp" });
+
+    await backend.ytDlpUpdate(state);
+
+    expect(screen.getByRole(role)).toHaveTextContent(text);
+    expect(
+      screen.getByRole("button", { name: "Обновить yt-dlp" }),
+    ).toBeEnabled();
+  },
+);
+
+test.each([
+  ["updating", "Обновляю yt-dlp…"],
+  ["updated", "yt-dlp обновлён, попробуйте ещё раз."],
+  ["upToDate", "Исправления в новой версии yt-dlp пока нет"],
+  ["failed", "Обновить yt-dlp не удалось"],
+] satisfies [YtDlpUpdate, string][])(
+  "a Download Failed with a broken extractor tells when yt-dlp is %s",
+  async (ytdlpUpdate, text) => {
+    const backend = await startReady();
+
+    await backend.download({
+      video: zoo,
+      status: "failed",
+      ...readTimedOut,
+      failure: "extractorBroken",
+      ytdlpUpdate,
+    });
+
+    const card = screen.getByRole("region", { name: "Me at the zoo" });
+    expect(within(card).getByRole("alert")).toHaveTextContent(text);
+    // The user retries it.
+    expect(backend.commands).not.toContain("retry_download");
+    expect(
+      within(card).getByRole("button", { name: "Повторить" }),
+    ).toBeEnabled();
+  },
+);

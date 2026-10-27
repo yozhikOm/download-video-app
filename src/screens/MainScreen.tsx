@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
+import { YtDlpUpdater } from "@/components/YtDlpUpdater";
 import { useDuplicateWarning } from "@/lib/duplicate";
 import {
   addDownload,
@@ -17,6 +18,7 @@ import {
   type ProbeError,
   type ProbeState,
   type SettingsState,
+  type YtDlpUpdateState,
 } from "@/backend";
 import { strings } from "@/strings";
 
@@ -24,6 +26,7 @@ type Props = {
   probe: ProbeState;
   settings: SettingsState;
   queue: Download[];
+  ytdlpUpdate: YtDlpUpdateState;
 };
 
 /** The error's text; it names the sign-in browser the Probe ran with. */
@@ -85,7 +88,7 @@ function isYoutube(url: string) {
   );
 }
 
-export function MainScreen({ probe, settings, queue }: Props) {
+export function MainScreen({ probe, settings, queue, ytdlpUpdate }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
@@ -269,6 +272,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
           <SignInBrowserPicker signInBrowser={settings.signInBrowser} />
         )}
       {queue.length > 0 && <QueueList queue={queue} />}
+      <YtDlpUpdater state={ytdlpUpdate} />
     </div>
   );
 }
