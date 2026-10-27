@@ -1,8 +1,10 @@
 import { useEffect, useState, type SubmitEvent } from "react";
+import { CircleAlertIcon, LinkIcon, LoaderCircleIcon } from "lucide-react";
+import { ErrorBar } from "@/components/ErrorBar";
 import { QueueList } from "@/components/QueueList";
 import { SignInBrowserPicker } from "@/components/SignInBrowserPicker";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
 import { useDuplicateWarning } from "@/lib/duplicate";
@@ -179,16 +181,12 @@ export function MainScreen({ probe, settings, queue }: Props) {
   const previewShown = !previewHidden && probe !== supersededProbe;
 
   return (
-    <div className="flex w-full max-w-xl flex-col gap-4 self-start">
-      {failed && (
-        <p role="alert" className="text-destructive">
-          {strings.main.versionFailed}
-        </p>
-      )}
+    <div className="flex w-full max-w-[53.75rem] flex-col gap-3.5 self-start">
+      {failed && <ErrorBar>{strings.main.versionFailed}</ErrorBar>}
       {appInfo && (
-        <header className="flex items-baseline justify-between">
-          <h1 className="font-medium">{appInfo.name}</h1>
-          <p className="text-sm text-muted-foreground">
+        <header className="flex min-h-8.5 items-baseline gap-2.5">
+          <h1 className="font-heading text-xl font-semibold">{appInfo.name}</h1>
+          <p className="text-xs text-muted-foreground">
             {strings.main.version(appInfo.version)}
           </p>
         </header>
@@ -197,24 +195,30 @@ export function MainScreen({ probe, settings, queue }: Props) {
         <label htmlFor="url" className="sr-only">
           {strings.probe.url}
         </label>
-        <Input
-          id="url"
-          // Not type="url": the browser's own check would block a URL
-          // without "https://", which yt-dlp accepts.
-          inputMode="url"
-          spellCheck={false}
-          value={url}
-          onChange={(event) => changeUrl(event.target.value)}
-          placeholder={strings.probe.urlPlaceholder}
-          autoFocus
-        />
-        <Button type="submit">{strings.probe.submit}</Button>
+        <div className="relative min-w-0 flex-1">
+          <LinkIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          {/* A Windows text box: its bottom edge turns accent in focus. */}
+          <Input
+            id="url"
+            className="h-9 border-b-muted-foreground pl-8 focus-visible:border-input focus-visible:border-b-primary focus-visible:shadow-[inset_0_-1px_0_var(--color-primary)] focus-visible:ring-0 md:text-sm"
+            // Not type="url": the browser's own check would block a URL
+            // without "https://", which yt-dlp accepts.
+            inputMode="url"
+            spellCheck={false}
+            value={url}
+            onChange={(event) => changeUrl(event.target.value)}
+            placeholder={strings.probe.urlPlaceholder}
+            autoFocus
+          />
+        </div>
+        <Button type="submit" size="lg" className="px-4.5 font-semibold">
+          {strings.probe.submit}
+        </Button>
       </form>
       {probe.status === "probing" && (
-        <Card>
-          <CardContent className="text-muted-foreground">
-            {strings.probe.probing}
-          </CardContent>
+        <Card className="flex-row items-center gap-3 p-4 text-muted-foreground">
+          <LoaderCircleIcon className="size-4 animate-spin text-primary motion-reduce:animate-none" />
+          {strings.probe.probing}
         </Card>
       )}
       {probe.status === "probed" && previewShown && (
@@ -246,19 +250,16 @@ export function MainScreen({ probe, settings, queue }: Props) {
         />
       )}
       {duplicate.shown && probe.status === "probed" && previewShown && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="flex items-start gap-1.5 text-destructive">
+          <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
           {strings.download.duplicate}
         </p>
       )}
       {probeFailed ? (
-        <p role="alert" className="text-sm text-destructive">
-          {strings.probe.other}
-        </p>
+        <ErrorBar>{strings.probe.other}</ErrorBar>
       ) : (
         probe.status === "failed" && (
-          <p role="alert" className="text-sm text-destructive">
-            {errorText(probe.error, probe.signInBrowser)}
-          </p>
+          <ErrorBar>{errorText(probe.error, probe.signInBrowser)}</ErrorBar>
         )
       )}
       {/* With a YouTube URL in the field, a chosen browser stays on screen
