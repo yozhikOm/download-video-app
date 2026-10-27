@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
@@ -65,9 +65,19 @@ impl Clock for SteppingClock {
 }
 
 impl App {
-    /// Starts the app with its tools already set up.
+    /// Starts the app with its tools set up.
     fn start() -> Self {
-        let dir = TempDir::new().unwrap();
+        Self::start_in(TempDir::new().unwrap())
+    }
+
+    /// Closes the app and launches it again on the same folders, with an
+    /// empty Queue.
+    fn relaunch(self) -> Self {
+        Self::start_in(self.dir)
+    }
+
+    /// Starts the app in `dir`, setting its tools up there unless they are.
+    fn start_in(dir: TempDir) -> Self {
         let releases = Arc::new(FakeReleases::new());
         let processes = Arc::new(FakeProcesses::new());
         let events = Arc::new(RecordingSink::default());
@@ -1316,9 +1326,14 @@ fn only_a_failed_or_cancelled_download_is_retried() {
 /// Leaves a Partial in the Partials folder, as a Download of the Video
 /// with this id in 1080p that stopped would; returns its file's name.
 fn leave_partial(app: &App, id: &str) -> String {
+    leave_partial_in(&app.partials_dir(), id)
+}
+
+/// Like [`leave_partial`], in `dir`, as yt-dlp would.
+fn leave_partial_in(dir: &Path, id: &str) -> String {
     let name = format!("{id}.1080p.f137.mp4.part");
-    fs::create_dir_all(app.partials_dir()).unwrap();
-    fs::write(app.partials_dir().join(&name), b"half").unwrap();
+    fs::create_dir_all(dir).unwrap();
+    fs::write(dir.join(&name), b"half").unwrap();
     name
 }
 
@@ -1725,6 +1740,168 @@ fn a_removed_download_no_longer_opens_its_file() {
 
     assert_eq!(app.downloader.saved_file(id), None);
     assert!(app.save_dir().join("Me at the zoo.mp4").exists());
+}
+
+#[test]
+fn closing_asks_while_a_download_is_queued_or_downloading_and_not_once_they_end() {
+    let app = App::start();
+    assert_eq!(
+        app.downloader.on_close(),
+        OnClose::Close,
+        "the Queue is empty"
+    );
+    ytdlp_fails_for(&app, Some("failed"));
+    for id in ["done", "failed"] {
+        app.download(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+    app.downloader.add(
+        &video_with_id("cancelled", "cancelled"),
+        VideoPreset::P1080.into(),
+    );
+    assert_eq!(app.downloader.on_close(), OnClose::Ask, "one is Queued");
+    assert!(app.downloader.cancel(app.downloader.state()[2].id));
+    assert_eq!(app.downloader.on_close(), OnClose::Close);
+
+    let downloader = Arc::downgrade(&app.downloader);
+    let on_close = Arc::new(Mutex::new(None));
+    let on_close_meanwhile = on_close.clone();
+    app.processes.script("yt-dlp.exe", move |_| {
+        *on_close_meanwhile.lock().unwrap() = Some(downloader.upgrade().unwrap().on_close());
+        Output {
+            status: exit_status(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    assert_eq!(
+        *on_close.lock().unwrap(),
+        Some(OnClose::Ask),
+        "one is Downloading"
+    );
+}
+
+/// Makes yt-dlp leave a Partial of the Video it is run for and go on until
+/// it is killed; `started` gets a message once it has left it.
+fn ytdlp_runs_until_killed(app: &App) -> mpsc::Receiver<()> {
+    let (started_tx, started) = mpsc::channel();
+    let processes = Arc::downgrade(&app.processes);
+    app.processes.script("yt-dlp.exe", move |args| {
+        leave_partial_in(&PathBuf::from(after(args, "-P")), id_of(args));
+        started_tx.send(()).unwrap();
+        processes.upgrade().unwrap().wait_until_killed();
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+    started
+}
+
+/// Runs the Queue on a thread of its own, as the app does, and closes the
+/// app once yt-dlp has `started`; returns when both are over.
+fn close_while_downloading(app: &App, started: &mpsc::Receiver<()>) {
+    let downloader = app.downloader.clone();
+    let worker = std::thread::spawn(move || downloader.run());
+    started.recv().unwrap();
+    app.downloader.close();
+    assert_eq!(
+        app.processes.kills(),
+        1,
+        "yt-dlp has exited by the time it returns"
+    );
+    worker.join().unwrap();
+}
+
+#[test]
+fn closing_the_app_stops_yt_dlp_keeps_its_partial_and_starts_nothing_more() {
+    let app = App::start();
+    let started = ytdlp_runs_until_killed(&app);
+    leave_partial(&app, "second");
+    for id in ["first", "second"] {
+        app.downloader
+            .add(&video_with_id(id, id), VideoPreset::P1080.into());
+    }
+
+    close_while_downloading(&app, &started);
+
+    assert_eq!(ids_received(&app), ["first"]);
+    assert_eq!(
+        app.downloader.on_close(),
+        OnClose::Wait,
+        "nothing more to ask about"
+    );
+    let second = app.downloader.state()[1].id;
+    assert!(
+        !app.downloader.cancel(second),
+        "a cancel meanwhile keeps the Partial"
+    );
+    assert_eq!(
+        file_names(&app.partials_dir()),
+        ["first.1080p.f137.mp4.part", "second.1080p.f137.mp4.part"]
+    );
+    assert!(
+        !statuses(&app.downloader).iter().any(|status| matches!(
+            status,
+            DownloadStatus::Cancelled | DownloadStatus::Failed { .. }
+        )),
+        "closing is neither cancelling nor failing"
+    );
+}
+
+#[test]
+fn a_close_request_while_the_app_is_closing_waits_for_the_queue_to_stop() {
+    let app = App::start();
+    let (started_tx, started) = mpsc::channel();
+    let downloader = Arc::downgrade(&app.downloader);
+    let processes = Arc::downgrade(&app.processes);
+    let on_close = Arc::new(Mutex::new(None));
+    let on_close_meanwhile = on_close.clone();
+    app.processes.script("yt-dlp.exe", move |_| {
+        started_tx.send(()).unwrap();
+        processes.upgrade().unwrap().wait_until_killed();
+        *on_close_meanwhile.lock().unwrap() = Some(downloader.upgrade().unwrap().on_close());
+        Output {
+            status: exit_status(1),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    });
+    app.downloader
+        .add(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    close_while_downloading(&app, &started);
+
+    assert_eq!(
+        *on_close.lock().unwrap(),
+        Some(OnClose::Wait),
+        "the window stays until yt-dlp has exited"
+    );
+    assert_eq!(app.downloader.on_close(), OnClose::Wait, "and after");
+}
+
+#[test]
+fn a_download_stopped_by_closing_the_app_resumes_from_its_partial_after_relaunch() {
+    let app = App::start();
+    let started = ytdlp_runs_until_killed(&app);
+    let first = video_with_id("first", "first");
+    app.downloader.add(&first, VideoPreset::P1080.into());
+    close_while_downloading(&app, &started);
+
+    let app = app.relaunch();
+    app.downloader.discard_old_partials();
+    let found = ytdlp_finds_partials(&app);
+    app.download(&first, VideoPreset::P1080.into());
+
+    assert_eq!(*found.lock().unwrap(), [["first.1080p.f137.mp4.part"]]);
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("first.mp4")
+        })
+    );
 }
 
 #[test]

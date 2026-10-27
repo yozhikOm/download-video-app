@@ -6,8 +6,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use super::{Processes, Stopper};
 
@@ -23,6 +22,31 @@ struct Scenario {
     answers: HashMap<OsString, Script>,
     runs: Vec<(PathBuf, Vec<OsString>)>,
     kills: usize,
+    /// Whether the program running through [`Processes::run_streaming`] now
+    /// was killed.
+    running: Option<Arc<Killed>>,
+}
+
+/// Set once a program is killed.
+#[derive(Default)]
+struct Killed(Mutex<bool>, Condvar);
+
+impl Killed {
+    /// Sets it and wakes whoever waits for it.
+    fn kill(&self) {
+        *self.0.lock().unwrap() = true;
+        self.1.notify_all();
+    }
+
+    /// Whether the program was killed.
+    fn is_set(&self) -> bool {
+        *self.0.lock().unwrap()
+    }
+
+    /// Waits until the program is killed.
+    fn wait(&self) {
+        let _killed = self.1.wait_while(self.0.lock().unwrap(), |killed| !*killed);
+    }
 }
 
 impl FakeProcesses {
@@ -68,6 +92,16 @@ impl FakeProcesses {
         self.scenario().kills
     }
 
+    /// For a script: acts like a program that runs until it is killed.
+    /// Returns at once when it was already, or when it can't be killed.
+    pub fn wait_until_killed(&self) {
+        // Not under the scenario's lock, which the kill may need.
+        let running = self.scenario().running.clone();
+        if let Some(killed) = running {
+            killed.wait();
+        }
+    }
+
     fn answer(&self, file_name: &str, status: ExitStatus, stdout: &[u8], stderr: &[u8]) {
         let output = Output {
             status,
@@ -109,18 +143,20 @@ impl Processes for FakeProcesses {
         on_line: &mut dyn FnMut(&str),
         stopper: &Stopper,
     ) -> io::Result<Output> {
-        let killed = Arc::new(AtomicBool::new(false));
+        let killed = Arc::new(Killed::default());
+        self.scenario().running = Some(killed.clone());
         let kill = killed.clone();
-        stopper.on_stop(move || kill.store(true, Ordering::SeqCst));
+        stopper.on_stop(move || kill.kill());
         let output = self.run(program, args);
         stopper.exited();
+        self.scenario().running = None;
         let mut output = output?;
         // One broken while it ran can't be waited for.
         let name = program.file_name().unwrap_or(OsStr::new(""));
         if self.scenario().broken.contains(name) {
             return Err(io::Error::other("the program can't be waited for"));
         }
-        if killed.load(Ordering::SeqCst) {
+        if killed.is_set() {
             self.scenario().kills += 1;
             // A killed program prints nothing more and exits with an error.
             return Ok(Output {

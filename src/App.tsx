@@ -6,6 +6,7 @@ import {
   type SettingsState,
   type SetupState,
 } from "@/backend";
+import { CloseDialog } from "@/components/CloseDialog";
 import { MainScreen } from "@/screens/MainScreen";
 import { SetupScreen } from "@/screens/SetupScreen";
 
@@ -16,6 +17,7 @@ function App() {
     signInBrowser: null,
   });
   const [queue, setQueue] = useState<Download[]>([]);
+  const [closeRequested, setCloseRequested] = useState(false);
 
   useEffect(
     () =>
@@ -33,6 +35,9 @@ function App() {
           case "queue":
             setQueue(event.data);
             break;
+          case "closeRequested":
+            setCloseRequested(true);
+            break;
         }
       }),
     [],
@@ -46,6 +51,10 @@ function App() {
       {setup.status === "ready" && (
         <MainScreen probe={probe} settings={settings} queue={queue} />
       )}
+      <CloseDialog
+        open={closeRequested}
+        onDismiss={() => setCloseRequested(false)}
+      />
     </main>
   );
 }
