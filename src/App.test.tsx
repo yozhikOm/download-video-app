@@ -24,7 +24,6 @@ import type {
   VideoCard,
   VideoPreset,
   YtDlpUpdate,
-  YtDlpUpdateState,
 } from "./backend";
 
 const MB = 1024 * 1024;
@@ -133,8 +132,6 @@ function mockBackend({
         return added;
       case "retry_download":
         return added;
-      case "update_ytdlp":
-        return null;
       case "cancel_download":
         return null;
       case "open_downloaded_file":
@@ -166,8 +163,6 @@ function mockBackend({
     downloadedTranscripts,
     downloadIds,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
-    ytDlpUpdate: (state: YtDlpUpdateState) =>
-      send({ type: "ytDlpUpdate", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
     settings: (state: SettingsState) => send({ type: "settings", data: state }),
     queue: (...downloads: Download[]) =>
@@ -1710,67 +1705,15 @@ test("declining to close keeps the app open and asks again next time", async () 
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 });
 
-test("yt-dlp updates on request, telling how it goes", async () => {
-  const backend = await startReady();
-  const button = await screen.findByRole("button", { name: "Обновить yt-dlp" });
+test("the main screen offers no update of yt-dlp, which updates on its own", async () => {
+  await startReady();
 
-  fireEvent.click(button);
-  await waitFor(() => expect(backend.commands).toContain("update_ytdlp"));
-  await backend.ytDlpUpdate({ status: "updating" });
+  await screen.findByRole("heading", { name: "download-video-app" });
 
-  expect(button).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent("Обновляю yt-dlp…");
-
-  await backend.ytDlpUpdate({ status: "waiting" });
-
-  expect(button).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Новая версия yt-dlp установится, когда закончится текущая загрузка.",
-  );
-
-  await backend.ytDlpUpdate({ status: "updated", version: "2026.10.20" });
-
-  expect(button).toBeEnabled();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "yt-dlp обновлён до версии 2026.10.20.",
-  );
+  expect(
+    screen.queryByRole("button", { name: "Обновить yt-dlp" }),
+  ).not.toBeInTheDocument();
 });
-
-test.each([
-  [
-    { status: "upToDate", version: "2026.08.19" },
-    "status",
-    "Установлена последняя версия yt-dlp: 2026.08.19.",
-  ],
-  [
-    { status: "failed", error: { kind: "offline" } },
-    "alert",
-    "Не удалось обновить yt-dlp: нет подключения к интернету.",
-  ],
-  [
-    { status: "failed", error: { kind: "checksumMismatch", package: "ytDlp" } },
-    "alert",
-    "Не удалось обновить yt-dlp: скачанный файл не прошёл проверку контрольной суммы.",
-  ],
-  [
-    { status: "failed", error: { kind: "other", message: "disk is full" } },
-    "alert",
-    "Не удалось обновить yt-dlp. Попробуйте ещё раз.",
-  ],
-] as const)(
-  "an update of yt-dlp that ends as %o says so",
-  async (state, role, text) => {
-    const backend = await startReady();
-    await screen.findByRole("button", { name: "Обновить yt-dlp" });
-
-    await backend.ytDlpUpdate(state);
-
-    expect(screen.getByRole(role)).toHaveTextContent(text);
-    expect(
-      screen.getByRole("button", { name: "Обновить yt-dlp" }),
-    ).toBeEnabled();
-  },
-);
 
 test.each([
   ["updating", "Обновляю yt-dlp…"],

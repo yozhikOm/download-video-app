@@ -14,7 +14,10 @@ function errorText(error: SetupError) {
   }
 }
 
-/** Updates yt-dlp on request and tells how the update goes. */
+/**
+ * Updates yt-dlp on request and tells how the update goes. Not shown for
+ * now: yt-dlp updates on its own at launch and after a broken extractor.
+ */
 export function YtDlpUpdater({ state }: { state: YtDlpUpdateState }) {
   // The command couldn't be sent, so no update state follows.
   const [requestFailed, setRequestFailed] = useState(false);
