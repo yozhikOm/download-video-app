@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod download;
 pub mod events;
+pub mod logs;
 pub mod preset;
 pub mod probe;
 pub mod processes;
@@ -298,6 +299,7 @@ pub fn run() {
                 settings.clone(),
                 data_dir.join("partials"),
                 save_dir,
+                data_dir.join("logs"),
                 Arc::new(SystemClock),
                 subscribers.clone(),
             ));
