@@ -30,7 +30,8 @@ impl FakeProcesses {
         Self::default()
     }
 
-    /// Makes any program with this file name fail to start.
+    /// Makes any program with this file name fail to start, and one
+    /// running now fail to be waited for.
     pub fn break_tool(&self, file_name: &str) {
         self.scenario().broken.insert(file_name.into());
     }
@@ -114,6 +115,11 @@ impl Processes for FakeProcesses {
         let output = self.run(program, args);
         stopper.exited();
         let mut output = output?;
+        // One broken while it ran can't be waited for.
+        let name = program.file_name().unwrap_or(OsStr::new(""));
+        if self.scenario().broken.contains(name) {
+            return Err(io::Error::other("the program can't be waited for"));
+        }
         if killed.load(Ordering::SeqCst) {
             self.scenario().kills += 1;
             // A killed program prints nothing more and exits with an error.

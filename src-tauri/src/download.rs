@@ -516,6 +516,14 @@ impl Downloader {
         // Once yt-dlp has ended, the Download can no longer be cancelled.
         let cancelled = stopper.finish();
         let status = match received {
+            // Nothing uses its files now. A yt-dlp killed and then found
+            // broken is cancelled all the same; the next Download tells
+            // whether it is broken.
+            _ if cancelled => {
+                remove_partial(&self.partials_dir, &partial_prefixes(video, content));
+                self.update(|queue| queue.running = None);
+                return true;
+            }
             Err(Stopped::ToolBroken) => {
                 self.update(|queue| {
                     let running = queue.running.take();
@@ -525,12 +533,6 @@ impl Downloader {
                 });
                 self.toolbox.prepare();
                 return false;
-            }
-            // Nothing uses its files now.
-            _ if cancelled => {
-                remove_partial(&self.partials_dir, &partial_prefixes(video, content));
-                self.update(|queue| queue.running = None);
-                return true;
             }
             Err(Stopped::Failed(message)) => DownloadStatus::Failed { message },
             Ok(partials) => match self.save(&partials, &file_name(video)) {
