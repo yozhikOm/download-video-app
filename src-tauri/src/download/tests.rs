@@ -889,6 +889,26 @@ fn a_download_that_yt_dlp_cant_resume_is_failed_without_its_partial() {
     assert_eq!(file_names(&app.partials_dir()), Vec::<String>::new());
 }
 
+#[test]
+fn a_transcript_yt_dlp_cant_resume_leaves_the_medias_partial() {
+    let app = App::start();
+    let media = format!("{ID}.1080p.f137.mp4.part");
+    fs::create_dir_all(app.partials_dir()).unwrap();
+    fs::write(app.partials_dir().join(&media), b"half").unwrap();
+    app.processes.fail_with(
+        "yt-dlp.exe",
+        b"ERROR: Unable to download video subtitles: HTTP Error 416: Requested range not satisfiable\n",
+    );
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+    );
+
+    assert!(matches!(app.status(), Some(DownloadStatus::Failed { .. })));
+    assert_eq!(file_names(&app.partials_dir()), [media]);
+}
+
 /// The yt-dlp runs so far, each with its arguments.
 fn ytdlp_runs(app: &App) -> Vec<Vec<OsString>> {
     app.processes
