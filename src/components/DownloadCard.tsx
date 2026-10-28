@@ -192,14 +192,13 @@ export function DownloadCard({
     </ActionButton>
   );
 
-  const removeButton = (
-    <ActionButton onClick={() => void removeDownload(download.id)}>
-      <XIcon />
-      {strings.download.remove}
-    </ActionButton>
-  );
+  // A Download that has ended is removed by the cross in the card's corner.
+  const removable =
+    download.status === "done" ||
+    download.status === "failed" ||
+    download.status === "cancelled";
 
-  const retryOrRemoveButtons = (more?: ReactNode) => (
+  const retryButtons = (more?: ReactNode) => (
     <>
       {actionRow(
         <>
@@ -208,7 +207,6 @@ export function DownloadCard({
             {strings.download.retry}
           </ActionButton>
           {more}
-          {removeButton}
         </>,
       )}
       {duplicate.shown && (
@@ -223,7 +221,7 @@ export function DownloadCard({
     <div
       role="region"
       aria-labelledby={titleId}
-      className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3.5 px-3.5 py-3"
+      className="relative grid grid-cols-[6rem_minmax(0,1fr)] gap-3.5 px-3.5 py-3"
     >
       {download.video.thumbnail ? (
         <img
@@ -235,7 +233,7 @@ export function DownloadCard({
         <div className="aspect-video rounded-sm bg-muted" />
       )}
       <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex items-baseline gap-2">
+        <div className={cn("flex items-baseline gap-2", removable && "pr-6")}>
           <h3 id={titleId} className="min-w-0 truncate font-semibold">
             {download.video.title}
           </h3>
@@ -305,7 +303,6 @@ export function DownloadCard({
                   <FolderOpenIcon />
                   {strings.download.showInFolder}
                 </ActionButton>
-                {removeButton}
               </>,
             )}
             {actionFailed && (
@@ -324,7 +321,7 @@ export function DownloadCard({
                 ? strings.download.extractorBroken[download.ytdlpUpdate]
                 : strings.download.failed[download.failure]}
             </StatusLine>
-            {retryOrRemoveButtons(
+            {retryButtons(
               <ActionButton onClick={() => copyDetails(download)}>
                 <CopyIcon />
                 {strings.download.copyDetails}
@@ -348,10 +345,22 @@ export function DownloadCard({
               <BanIcon />
               {strings.download.cancelled}
             </StatusLine>
-            {retryOrRemoveButtons()}
+            {retryButtons()}
           </>
         )}
       </div>
+      {removable && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="absolute top-2 right-2 text-muted-foreground"
+          aria-label={strings.download.remove}
+          title={strings.download.remove}
+          onClick={() => void removeDownload(download.id)}
+        >
+          <XIcon />
+        </Button>
+      )}
     </div>
   );
 }
