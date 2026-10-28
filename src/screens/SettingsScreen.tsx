@@ -1,5 +1,6 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeftIcon } from "lucide-react";
+import { ErrorBar } from "@/components/ErrorBar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,10 +9,12 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import {
+  appInfo as fetchAppInfo,
   chooseSaveDir,
   setDefaultAudioPreset,
   setDefaultVideoPreset,
   setFileNameTemplate,
+  type AppInfo,
   type AudioPreset,
   type SettingsState,
   type VideoPreset,
@@ -156,7 +159,7 @@ function FileNameTemplate({ saved }: { saved: string }) {
 
 /**
  * The app's settings: where files are saved, how they are named, and the
- * Video and Audio presets chosen at first.
+ * Video and Audio presets chosen at first; the app's version below them.
  */
 export function SettingsScreen({
   settings,
@@ -168,6 +171,14 @@ export function SettingsScreen({
   const [saveDirFailed, setSaveDirFailed] = useState(false);
   const [presetFailed, setPresetFailed] = useState(false);
   const [audioPresetFailed, setAudioPresetFailed] = useState(false);
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [appInfoFailed, setAppInfoFailed] = useState(false);
+
+  useEffect(() => {
+    fetchAppInfo()
+      .then(setAppInfo)
+      .catch(() => setAppInfoFailed(true));
+  }, []);
 
   function chooseFolder() {
     setSaveDirFailed(false);
@@ -251,6 +262,12 @@ export function SettingsScreen({
           ))}
         </NativeSelect>
       </SettingRow>
+      {appInfo && (
+        <p className="text-xs text-muted-foreground">
+          {strings.settings.version(appInfo.version)}
+        </p>
+      )}
+      {appInfoFailed && <ErrorBar>{strings.settings.versionFailed}</ErrorBar>}
     </div>
   );
 }

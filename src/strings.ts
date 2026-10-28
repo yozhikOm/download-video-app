@@ -40,8 +40,7 @@ export const strings = {
     retry: "Повторить",
   },
   main: {
-    version: (version: string) => `Версия ${version}`,
-    versionFailed: "Не удалось получить версию приложения",
+    title: "Скачать видео",
     settings: "Настройки",
   },
   settings: {
@@ -73,6 +72,8 @@ export const strings = {
       mp3: "MP3",
     } satisfies Record<AudioPreset, string>,
     defaultAudioPresetFailed: "Не удалось сохранить формат.",
+    version: (version: string) => `Версия ${version}`,
+    versionFailed: "Не удалось получить версию приложения",
   },
   ytdlp: {
     update: "Обновить yt-dlp",
@@ -89,7 +90,8 @@ export const strings = {
   },
   probe: {
     url: "Ссылка на видео",
-    urlPlaceholder: "https://www.youtube.com/watch?v=…",
+    urlPlaceholder: "Вставьте сюда ссылку на видео",
+    clearUrl: "Очистить",
     submit: "Найти",
     probing: "Получаю сведения о видео…",
     thumbnail: "Превью",

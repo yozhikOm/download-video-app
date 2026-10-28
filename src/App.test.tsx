@@ -258,7 +258,7 @@ test("setup shows the download screen before the download size is known", async 
   expect(screen.queryByText(/МБ/)).not.toBeInTheDocument();
 });
 
-test("the main screen with name and version follows a finished setup", async () => {
+test("the main screen with its title follows a finished setup", async () => {
   const backend = mockBackend();
   render(<App />);
   await backend.setup({
@@ -271,9 +271,10 @@ test("the main screen with name and version follows a finished setup", async () 
   await backend.setup({ status: "ready" });
 
   expect(
-    await screen.findByRole("heading", { name: "download-video-app" }),
+    await screen.findByRole("heading", { name: "Скачать видео" }),
   ).toBeInTheDocument();
-  expect(screen.getByText("Версия 1.2.3")).toBeInTheDocument();
+  // The version is in the settings.
+  expect(screen.queryByText("Версия 1.2.3")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("heading", {
       name: "Идёт загрузка необходимых для работы файлов…",
@@ -334,17 +335,6 @@ test("a tool that failed to start is reported as broken while it is restored", a
   ).toBeInTheDocument();
 });
 
-test("main screen reports when the app version fails to load", async () => {
-  const backend = mockBackend({ appInfoFails: true });
-  render(<App />);
-
-  await backend.setup({ status: "ready" });
-
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Не удалось получить версию приложения",
-  );
-});
-
 /** Renders the main screen after a finished setup. */
 async function startReady(options?: Parameters<typeof mockBackend>[0]) {
   const backend = mockBackend(options);
@@ -379,6 +369,27 @@ test("an empty URL isn't probed", async () => {
   );
 
   expect(backend.probedUrls).toEqual([]);
+});
+
+test("the URL field asks for a link and is cleared by its cross", async () => {
+  await startReady();
+  const input = await screen.findByRole("textbox", { name: "Ссылка на видео" });
+  expect(input).toHaveAttribute("placeholder", "Вставьте сюда ссылку на видео");
+  // An empty field has nothing to clear.
+  expect(
+    screen.queryByRole("button", { name: "Очистить" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.change(input, {
+    target: { value: "https://www.youtube.com/watch?v=-moW9jvvMr4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Очистить" }));
+
+  expect(input).toHaveValue("");
+  expect(input).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: "Очистить" }),
+  ).not.toBeInTheDocument();
 });
 
 test("a probed Video shows its thumbnail, title, channel and duration", async () => {
@@ -1777,7 +1788,7 @@ test("declining to close keeps the app open and asks again next time", async () 
 test("the main screen offers no update of yt-dlp, which updates on its own", async () => {
   await startReady();
 
-  await screen.findByRole("heading", { name: "download-video-app" });
+  await screen.findByRole("heading", { name: "Скачать видео" });
 
   expect(
     screen.queryByRole("button", { name: "Обновить yt-dlp" }),
@@ -1838,6 +1849,24 @@ test("the settings open from the main screen and go back to it as it was", async
   expect(
     screen.queryByRole("heading", { name: "Настройки" }),
   ).not.toBeInTheDocument();
+});
+
+test("the settings show the app version at the bottom", async () => {
+  await startReady();
+
+  await openSettings();
+
+  expect(await screen.findByText("Версия 1.2.3")).toBeInTheDocument();
+});
+
+test("the settings report when the app version fails to load", async () => {
+  await startReady({ appInfoFails: true });
+
+  await openSettings();
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Не удалось получить версию приложения",
+  );
 });
 
 test("the settings show the save folder and choose another on request", async () => {

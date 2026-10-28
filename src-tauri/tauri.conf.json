@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "download-video-app",
-        "width": 1000,
+        "width": 760,
         "height": 700,
-        "minWidth": 760,
+        "minWidth": 600,
         "minHeight": 560
       }
     ],

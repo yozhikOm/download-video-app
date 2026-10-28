@@ -1,9 +1,10 @@
-import { useEffect, useState, type SubmitEvent } from "react";
+import { useRef, useState, type SubmitEvent } from "react";
 import {
   CircleAlertIcon,
   LinkIcon,
   LoaderCircleIcon,
   SettingsIcon,
+  XIcon,
 } from "lucide-react";
 import { ErrorBar } from "@/components/ErrorBar";
 import { QueueList } from "@/components/QueueList";
@@ -15,9 +16,7 @@ import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
 import { useDuplicateWarning } from "@/lib/duplicate";
 import {
   addDownload,
-  appInfo as fetchAppInfo,
   probe as probeUrl,
-  type AppInfo,
   type Browser,
   type Download,
   type Preset,
@@ -102,8 +101,7 @@ export function MainScreen({
   hidden,
   onOpenSettings,
 }: Props) {
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-  const [failed, setFailed] = useState(false);
+  const urlField = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
   // A new URL in the field puts the previous Video out of sight. «Скачать»
@@ -128,12 +126,6 @@ export function MainScreen({
     probe: ProbeState;
     choice: CardChoice;
   } | null>(null);
-
-  useEffect(() => {
-    fetchAppInfo()
-      .then(setAppInfo)
-      .catch(() => setFailed(true));
-  }, []);
 
   function changeUrl(value: string) {
     setUrl(value);
@@ -199,18 +191,10 @@ export function MainScreen({
       hidden={hidden}
       className="flex w-full max-w-[53.75rem] flex-col gap-3.5 self-start"
     >
-      {failed && <ErrorBar>{strings.main.versionFailed}</ErrorBar>}
       <header className="flex min-h-8.5 items-center gap-2.5">
-        {appInfo && (
-          <div className="flex items-baseline gap-2.5">
-            <h1 className="font-heading text-xl font-semibold">
-              {appInfo.name}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {strings.main.version(appInfo.version)}
-            </p>
-          </div>
-        )}
+        <h1 className="font-heading text-xl font-semibold">
+          {strings.main.title}
+        </h1>
         <Button
           variant="ghost"
           size="icon"
@@ -230,8 +214,9 @@ export function MainScreen({
           <LinkIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           {/* A Windows text box: its bottom edge turns accent in focus. */}
           <Input
+            ref={urlField}
             id="url"
-            className="h-9 border-b-muted-foreground pl-8 focus-visible:border-input focus-visible:border-b-primary focus-visible:shadow-[inset_0_-1px_0_var(--color-primary)] focus-visible:ring-0 md:text-sm"
+            className="h-9 border-b-muted-foreground pr-9 pl-8 focus-visible:border-input focus-visible:border-b-primary focus-visible:shadow-[inset_0_-1px_0_var(--color-primary)] focus-visible:ring-0 md:text-sm"
             // Not type="url": the browser's own check would block a URL
             // without "https://", which yt-dlp accepts.
             inputMode="url"
@@ -241,6 +226,22 @@ export function MainScreen({
             placeholder={strings.probe.urlPlaceholder}
             autoFocus
           />
+          {url && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground"
+              aria-label={strings.probe.clearUrl}
+              title={strings.probe.clearUrl}
+              onClick={() => {
+                changeUrl("");
+                urlField.current?.focus();
+              }}
+            >
+              <XIcon />
+            </Button>
+          )}
         </div>
         <Button type="submit" size="lg" className="px-4.5 font-semibold">
           {strings.probe.submit}
