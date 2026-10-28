@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SubmitEvent } from "react";
+import { useRef, useState, type SubmitEvent } from "react";
 import {
   CircleAlertIcon,
   LinkIcon,
@@ -16,9 +16,7 @@ import { VideoPreview, type CardChoice } from "@/components/VideoPreview";
 import { useDuplicateWarning } from "@/lib/duplicate";
 import {
   addDownload,
-  appInfo as fetchAppInfo,
   probe as probeUrl,
-  type AppInfo,
   type Browser,
   type Download,
   type Preset,
@@ -103,8 +101,6 @@ export function MainScreen({
   hidden,
   onOpenSettings,
 }: Props) {
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-  const [failed, setFailed] = useState(false);
   const urlField = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
@@ -130,12 +126,6 @@ export function MainScreen({
     probe: ProbeState;
     choice: CardChoice;
   } | null>(null);
-
-  useEffect(() => {
-    fetchAppInfo()
-      .then(setAppInfo)
-      .catch(() => setFailed(true));
-  }, []);
 
   function changeUrl(value: string) {
     setUrl(value);
@@ -201,18 +191,10 @@ export function MainScreen({
       hidden={hidden}
       className="flex w-full max-w-[53.75rem] flex-col gap-3.5 self-start"
     >
-      {failed && <ErrorBar>{strings.main.versionFailed}</ErrorBar>}
       <header className="flex min-h-8.5 items-center gap-2.5">
-        {appInfo && (
-          <div className="flex items-baseline gap-2.5">
-            <h1 className="font-heading text-xl font-semibold">
-              {appInfo.name}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {strings.main.version(appInfo.version)}
-            </p>
-          </div>
-        )}
+        <h1 className="font-heading text-xl font-semibold">
+          {strings.main.title}
+        </h1>
         <Button
           variant="ghost"
           size="icon"
