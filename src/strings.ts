@@ -89,7 +89,8 @@ export const strings = {
   },
   probe: {
     url: "Ссылка на видео",
-    urlPlaceholder: "https://www.youtube.com/watch?v=…",
+    urlPlaceholder: "Вставьте сюда ссылку на видео",
+    clearUrl: "Очистить",
     submit: "Найти",
     probing: "Получаю сведения о видео…",
     thumbnail: "Превью",

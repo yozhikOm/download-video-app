@@ -381,6 +381,27 @@ test("an empty URL isn't probed", async () => {
   expect(backend.probedUrls).toEqual([]);
 });
 
+test("the URL field asks for a link and is cleared by its cross", async () => {
+  await startReady();
+  const input = await screen.findByRole("textbox", { name: "Ссылка на видео" });
+  expect(input).toHaveAttribute("placeholder", "Вставьте сюда ссылку на видео");
+  // An empty field has nothing to clear.
+  expect(
+    screen.queryByRole("button", { name: "Очистить" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.change(input, {
+    target: { value: "https://www.youtube.com/watch?v=-moW9jvvMr4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Очистить" }));
+
+  expect(input).toHaveValue("");
+  expect(input).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: "Очистить" }),
+  ).not.toBeInTheDocument();
+});
+
 test("a probed Video shows its thumbnail, title, channel and duration", async () => {
   const backend = await startReady();
 

@@ -1,9 +1,10 @@
-import { useEffect, useState, type SubmitEvent } from "react";
+import { useEffect, useRef, useState, type SubmitEvent } from "react";
 import {
   CircleAlertIcon,
   LinkIcon,
   LoaderCircleIcon,
   SettingsIcon,
+  XIcon,
 } from "lucide-react";
 import { ErrorBar } from "@/components/ErrorBar";
 import { QueueList } from "@/components/QueueList";
@@ -104,6 +105,7 @@ export function MainScreen({
 }: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
+  const urlField = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState<string | null>(null);
   // A new URL in the field puts the previous Video out of sight. «Скачать»
@@ -230,8 +232,9 @@ export function MainScreen({
           <LinkIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           {/* A Windows text box: its bottom edge turns accent in focus. */}
           <Input
+            ref={urlField}
             id="url"
-            className="h-9 border-b-muted-foreground pl-8 focus-visible:border-input focus-visible:border-b-primary focus-visible:shadow-[inset_0_-1px_0_var(--color-primary)] focus-visible:ring-0 md:text-sm"
+            className="h-9 border-b-muted-foreground pr-9 pl-8 focus-visible:border-input focus-visible:border-b-primary focus-visible:shadow-[inset_0_-1px_0_var(--color-primary)] focus-visible:ring-0 md:text-sm"
             // Not type="url": the browser's own check would block a URL
             // without "https://", which yt-dlp accepts.
             inputMode="url"
@@ -241,6 +244,22 @@ export function MainScreen({
             placeholder={strings.probe.urlPlaceholder}
             autoFocus
           />
+          {url && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground"
+              aria-label={strings.probe.clearUrl}
+              title={strings.probe.clearUrl}
+              onClick={() => {
+                changeUrl("");
+                urlField.current?.focus();
+              }}
+            >
+              <XIcon />
+            </Button>
+          )}
         </div>
         <Button type="submit" size="lg" className="px-4.5 font-semibold">
           {strings.probe.submit}
