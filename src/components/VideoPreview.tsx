@@ -58,7 +58,7 @@ function PresetPicker<P extends Preset>({
         aria-labelledby={labelId}
         value={chosen}
         onValueChange={(value) => onChoose(value as P)}
-        className="grid-cols-[repeat(4,max-content)] gap-x-4.5 gap-y-1.5"
+        className="flex flex-wrap gap-x-4.5 gap-y-1.5"
       >
         {presets.map((preset) => (
           <label key={preset} className="flex items-center gap-2">
@@ -154,7 +154,7 @@ export function VideoPreview({
     <Card
       className={
         video.thumbnail
-          ? "grid grid-cols-[minmax(0,18.75rem)_minmax(0,1fr)] gap-5 p-4 has-[>img:first-child]:pt-4 *:[img:first-child]:rounded-lg"
+          ? "grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5 p-4 has-[>img:first-child]:pt-4 *:[img:first-child]:rounded-lg"
           : "p-4"
       }
     >
