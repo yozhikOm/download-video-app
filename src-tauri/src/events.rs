@@ -1,0 +1,46 @@
+//! Backend → UI events. The backend owns the state; the UI only shows what
+//! arrives here and sends commands back.
+
+use serde::Serialize;
+
+use crate::download::Download;
+use crate::probe::ProbeState;
+use crate::settings::SettingsState;
+use crate::toolbox::{SetupState, YtDlpUpdateState};
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "camelCase")]
+pub enum AppEvent {
+    Setup(SetupState),
+    /// How the update of yt-dlp the user asked for goes.
+    YtDlpUpdate(YtDlpUpdateState),
+    Probe(ProbeState),
+    Settings(SettingsState),
+    /// The Downloads in the Queue, in the order they run.
+    Queue(Vec<Download>),
+    /// The user closes the window while a Download is unfinished; the app
+    /// stays open until the UI confirms it with `close_app`.
+    CloseRequested,
+}
+
+pub trait EventSink: Send + Sync {
+    fn send(&self, event: AppEvent);
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub struct RecordingSink(std::sync::Mutex<Vec<AppEvent>>);
+
+#[cfg(test)]
+impl RecordingSink {
+    pub fn events(&self) -> Vec<AppEvent> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+impl EventSink for RecordingSink {
+    fn send(&self, event: AppEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}

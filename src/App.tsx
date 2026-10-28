@@ -1,49 +1,81 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, useState } from "react";
+import {
+  subscribe,
+  type Download,
+  type ProbeState,
+  type SettingsState,
+  type SetupState,
+} from "@/backend";
+import { CloseDialog } from "@/components/CloseDialog";
+import { MainScreen } from "@/screens/MainScreen";
+import { SettingsScreen } from "@/screens/SettingsScreen";
+import { SetupScreen } from "@/screens/SetupScreen";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [setup, setSetup] = useState<SetupState>({ status: "checking" });
+  const [probe, setProbe] = useState<ProbeState>({ status: "idle" });
+  // The backend sends its settings as soon as the UI subscribes.
+  const [settings, setSettings] = useState<SettingsState>({
+    signInBrowser: null,
+    saveDir: "",
+    fileNameTemplate: "{title}",
+    defaultVideoPreset: "1080p",
+    defaultAudioPreset: "m4a",
+  });
+  const [queue, setQueue] = useState<Download[]>([]);
+  const [closeRequested, setCloseRequested] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  useEffect(
+    () =>
+      subscribe((event) => {
+        switch (event.type) {
+          case "setup":
+            setSetup(event.data);
+            break;
+          case "probe":
+            setProbe(event.data);
+            break;
+          case "settings":
+            setSettings(event.data);
+            break;
+          case "queue":
+            setQueue(event.data);
+            break;
+          case "closeRequested":
+            setCloseRequested(true);
+            break;
+        }
+      }),
+    [],
+  );
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+    <main className="flex min-h-svh items-center justify-center px-7 py-4.5">
+      {(setup.status === "installing" || setup.status === "failed") && (
+        <SetupScreen state={setup} />
+      )}
+      {/* The main screen stays behind the settings, so that its URL and
+          the Video's card are there on the way back. */}
+      {setup.status === "ready" && (
+        <MainScreen
+          probe={probe}
+          settings={settings}
+          queue={queue}
+          hidden={settingsOpen}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+      )}
+      {setup.status === "ready" && settingsOpen && (
+        <SettingsScreen
+          settings={settings}
+          onBack={() => setSettingsOpen(false)}
+        />
+      )}
+      <CloseDialog
+        open={closeRequested}
+        onDismiss={() => setCloseRequested(false)}
+      />
     </main>
   );
 }

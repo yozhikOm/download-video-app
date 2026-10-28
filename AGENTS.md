@@ -1,13 +1,23 @@
 # AGENTS.md
 
+## Branches
+
+- `main` holds releases; `develop` is the integration branch.
+- Each issue gets a branch `<issue number>-<short-slug>` (e.g. `2-first-run-tools`) cut from up-to-date `develop`; PRs target `develop`.
+- `develop` is merged into `main` only for a release.
+
+## Before committing
+
+Run `npm run check` (ESLint, Prettier, `tsc`, Vitest, clippy, rustfmt, `cargo test`) and commit only when it passes. CI runs the same checks on every PR.
+
 ## Commits
 
-Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)?: <description>`.
+Every commit, including an agent's, follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)?: <description>`. release-please derives the next version and `CHANGELOG.md` from these messages (`feat` → minor, `fix`/`perf` → patch, `!` → major, or minor while the version is below 1.0), and commitlint rejects non-conforming ones in the `commit-msg` hook and in CI.
 
 - **Types**: `feat`, `fix`, `refactor`, `perf`, `style`, `test`, `docs`, `build`, `ci`, `chore`, `revert`.
 - **Scopes** (optional): `ui` (React frontend in `src/`), `backend` (Rust in `src-tauri/src/`), `ytdlp`, `transcript`, `settings`, `deps`.
 - **Description**: English, imperative mood, lowercase, no trailing period, ≤72 chars. Example: `feat(ui): add format picker tabs`.
-- **Body** (optional): explain *why*, wrapped at 72 chars.
+- **Body** (optional): explain _why_, wrapped at 72 chars.
 - **Breaking changes**: `!` after the type/scope and a `BREAKING CHANGE:` footer.
 - One logical change per commit.
 

@@ -1,0 +1,47 @@
+name: installer
+
+# Builds the NSIS installer and attaches it to the GitHub Release that
+# release-please has already created for the tag. release-please calls it
+# once it creates a release: its tag, pushed with GITHUB_TOKEN, triggers no
+# workflow by itself.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of an existing release, such as v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-${{ inputs.tag }}
+
+jobs:
+  nsis:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npx tauri build -- --locked
+      - shell: bash
+        run: gh release upload "$TAG" src-tauri/target/release/bundle/nsis/*-setup.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
