@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod download;
 pub mod events;
+pub mod file_name;
 pub mod logs;
 pub mod preset;
 pub mod probe;
@@ -14,12 +15,13 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Builder, Manager, Runtime, State, WindowEvent};
+use tauri::{AppHandle, Builder, Manager, Runtime, State, WebviewWindow, WindowEvent};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::clock::SystemClock;
 use crate::download::{Added, Content, Downloader, OnClose};
 use crate::events::{AppEvent, EventSink};
-use crate::preset::Preset;
+use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::Prober;
 use crate::processes::SystemProcesses;
 use crate::releases::github::GithubReleases;
@@ -246,6 +248,70 @@ fn set_sign_in_browser(
     })
 }
 
+/// Asks the user for the folder to save files to, starting in the current
+/// one, and saves the choice; the change arrives as an event. Nothing
+/// changes when the user closes the dialog.
+#[tauri::command]
+async fn choose_save_dir<R: Runtime>(
+    window: WebviewWindow<R>,
+    settings: State<'_, Arc<Settings>>,
+) -> Result<(), String> {
+    // Off the main thread, which shows the dialog.
+    let Some(folder) = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_directory(settings.save_dir())
+        .blocking_pick_folder()
+    else {
+        return Ok(());
+    };
+    let dir = folder.into_path().map_err(|error| error.to_string())?;
+    settings.set_save_dir(dir).map_err(|error| {
+        eprintln!("can't save the save folder: {error}");
+        error.to_string()
+    })
+}
+
+/// Saves the template Done Downloads' files are named by, a blank one for
+/// the default; the change arrives as an event.
+#[tauri::command]
+fn set_file_name_template(
+    template: String,
+    settings: State<'_, Arc<Settings>>,
+) -> Result<(), String> {
+    settings.set_file_name_template(template).map_err(|error| {
+        eprintln!("can't save the file name template: {error}");
+        error.to_string()
+    })
+}
+
+/// Saves the Video preset chosen at first after a Probe; the change arrives
+/// as an event.
+#[tauri::command]
+fn set_default_video_preset(
+    preset: VideoPreset,
+    settings: State<'_, Arc<Settings>>,
+) -> Result<(), String> {
+    settings.set_default_video_preset(preset).map_err(|error| {
+        eprintln!("can't save the default Video preset: {error}");
+        error.to_string()
+    })
+}
+
+/// Saves the Audio preset chosen at first after a Probe; the change arrives
+/// as an event.
+#[tauri::command]
+fn set_default_audio_preset(
+    preset: AudioPreset,
+    settings: State<'_, Arc<Settings>>,
+) -> Result<(), String> {
+    settings.set_default_audio_preset(preset).map_err(|error| {
+        eprintln!("can't save the default Audio preset: {error}");
+        error.to_string()
+    })
+}
+
 /// Prepares the tools in the background, then, once they are ready, updates
 /// yt-dlp if it is due; the UI follows along through events.
 fn spawn_prepare(toolbox: Arc<Toolbox>) {
@@ -267,6 +333,7 @@ fn spawn_run(downloader: Arc<Downloader>) {
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_info,
             subscribe,
@@ -274,6 +341,10 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             update_ytdlp,
             probe,
             set_sign_in_browser,
+            choose_save_dir,
+            set_file_name_template,
+            set_default_video_preset,
+            set_default_audio_preset,
             add_download,
             retry_download,
             cancel_download,
@@ -291,8 +362,14 @@ pub fn run() {
         .setup(|app| {
             let subscribers = Arc::new(Subscribers::default());
             let data_dir = app.path().app_local_data_dir()?;
+            let downloads_dir = app
+                .path()
+                .download_dir()
+                .or_else(|_| app.path().home_dir().map(|home| home.join("Downloads")))
+                .unwrap_or_else(|_| data_dir.join("downloads"));
             let settings = Arc::new(Settings::load(
                 data_dir.join("settings.json"),
+                downloads_dir,
                 subscribers.clone(),
             ));
             let toolbox = Arc::new(Toolbox::new(
@@ -307,16 +384,10 @@ pub fn run() {
                 settings.clone(),
                 subscribers.clone(),
             ));
-            let save_dir = app
-                .path()
-                .download_dir()
-                .or_else(|_| app.path().home_dir().map(|home| home.join("Downloads")))
-                .unwrap_or_else(|_| data_dir.join("downloads"));
             let downloader = Arc::new(Downloader::new(
                 toolbox.clone(),
                 settings.clone(),
                 data_dir.join("partials"),
-                save_dir,
                 data_dir.join("logs"),
                 Arc::new(SystemClock),
                 subscribers.clone(),

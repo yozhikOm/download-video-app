@@ -34,6 +34,9 @@ pub enum ProbeState {
         default_video_preset: VideoPreset,
         /// The Audio presets the Video has; none when it has no sound.
         audio_presets: Vec<AudioPreset>,
+        /// The Audio preset chosen at first: the default one from the
+        /// settings, since a Video with sound has every Audio preset.
+        default_audio_preset: AudioPreset,
         /// Whether M4A saves the Video's sound as it is, without encoding
         /// it again.
         m4a_keeps_sound: bool,
@@ -108,6 +111,8 @@ pub struct Video {
     pub url: String,
     pub title: String,
     pub channel: Option<String>,
+    /// The day the Video was uploaded, as yt-dlp tells it: `YYYYMMDD`.
+    pub upload_date: Option<String>,
     pub thumbnail: Option<String>,
     /// Seconds.
     pub duration: Option<f64>,
@@ -290,9 +295,13 @@ impl Prober {
                     let transcript_languages = video.transcript_languages();
                     let state = ProbeState::Probed {
                         video: video.card(),
-                        default_video_preset: preset::default_video_preset(&video_presets),
+                        default_video_preset: preset::default_video_preset(
+                            &video_presets,
+                            self.settings.default_video_preset(),
+                        ),
                         video_presets,
                         audio_presets: video.audio_presets(),
+                        default_audio_preset: self.settings.default_audio_preset(),
                         m4a_keeps_sound: video.m4a_keeps_sound(),
                         default_transcript_language: video.default_transcript_language(),
                         transcript_languages,
@@ -359,6 +368,7 @@ struct Info {
     title: Option<String>,
     channel: Option<String>,
     uploader: Option<String>,
+    upload_date: Option<String>,
     thumbnail: Option<String>,
     duration: Option<f64>,
     formats: Option<Vec<InfoFormat>>,
@@ -409,6 +419,7 @@ impl Info {
             url: self.webpage_url.unwrap_or_else(|| url.into()),
             title: self.title.unwrap_or_default(),
             channel: self.channel.or(self.uploader),
+            upload_date: self.upload_date,
             thumbnail: self.thumbnail,
             duration: self.duration,
             formats: self

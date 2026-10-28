@@ -87,6 +87,17 @@ export type Browser =
 export type SettingsState = {
   /** The browser whose YouTube sign-in yt-dlp uses; `null` to not sign in. */
   signInBrowser: Browser | null;
+  /** The folder Done Downloads' files are moved to. */
+  saveDir: string;
+  /**
+   * The name Done Downloads' files are saved under; the backend puts in
+   * `{title}`, `{channel}` and `{date}`.
+   */
+  fileNameTemplate: string;
+  /** The Video preset chosen at first after a Probe, or the nearest lower one. */
+  defaultVideoPreset: VideoPreset;
+  /** The Audio preset chosen at first after a Probe. */
+  defaultAudioPreset: AudioPreset;
 };
 
 /** Why yt-dlp couldn't read the sign-in browser's cookies. */
@@ -121,6 +132,8 @@ export type ProbeState =
       defaultVideoPreset: VideoPreset;
       /** The Audio presets the Video has; none when it has no sound. */
       audioPresets: AudioPreset[];
+      /** The Audio preset chosen at first. */
+      defaultAudioPreset: AudioPreset;
       /** Whether M4A saves the Video's sound as it is, without encoding it again. */
       m4aKeepsSound: boolean;
       /**
@@ -332,6 +345,33 @@ export function showDownloadedFile(id: number): Promise<void> {
 /** Saves the sign-in browser; the change arrives as a settings event. */
 export function setSignInBrowser(browser: Browser | null): Promise<void> {
   return invoke("set_sign_in_browser", { browser });
+}
+
+/**
+ * Asks the user for the folder to save files to in the system's dialog and
+ * saves the choice; it arrives as a settings event, and nothing changes
+ * when the dialog is closed.
+ */
+export function chooseSaveDir(): Promise<void> {
+  return invoke("choose_save_dir");
+}
+
+/**
+ * Saves the template Done Downloads' files are named by, a blank one for the
+ * default; the change arrives as a settings event.
+ */
+export function setFileNameTemplate(template: string): Promise<void> {
+  return invoke("set_file_name_template", { template });
+}
+
+/** Saves the Video preset chosen at first; the change arrives as a settings event. */
+export function setDefaultVideoPreset(preset: VideoPreset): Promise<void> {
+  return invoke("set_default_video_preset", { preset });
+}
+
+/** Saves the Audio preset chosen at first; the change arrives as a settings event. */
+export function setDefaultAudioPreset(preset: AudioPreset): Promise<void> {
+  return invoke("set_default_audio_preset", { preset });
 }
 
 export function appInfo(): Promise<AppInfo> {

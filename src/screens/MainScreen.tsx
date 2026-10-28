@@ -1,5 +1,10 @@
 import { useEffect, useState, type SubmitEvent } from "react";
-import { CircleAlertIcon, LinkIcon, LoaderCircleIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  LinkIcon,
+  LoaderCircleIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { ErrorBar } from "@/components/ErrorBar";
 import { QueueList } from "@/components/QueueList";
 import { SignInBrowserPicker } from "@/components/SignInBrowserPicker";
@@ -26,6 +31,9 @@ type Props = {
   probe: ProbeState;
   settings: SettingsState;
   queue: Download[];
+  /** Out of sight behind the settings, keeping what it shows. */
+  hidden: boolean;
+  onOpenSettings: () => void;
 };
 
 /** The error's text; it names the sign-in browser the Probe ran with. */
@@ -87,7 +95,13 @@ function isYoutube(url: string) {
   );
 }
 
-export function MainScreen({ probe, settings, queue }: Props) {
+export function MainScreen({
+  probe,
+  settings,
+  queue,
+  hidden,
+  onOpenSettings,
+}: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [url, setUrl] = useState("");
@@ -149,7 +163,7 @@ export function MainScreen({ probe, settings, queue }: Props) {
       : {
           group: "video",
           video: probed.defaultVideoPreset,
-          audio: probed.audioPresets[0] ?? "m4a",
+          audio: probed.defaultAudioPreset,
           withTranscript: false,
           transcriptLanguage: probed.defaultTranscriptLanguage,
         };
@@ -181,16 +195,33 @@ export function MainScreen({ probe, settings, queue }: Props) {
   const previewShown = !previewHidden && probe !== supersededProbe;
 
   return (
-    <div className="flex w-full max-w-[53.75rem] flex-col gap-3.5 self-start">
+    <div
+      hidden={hidden}
+      className="flex w-full max-w-[53.75rem] flex-col gap-3.5 self-start"
+    >
       {failed && <ErrorBar>{strings.main.versionFailed}</ErrorBar>}
-      {appInfo && (
-        <header className="flex min-h-8.5 items-baseline gap-2.5">
-          <h1 className="font-heading text-xl font-semibold">{appInfo.name}</h1>
-          <p className="text-xs text-muted-foreground">
-            {strings.main.version(appInfo.version)}
-          </p>
-        </header>
-      )}
+      <header className="flex min-h-8.5 items-center gap-2.5">
+        {appInfo && (
+          <div className="flex items-baseline gap-2.5">
+            <h1 className="font-heading text-xl font-semibold">
+              {appInfo.name}
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              {strings.main.version(appInfo.version)}
+            </p>
+          </div>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="ml-auto"
+          aria-label={strings.main.settings}
+          title={strings.main.settings}
+          onClick={onOpenSettings}
+        >
+          <SettingsIcon />
+        </Button>
+      </header>
       <form className="flex gap-2" onSubmit={submit}>
         <label htmlFor="url" className="sr-only">
           {strings.probe.url}
