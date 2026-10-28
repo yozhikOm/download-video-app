@@ -34,6 +34,7 @@ const defaultSettings: SettingsState = {
   saveDir: "C:\\Users\\me\\Downloads",
   fileNameTemplate: "{title}",
   defaultVideoPreset: "1080p",
+  defaultAudioPreset: "m4a",
 };
 
 /**
@@ -45,6 +46,7 @@ function probed(
   videoPresets: VideoPreset[] = ["1080p", "720p", "480p", "360p"],
   defaultVideoPreset: VideoPreset = "1080p",
   audioPresets: AudioPreset[] = ["m4a", "mp3"],
+  defaultAudioPreset: AudioPreset = "m4a",
   m4aKeepsSound = true,
   transcriptLanguages: TranscriptLanguage[] = [
     { language: "ru", automatic: false },
@@ -58,6 +60,7 @@ function probed(
     videoPresets,
     defaultVideoPreset,
     audioPresets,
+    defaultAudioPreset,
     m4aKeepsSound,
     transcriptLanguages,
     defaultTranscriptLanguage,
@@ -108,6 +111,7 @@ function mockBackend({
   const signInBrowsers: (Browser | null)[] = [];
   const fileNameTemplates: string[] = [];
   const defaultVideoPresets: VideoPreset[] = [];
+  const defaultAudioPresets: AudioPreset[] = [];
   const downloadedPresets: (Preset | null)[] = [];
   const downloadedTranscripts: (string | null)[] = [];
   /** The ids each command about one Download was sent with. */
@@ -147,6 +151,12 @@ function mockBackend({
           throw new Error("disk is full");
         }
         defaultVideoPresets.push((args as { preset: VideoPreset }).preset);
+        return null;
+      case "set_default_audio_preset":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        defaultAudioPresets.push((args as { preset: AudioPreset }).preset);
         return null;
       case "add_download":
         if (downloadFails) {
@@ -188,6 +198,7 @@ function mockBackend({
     signInBrowsers,
     fileNameTemplates,
     defaultVideoPresets,
+    defaultAudioPresets,
     downloadedPresets,
     downloadedTranscripts,
     downloadIds,
@@ -829,7 +840,9 @@ test("a Video with sound offers M4A and MP3 on the Audio tab", async () => {
 
 test("M4A isn't called original for a Video whose sound it encodes again", async () => {
   const backend = await startReady();
-  await backend.probe(probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], false));
+  await backend.probe(
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], "m4a", false),
+  );
 
   openTab("Аудио");
 
@@ -847,6 +860,17 @@ test("the Audio tab downloads M4A unless MP3 is chosen", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
 
   await waitFor(() => expect(backend.downloadedPresets).toEqual(["m4a"]));
+});
+
+test("the Audio tab chooses the default Audio preset of the Probe", async () => {
+  const backend = await startReady();
+  await backend.probe(probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], "mp3"));
+  openTab("Аудио");
+
+  expect(screen.getByRole("radio", { name: "MP3" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["mp3"]));
 });
 
 test("an Audio preset can be chosen before downloading", async () => {
@@ -946,7 +970,7 @@ test("the Transcript tab saves the Transcript alone in the Video's own language"
 test("the Transcript tab lists the Video's languages by name, captions marked", async () => {
   const backend = await startReady();
   await backend.probe(
-    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], true, [
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], "m4a", true, [
       { language: "ru", automatic: false },
       { language: "de", automatic: false },
       { language: "en", automatic: true },
@@ -969,7 +993,7 @@ test("the Transcript tab lists the Video's languages by name, captions marked", 
 test("two Transcripts of one language are told apart by their codes", async () => {
   const backend = await startReady();
   await backend.probe(
-    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], true, [
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], "m4a", true, [
       { language: "en", automatic: false },
       { language: "en-nP7-2PuUl7o", automatic: false },
       { language: "ru", automatic: false },
@@ -988,7 +1012,7 @@ test("two Transcripts of one language are told apart by their codes", async () =
 test("a Video without a Transcript says so on its tab and can't save one", async () => {
   const backend = await startReady();
   await backend.probe(
-    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], true, [], null),
+    probed(zoo, ["1080p"], "1080p", ["m4a", "mp3"], "m4a", true, [], null),
   );
 
   expect(
@@ -1944,7 +1968,7 @@ test("the default Video preset shows the saved one and saves another chosen", as
   await backend.settings({ defaultVideoPreset: "720p" });
   await openSettings();
   const select = screen.getByRole("combobox", {
-    name: "Качество по умолчанию",
+    name: "Качество видео по умолчанию",
   });
   expect(select).toHaveDisplayValue("720p");
 
@@ -1958,11 +1982,39 @@ test("a default Video preset that can't be saved says so", async () => {
   await openSettings();
 
   fireEvent.change(
-    screen.getByRole("combobox", { name: "Качество по умолчанию" }),
+    screen.getByRole("combobox", { name: "Качество видео по умолчанию" }),
     { target: { value: "480p" } },
   );
 
   expect(await screen.findByText("Не удалось сохранить качество.")).toHaveRole(
+    "alert",
+  );
+});
+
+test("the default Audio preset shows the saved one and saves another chosen", async () => {
+  const backend = await startReady();
+  await backend.settings({ defaultAudioPreset: "mp3" });
+  await openSettings();
+  const select = screen.getByRole("combobox", {
+    name: "Формат аудио по умолчанию",
+  });
+  expect(select).toHaveDisplayValue("MP3");
+
+  fireEvent.change(select, { target: { value: "m4a" } });
+
+  await waitFor(() => expect(backend.defaultAudioPresets).toEqual(["m4a"]));
+});
+
+test("a default Audio preset that can't be saved says so", async () => {
+  await startReady({ savingFails: true });
+  await openSettings();
+
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Формат аудио по умолчанию" }),
+    { target: { value: "mp3" } },
+  );
+
+  expect(await screen.findByText("Не удалось сохранить формат.")).toHaveRole(
     "alert",
   );
 });

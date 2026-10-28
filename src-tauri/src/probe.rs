@@ -34,6 +34,9 @@ pub enum ProbeState {
         default_video_preset: VideoPreset,
         /// The Audio presets the Video has; none when it has no sound.
         audio_presets: Vec<AudioPreset>,
+        /// The Audio preset chosen at first: the default one from the
+        /// settings, since a Video with sound has every Audio preset.
+        default_audio_preset: AudioPreset,
         /// Whether M4A saves the Video's sound as it is, without encoding
         /// it again.
         m4a_keeps_sound: bool,
@@ -298,6 +301,7 @@ impl Prober {
                         ),
                         video_presets,
                         audio_presets: video.audio_presets(),
+                        default_audio_preset: self.settings.default_audio_preset(),
                         m4a_keeps_sound: video.m4a_keeps_sound(),
                         default_transcript_language: video.default_transcript_language(),
                         transcript_languages,

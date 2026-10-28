@@ -14,7 +14,7 @@ use url::Url;
 
 use crate::events::{AppEvent, EventSink};
 use crate::file_name::DEFAULT_TEMPLATE;
-use crate::preset::VideoPreset;
+use crate::preset::{AudioPreset, VideoPreset};
 
 /// A browser yt-dlp can read cookies from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +59,8 @@ pub struct SettingsState {
     /// The Video preset chosen at first after a Probe, or the nearest
     /// lower one the Video has.
     pub default_video_preset: VideoPreset,
+    /// The Audio preset chosen at first after a Probe.
+    pub default_audio_preset: AudioPreset,
 }
 
 /// What the settings file holds: what the user chose, `None` for a default.
@@ -78,10 +80,16 @@ struct Saved {
     /// `None` for [`DEFAULT_VIDEO_PRESET`].
     #[serde(deserialize_with = "or_none")]
     default_video_preset: Option<VideoPreset>,
+    /// `None` for [`DEFAULT_AUDIO_PRESET`].
+    #[serde(deserialize_with = "or_none")]
+    default_audio_preset: Option<AudioPreset>,
 }
 
 /// The Video preset chosen at first until the user chooses another.
 const DEFAULT_VIDEO_PRESET: VideoPreset = VideoPreset::P1080;
+
+/// The Audio preset chosen at first until the user chooses another.
+const DEFAULT_AUDIO_PRESET: AudioPreset = AudioPreset::M4a;
 
 /// A value that isn't a `T` as if it were missing.
 fn or_none<'de, D: Deserializer<'de>, T: DeserializeOwned>(
@@ -146,6 +154,11 @@ impl Settings {
         self.state().default_video_preset
     }
 
+    /// The Audio preset chosen at first after a Probe.
+    pub fn default_audio_preset(&self) -> AudioPreset {
+        self.state().default_audio_preset
+    }
+
     /// The sign-in browser to ask about `url` with. Signing in is for
     /// YouTube; the user's sign-in to other sites stays in the browser.
     pub fn sign_in_browser_for(&self, url: &str) -> Option<Browser> {
@@ -176,6 +189,12 @@ impl Settings {
         self.change(|saved| saved.default_video_preset = Some(preset))
     }
 
+    /// Saves the Audio preset chosen at first after a Probe; when it can't
+    /// be saved, nothing changes.
+    pub fn set_default_audio_preset(&self, preset: AudioPreset) -> io::Result<()> {
+        self.change(|saved| saved.default_audio_preset = Some(preset))
+    }
+
     /// Saves the settings as `change` leaves them and sends them to the UI;
     /// when they can't be saved, nothing changes.
     fn change(&self, change: impl FnOnce(&mut Saved)) -> io::Result<()> {
@@ -204,6 +223,7 @@ impl Settings {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_TEMPLATE.into()),
             default_video_preset: saved.default_video_preset.unwrap_or(DEFAULT_VIDEO_PRESET),
+            default_audio_preset: saved.default_audio_preset.unwrap_or(DEFAULT_AUDIO_PRESET),
         }
     }
 

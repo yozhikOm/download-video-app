@@ -48,6 +48,7 @@ impl App {
             save_dir: self.downloads_dir(),
             file_name_template: DEFAULT_TEMPLATE.into(),
             default_video_preset: VideoPreset::P1080,
+            default_audio_preset: AudioPreset::M4a,
         }
     }
 }
@@ -136,7 +137,7 @@ fn a_value_this_version_cant_read_means_its_default_alone() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("settings.json"),
-        br#"{ "signInBrowser": "firefox", "defaultVideoPreset": "4320p", "fileNameTemplate": 5 }"#,
+        br#"{ "signInBrowser": "firefox", "defaultVideoPreset": "4320p", "defaultAudioPreset": "flac", "fileNameTemplate": 5 }"#,
     )
     .unwrap();
 
@@ -221,6 +222,25 @@ fn the_default_video_preset_survives_a_relaunch() {
 }
 
 #[test]
+fn the_default_audio_preset_is_m4a_at_first() {
+    let app = App::start();
+
+    assert_eq!(app.settings.default_audio_preset(), AudioPreset::M4a);
+}
+
+#[test]
+fn the_default_audio_preset_survives_a_relaunch() {
+    let app = App::start();
+
+    app.settings
+        .set_default_audio_preset(AudioPreset::Mp3)
+        .unwrap();
+    let app = app.restart();
+
+    assert_eq!(app.settings.default_audio_preset(), AudioPreset::Mp3);
+}
+
+#[test]
 fn each_setting_is_kept_when_another_changes() {
     let app = App::start();
     let chosen = app.dir.path().join("Videos");
@@ -231,9 +251,12 @@ fn each_setting_is_kept_when_another_changes() {
     app.settings
         .set_file_name_template("{channel} - {title}".into())
         .unwrap();
-
     app.settings
         .set_default_video_preset(VideoPreset::P480)
+        .unwrap();
+
+    app.settings
+        .set_default_audio_preset(AudioPreset::Mp3)
         .unwrap();
     let app = app.restart();
 
@@ -244,6 +267,7 @@ fn each_setting_is_kept_when_another_changes() {
             save_dir: chosen,
             file_name_template: "{channel} - {title}".into(),
             default_video_preset: VideoPreset::P480,
+            default_audio_preset: AudioPreset::Mp3,
         }
     );
 }

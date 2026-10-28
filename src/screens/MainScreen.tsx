@@ -163,7 +163,7 @@ export function MainScreen({
       : {
           group: "video",
           video: probed.defaultVideoPreset,
-          audio: probed.audioPresets[0] ?? "m4a",
+          audio: probed.defaultAudioPreset,
           withTranscript: false,
           transcriptLanguage: probed.defaultTranscriptLanguage,
         };

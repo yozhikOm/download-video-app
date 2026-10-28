@@ -20,6 +20,7 @@ function App() {
     saveDir: "",
     fileNameTemplate: "{title}",
     defaultVideoPreset: "1080p",
+    defaultAudioPreset: "m4a",
   });
   const [queue, setQueue] = useState<Download[]>([]);
   const [closeRequested, setCloseRequested] = useState(false);

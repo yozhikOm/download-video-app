@@ -21,7 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::clock::SystemClock;
 use crate::download::{Added, Content, Downloader, OnClose};
 use crate::events::{AppEvent, EventSink};
-use crate::preset::{Preset, VideoPreset};
+use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::Prober;
 use crate::processes::SystemProcesses;
 use crate::releases::github::GithubReleases;
@@ -299,6 +299,19 @@ fn set_default_video_preset(
     })
 }
 
+/// Saves the Audio preset chosen at first after a Probe; the change arrives
+/// as an event.
+#[tauri::command]
+fn set_default_audio_preset(
+    preset: AudioPreset,
+    settings: State<'_, Arc<Settings>>,
+) -> Result<(), String> {
+    settings.set_default_audio_preset(preset).map_err(|error| {
+        eprintln!("can't save the default Audio preset: {error}");
+        error.to_string()
+    })
+}
+
 /// Prepares the tools in the background, then, once they are ready, updates
 /// yt-dlp if it is due; the UI follows along through events.
 fn spawn_prepare(toolbox: Arc<Toolbox>) {
@@ -331,6 +344,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             choose_save_dir,
             set_file_name_template,
             set_default_video_preset,
+            set_default_audio_preset,
             add_download,
             retry_download,
             cancel_download,

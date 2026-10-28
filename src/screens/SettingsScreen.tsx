@@ -9,8 +9,10 @@ import {
 } from "@/components/ui/native-select";
 import {
   chooseSaveDir,
+  setDefaultAudioPreset,
   setDefaultVideoPreset,
   setFileNameTemplate,
+  type AudioPreset,
   type SettingsState,
   type VideoPreset,
 } from "@/backend";
@@ -18,6 +20,11 @@ import { strings } from "@/strings";
 
 /** Every Video preset, the Video's best first, then highest first. */
 const videoPresets = Object.keys(strings.presets.video) as VideoPreset[];
+
+/** Every Audio preset, in the order the Video's card offers them. */
+const audioPresets = Object.keys(
+  strings.settings.audioPresets,
+) as AudioPreset[];
 
 const variables = Object.keys(
   strings.settings.variables,
@@ -149,7 +156,7 @@ function FileNameTemplate({ saved }: { saved: string }) {
 
 /**
  * The app's settings: where files are saved, how they are named, and the
- * Video preset chosen at first.
+ * Video and Audio presets chosen at first.
  */
 export function SettingsScreen({
   settings,
@@ -160,6 +167,7 @@ export function SettingsScreen({
 }) {
   const [saveDirFailed, setSaveDirFailed] = useState(false);
   const [presetFailed, setPresetFailed] = useState(false);
+  const [audioPresetFailed, setAudioPresetFailed] = useState(false);
 
   function chooseFolder() {
     setSaveDirFailed(false);
@@ -169,6 +177,11 @@ export function SettingsScreen({
   function choosePreset(preset: VideoPreset) {
     setPresetFailed(false);
     setDefaultVideoPreset(preset).catch(() => setPresetFailed(true));
+  }
+
+  function chooseAudioPreset(preset: AudioPreset) {
+    setAudioPresetFailed(false);
+    setDefaultAudioPreset(preset).catch(() => setAudioPresetFailed(true));
   }
 
   return (
@@ -211,6 +224,29 @@ export function SettingsScreen({
           {videoPresets.map((preset) => (
             <NativeSelectOption key={preset} value={preset}>
               {strings.presets.video[preset]}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </SettingRow>
+      <SettingRow
+        label={strings.settings.defaultAudioPreset}
+        labelFor="default-audio-preset"
+        hint={<p>{strings.settings.defaultAudioPresetHint}</p>}
+        failed={
+          audioPresetFailed ? strings.settings.defaultAudioPresetFailed : null
+        }
+      >
+        <NativeSelect
+          id="default-audio-preset"
+          className="shrink-0"
+          value={settings.defaultAudioPreset}
+          onChange={(event) =>
+            chooseAudioPreset(event.target.value as AudioPreset)
+          }
+        >
+          {audioPresets.map((preset) => (
+            <NativeSelectOption key={preset} value={preset}>
+              {strings.settings.audioPresets[preset]}
             </NativeSelectOption>
           ))}
         </NativeSelect>

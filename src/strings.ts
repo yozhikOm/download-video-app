@@ -60,10 +60,19 @@ export const strings = {
       "{date}": "дата публикации, ГГГГ-ММ-ДД",
     },
     fileNameFailed: "Не удалось сохранить шаблон имени.",
-    defaultVideoPreset: "Качество по умолчанию",
+    defaultVideoPreset: "Качество видео по умолчанию",
     defaultVideoPresetHint:
       "Выбирается после поиска видео. Если у видео такого нет — ближайшее меньшее.",
     defaultVideoPresetFailed: "Не удалось сохранить качество.",
+    defaultAudioPreset: "Формат аудио по умолчанию",
+    defaultAudioPresetHint:
+      "Выбирается на вкладке «Аудио» после поиска видео. M4A сохраняет звук без перекодирования, если сайт отдаёт AAC.",
+    /** The Audio presets apart from any Video, so M4A isn't called original. */
+    audioPresets: {
+      m4a: "M4A",
+      mp3: "MP3",
+    } satisfies Record<AudioPreset, string>,
+    defaultAudioPresetFailed: "Не удалось сохранить формат.",
   },
   ytdlp: {
     update: "Обновить yt-dlp",

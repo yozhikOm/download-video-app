@@ -118,6 +118,7 @@ fn a_video_url_shows_the_video_card() {
         ],
         default_video_preset: VideoPreset::P1080,
         audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
+        default_audio_preset: AudioPreset::M4a,
         m4a_keeps_sound: true,
         // Which ones, the Transcript tests tell.
         transcript_languages: offered_transcripts(&app).0,
@@ -455,6 +456,26 @@ fn a_video_with_sound_offers_m4a_and_mp3() {
             vec![AudioPreset::M4a, AudioPreset::Mp3],
             "{url}"
         );
+    }
+}
+
+#[test]
+fn the_default_audio_preset_from_the_settings_is_chosen() {
+    let app = App::start();
+    app.settings
+        .set_default_audio_preset(AudioPreset::Mp3)
+        .unwrap();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    match app.prober.state() {
+        ProbeState::Probed {
+            default_audio_preset,
+            ..
+        } => assert_eq!(default_audio_preset, AudioPreset::Mp3),
+        state => panic!("not probed: {state:?}"),
     }
 }
 
@@ -809,6 +830,7 @@ fn a_finished_stream_is_an_ordinary_video() {
             ],
             default_video_preset: VideoPreset::P1080,
             audio_presets: vec![AudioPreset::M4a, AudioPreset::Mp3],
+            default_audio_preset: AudioPreset::M4a,
             m4a_keeps_sound: true,
             transcript_languages: vec![automatic("en")],
             default_transcript_language: Some("en".into()),
