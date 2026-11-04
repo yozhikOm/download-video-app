@@ -46,8 +46,9 @@ pub enum ProbeState {
         /// The Transcript language chosen at first.
         default_transcript_language: Option<String>,
         /// Every Format the site reports, in yt-dlp's order, worst first, for
-        /// the Advanced mode; a Download may take one of them instead of a
-        /// Preset.
+        /// the Advanced mode, but one of those alike in everything but their
+        /// ids, such as one stream from two servers; a Download may take one
+        /// of them instead of a Preset.
         formats: Vec<Format>,
     },
     #[serde(rename_all = "camelCase")]
@@ -189,6 +190,26 @@ impl Format {
             .as_deref()
             .is_some_and(|codec| codec == "aac" || codec.starts_with("mp4a"))
     }
+
+    /// Whether `other` is alike in everything but its id.
+    fn is_like(&self, other: &Format) -> bool {
+        *self
+            == Format {
+                id: self.id.clone(),
+                ..other.clone()
+            }
+    }
+}
+
+/// The first of each set of `formats` alike in everything but their ids.
+fn distinct(formats: &[Format]) -> Vec<Format> {
+    let mut distinct: Vec<Format> = Vec::new();
+    for format in formats {
+        if !distinct.iter().any(|kept| kept.is_like(format)) {
+            distinct.push(format.clone());
+        }
+    }
+    distinct
 }
 
 /// The languages a Transcript can be saved in, by the source of the text.
@@ -324,7 +345,7 @@ impl Prober {
                         m4a_keeps_sound: video.m4a_keeps_sound(),
                         default_transcript_language: video.default_transcript_language(),
                         transcript_languages,
-                        formats: video.formats.clone(),
+                        formats: distinct(&video.formats),
                     };
                     self.finish(generation, state, Some(video));
                 }

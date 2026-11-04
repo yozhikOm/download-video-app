@@ -1217,6 +1217,35 @@ fn a_video_from_another_site_may_lack_a_channel_language_and_transcripts() {
 }
 
 #[test]
+fn the_advanced_mode_offers_one_of_formats_alike_but_for_their_ids() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/rutube-video.json"));
+
+    app.prober
+        .probe("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+    // Rutube sends each stream from two servers (-0 and -1), and yt-dlp
+    // lists each one twice (default- and m3u8-): four rows alike.
+    let ProbeState::Probed { formats, .. } = app.prober.state() else {
+        panic!("not probed: {:?}", app.prober.state());
+    };
+    let ids: Vec<&str> = formats.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "default-572-0",
+            "default-572-2",
+            "default-1369-0",
+            "default-1631-0",
+            "default-3126-0",
+            "default-5621-0"
+        ]
+    );
+    // A Download may still take any of them.
+    assert_eq!(app.prober.video().unwrap().formats.len(), 24);
+}
+
+#[test]
 fn a_failed_probe_forgets_the_previous_video() {
     let app = App::start();
     app.ytdlp_prints(VIDEO);
