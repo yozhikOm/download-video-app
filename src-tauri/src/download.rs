@@ -236,7 +236,7 @@ impl From<AudioPreset> for Media {
 }
 
 /// How a Download saves the Video's Transcript: as text, and as SubRip
-/// (`.srt`) with its timing too when asked in the Advanced mode.
+/// (`.srt`) with its timing too when asked for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Transcript {
     pub language: TranscriptLanguage,

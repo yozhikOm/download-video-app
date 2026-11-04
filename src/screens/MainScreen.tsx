@@ -175,7 +175,7 @@ export function MainScreen({
   /**
    * The Preset or Format on the chosen tab, neither on the Transcript tab,
    * and the Transcript language when the Transcript is saved, with its
-   * `.srt` in the Advanced mode.
+   * `.srt` when asked for.
    */
   function chosenDownload(
     probed: Extract<ProbeState, { status: "probed" }>,
@@ -188,7 +188,7 @@ export function MainScreen({
       preset: null,
       format: null,
       transcript,
-      srt: settings.advancedMode && choice.srt && transcript !== null,
+      srt: choice.srt && transcript !== null,
     };
     switch (choice.group) {
       case "video":

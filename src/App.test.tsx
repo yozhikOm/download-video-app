@@ -2166,23 +2166,13 @@ test("an Advanced mode that can't be saved says so", async () => {
   ).toHaveRole("alert");
 });
 
-test("without the Advanced mode the card offers neither Formats nor an .srt", async () => {
+test("without the Advanced mode the card offers no Formats", async () => {
   const backend = await startReady();
   await backend.settings({});
   await backend.probe(probed(zoo));
 
   expect(
     screen.queryByRole("tab", { name: "Форматы" }),
-  ).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
-  );
-  expect(
-    screen.queryByRole("checkbox", { name: "Также .srt с таймкодами" }),
-  ).not.toBeInTheDocument();
-  openTab("Транскрипт");
-  expect(
-    screen.queryByRole("checkbox", { name: "Также .srt с таймкодами" }),
   ).not.toBeInTheDocument();
 });
 
@@ -2242,9 +2232,9 @@ test("a Format is downloaded with its Transcript and the .srt", async () => {
   expect(backend.downloadedSrts).toEqual([true]);
 });
 
-test("the .srt shows in the Advanced mode only once the Transcript is saved", async () => {
+test("the .srt shows once the Transcript is saved, without the Advanced mode", async () => {
   const backend = await startReady();
-  await backend.settings({ advancedMode: true });
+  await backend.settings({});
   await backend.probe(probed(zoo));
 
   expect(
@@ -2264,9 +2254,9 @@ test("the .srt shows in the Advanced mode only once the Transcript is saved", as
   expect(backend.downloadedSrts).toEqual([true]);
 });
 
-test("the Transcript tab saves the .srt too in the Advanced mode", async () => {
+test("the Transcript tab saves the .srt too, without the Advanced mode", async () => {
   const backend = await startReady();
-  await backend.settings({ advancedMode: true });
+  await backend.settings({});
   await backend.probe(probed(zoo));
   openTab("Транскрипт");
 
@@ -2282,7 +2272,7 @@ test("the Transcript tab saves the .srt too in the Advanced mode", async () => {
   expect(backend.downloadedSrts).toEqual([true]);
 });
 
-test("turning the Advanced mode off goes back to the Presets without the .srt", async () => {
+test("turning the Advanced mode off goes back to the Presets and keeps the .srt", async () => {
   const backend = await startReady();
   await backend.settings({ advancedMode: true });
   await backend.probe(probed(zoo));
@@ -2304,7 +2294,8 @@ test("turning the Advanced mode off goes back to the Presets without the .srt", 
   fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
   await waitFor(() => expect(backend.downloadedPresets).toEqual(["1080p"]));
   expect(backend.downloadedFormats).toEqual([null]);
-  expect(backend.downloadedSrts).toEqual([false]);
+  expect(backend.downloadedTranscripts).toEqual(["en"]);
+  expect(backend.downloadedSrts).toEqual([true]);
 });
 
 test("the Queue tells a Download of a Format and one with an .srt", async () => {

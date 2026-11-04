@@ -74,7 +74,7 @@ export const strings = {
     defaultAudioPresetFailed: "Не удалось сохранить формат.",
     advancedMode: "Расширенный режим",
     advancedModeHint:
-      "Для опытных пользователей: вкладка «Форматы» со всеми форматами, которые отдаёт сайт, и сохранение транскрипта ещё и в .srt с таймкодами.",
+      "Для опытных пользователей: вкладка «Форматы» со всеми форматами, которые отдаёт сайт, чтобы скачать любой из них как есть.",
     advancedModeFailed: "Не удалось сохранить расширенный режим.",
     version: (version: string) => `Версия ${version}`,
     versionFailed: "Не удалось получить версию приложения",
@@ -171,7 +171,7 @@ export const strings = {
     /** A language whose text comes from the site's captions. */
     automatic: (language: string) => `${language} (автосубтитры)`,
     none: "У этого видео нет транскрипта.",
-    /** The Advanced mode's option to save the Transcript as `.srt` too. */
+    /** The option to save the Transcript as `.srt` too, with its timing. */
     srt: "Также .srt с таймкодами",
   },
   download: {

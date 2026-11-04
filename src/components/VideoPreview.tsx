@@ -35,7 +35,7 @@ export type CardChoice = {
   withTranscript: boolean;
   /** `null` for a Video without a Transcript. */
   transcriptLanguage: string | null;
-  /** The Transcript is saved as `.srt` too, in the Advanced mode. */
+  /** The Transcript is saved as `.srt` too, with its timing. */
   srt: boolean;
 };
 
@@ -259,7 +259,7 @@ export function VideoPreview({
   m4aKeepsSound: boolean;
   transcriptLanguages: TranscriptLanguage[];
   formats: Format[];
-  /** The Advanced mode: the Formats tab and the `.srt`. */
+  /** The Advanced mode: the Formats tab. */
   advanced: boolean;
   choice: CardChoice;
   onChoose: (choice: CardChoice) => void;
@@ -275,7 +275,7 @@ export function VideoPreview({
       }
     />
   );
-  const srtCheckbox = advanced && (
+  const srtCheckbox = (
     <label className="flex items-center gap-2">
       <Checkbox
         checked={choice.srt}

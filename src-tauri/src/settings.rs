@@ -62,7 +62,7 @@ pub struct SettingsState {
     /// The Audio preset chosen at first after a Probe.
     pub default_audio_preset: AudioPreset,
     /// The Advanced mode is on: the Video's Formats to download one of
-    /// them, and a Transcript's `.srt`. Off at first.
+    /// them. Off at first.
     pub advanced_mode: bool,
 }
 

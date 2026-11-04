@@ -41,11 +41,11 @@ The already-received data of an unfinished Download, kept so that a later Downlo
 _Avoid_: .part file, temp file, cache, недокачанное
 
 **Advanced mode**:
-The part of the app for experienced users, hidden until they turn it on in the settings: a Video's Formats to download one of them instead of a Preset, and saving a Transcript as `.srt` with its timing next to its text.
+The part of the app for experienced users, hidden until they turn it on in the settings: a Video's Formats to download one of them instead of a Preset.
 _Avoid_: Expert mode, pro mode, advanced view
 
 **Transcript**:
-The text of what is spoken in a Video, saved as a file alongside the media or on its own, and in the Advanced mode as `.srt` with its timing too. Each Transcript has a source; today the only source is the subtitles or auto-generated captions the site provides.
+The text of what is spoken in a Video, saved as a file alongside the media or on its own, and as `.srt` with its timing too when the user asks for it. Each Transcript has a source; today the only source is the subtitles or auto-generated captions the site provides.
 _Avoid_: Subtitles, captions, расшифровка
 
 ### Where files go

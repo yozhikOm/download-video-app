@@ -124,7 +124,7 @@ export type SettingsState = {
   defaultAudioPreset: AudioPreset;
   /**
    * The Advanced mode is on: the Video's Formats to download one of
-   * them, and a Transcript's `.srt`. Off at first.
+   * them. Off at first.
    */
   advancedMode: boolean;
 };
