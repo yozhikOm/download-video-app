@@ -461,6 +461,54 @@ test("a pasted URL is probed on Enter while the screen says so", async () => {
   expect(screen.getByText("Получаю сведения о видео…")).toBeInTheDocument();
 });
 
+const findButton = () => screen.getByRole("button", { name: "Найти" });
+
+test("«Найти» is disabled while the submitted URL is probed", async () => {
+  const backend = await startReady();
+  const url = "https://www.youtube.com/watch?v=-moW9jvvMr4";
+
+  submitUrl(url);
+  // Disabled before the backend says the Probe has started.
+  expect(findButton()).toBeDisabled();
+  await backend.probe({ status: "probing" });
+  expect(findButton()).toBeDisabled();
+  fireEvent.submit(screen.getByRole("textbox", { name: "Ссылка на видео" }));
+  expect(backend.probedUrls).toEqual([url]);
+
+  await backend.probe(probedVideo);
+
+  expect(findButton()).toBeEnabled();
+});
+
+test("a failed Probe enables «Найти» again", async () => {
+  const backend = await startReady();
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+  await backend.probe({ status: "probing" });
+
+  await backend.probe({
+    status: "failed",
+    error: { kind: "unsupported" },
+    signInBrowser: null,
+  });
+
+  expect(findButton()).toBeEnabled();
+});
+
+test("another URL can be probed while one is", async () => {
+  const backend = await startReady();
+  submitUrl("https://www.youtube.com/watch?v=-moW9jvvMr4");
+  await backend.probe({ status: "probing" });
+
+  enterUrl(youtubeUrl);
+  expect(findButton()).toBeEnabled();
+  submitUrl(youtubeUrl);
+
+  expect(backend.probedUrls).toEqual([
+    "https://www.youtube.com/watch?v=-moW9jvvMr4",
+    youtubeUrl,
+  ]);
+});
+
 test("an empty URL isn't probed", async () => {
   const backend = await startReady();
 
