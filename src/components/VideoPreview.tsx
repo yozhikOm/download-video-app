@@ -295,44 +295,82 @@ export function VideoPreview({
       {strings.transcript.srt}
     </label>
   );
+  // The transcript's row and the button, under the chosen tab's content.
+  const footer = (
+    <>
+      {choice.group !== "transcript" && (
+        <div className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-2">
+          <label className="flex items-center gap-2">
+            <Checkbox
+              checked={choice.withTranscript}
+              disabled={!hasTranscript}
+              onCheckedChange={(checked) =>
+                onChoose({ ...choice, withTranscript: checked === true })
+              }
+            />
+            {strings.transcript.save}
+          </label>
+          {choice.withTranscript && languagePicker}
+          {choice.withTranscript && srtCheckbox}
+        </div>
+      )}
+      <div>
+        <Button
+          size="lg"
+          className="px-4.5 font-semibold"
+          disabled={
+            (choice.group === "transcript" && !hasTranscript) ||
+            (choice.group === "formats" && choice.format === null)
+          }
+          onClick={onDownload}
+        >
+          <DownloadIcon />
+          {strings.download.start}
+        </Button>
+      </div>
+    </>
+  );
   return (
     <Card
       className={
         video.thumbnail
-          ? "grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5 p-4 has-[>img:first-child]:pt-4 *:[img:first-child]:rounded-lg"
+          ? "grid grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5 p-4"
           : "p-4"
       }
     >
-      {video.thumbnail && (
-        <img
-          src={video.thumbnail}
-          alt={strings.probe.thumbnail}
-          className="aspect-video w-full object-cover"
-        />
-      )}
-      <div className="flex min-w-0 flex-col gap-3">
-        <header>
-          <h2 className="font-heading text-base leading-snug font-semibold">
-            {video.title}
-          </h2>
-          <p className="mt-0.5 flex flex-wrap gap-x-2 text-muted-foreground">
-            {video.channel && <span>{video.channel}</span>}
-            {video.channel && video.duration !== null && (
-              <span aria-hidden="true">·</span>
-            )}
-            {video.duration !== null && (
-              <span className="tabular-nums">
-                {formatDuration(video.duration)}
-              </span>
-            )}
-          </p>
-        </header>
-        <Tabs
-          value={choice.group}
-          onValueChange={(group) =>
-            onChoose({ ...choice, group: group as CardChoice["group"] })
-          }
-        >
+      {/* The tabs' root adds no box of its own, so that the Formats tab can
+          span the whole card, under the thumbnail, for its wide table. */}
+      <Tabs
+        className="contents"
+        value={choice.group}
+        onValueChange={(group) =>
+          onChoose({ ...choice, group: group as CardChoice["group"] })
+        }
+      >
+        {video.thumbnail && (
+          <img
+            src={video.thumbnail}
+            alt={strings.probe.thumbnail}
+            className="aspect-video w-full rounded-lg object-cover"
+          />
+        )}
+        <div className="flex min-w-0 flex-col gap-3">
+          <header>
+            <h2 className="font-heading text-base leading-snug font-semibold">
+              {video.title}
+            </h2>
+            <p className="mt-0.5 flex flex-wrap gap-x-2 text-muted-foreground">
+              {video.channel && <span>{video.channel}</span>}
+              {video.channel && video.duration !== null && (
+                <span aria-hidden="true">·</span>
+              )}
+              {video.duration !== null && (
+                <span className="tabular-nums">
+                  {formatDuration(video.duration)}
+                </span>
+              )}
+            </p>
+          </header>
           <TabsList className="h-8.5">
             <TabsTrigger value="video">{strings.presets.videoTab}</TabsTrigger>
             {audioPresets.length > 0 && (
@@ -384,47 +422,22 @@ export function VideoPreview({
               <p className="text-muted-foreground">{strings.transcript.none}</p>
             )}
           </TabsContent>
-          {advanced && (
-            <TabsContent value="formats">
-              <FormatPicker
-                formats={formats}
-                chosen={choice.format}
-                onChoose={(format) => onChoose({ ...choice, format })}
-              />
-            </TabsContent>
-          )}
-        </Tabs>
-        {choice.group !== "transcript" && (
-          <div className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-2">
-            <label className="flex items-center gap-2">
-              <Checkbox
-                checked={choice.withTranscript}
-                disabled={!hasTranscript}
-                onCheckedChange={(checked) =>
-                  onChoose({ ...choice, withTranscript: checked === true })
-                }
-              />
-              {strings.transcript.save}
-            </label>
-            {choice.withTranscript && languagePicker}
-            {choice.withTranscript && srtCheckbox}
-          </div>
-        )}
-        <div>
-          <Button
-            size="lg"
-            className="px-4.5 font-semibold"
-            disabled={
-              (choice.group === "transcript" && !hasTranscript) ||
-              (choice.group === "formats" && choice.format === null)
-            }
-            onClick={onDownload}
-          >
-            <DownloadIcon />
-            {strings.download.start}
-          </Button>
+          {choice.group !== "formats" && footer}
         </div>
-      </div>
+        {advanced && (
+          <TabsContent
+            value="formats"
+            className="col-span-full flex flex-col gap-3"
+          >
+            <FormatPicker
+              formats={formats}
+              chosen={choice.format}
+              onChoose={(format) => onChoose({ ...choice, format })}
+            />
+            {footer}
+          </TabsContent>
+        )}
+      </Tabs>
     </Card>
   );
 }
