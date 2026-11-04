@@ -61,6 +61,9 @@ pub struct SettingsState {
     pub default_video_preset: VideoPreset,
     /// The Audio preset chosen at first after a Probe.
     pub default_audio_preset: AudioPreset,
+    /// The Advanced mode is on: the Video's Formats to download one of
+    /// them, and a Transcript's `.srt`. Off at first.
+    pub advanced_mode: bool,
 }
 
 /// What the settings file holds: what the user chose, `None` for a default.
@@ -83,6 +86,9 @@ struct Saved {
     /// `None` for [`DEFAULT_AUDIO_PRESET`].
     #[serde(deserialize_with = "or_none")]
     default_audio_preset: Option<AudioPreset>,
+    /// `None` for off.
+    #[serde(deserialize_with = "or_none")]
+    advanced_mode: Option<bool>,
 }
 
 /// The Video preset chosen at first until the user chooses another.
@@ -195,6 +201,12 @@ impl Settings {
         self.change(|saved| saved.default_audio_preset = Some(preset))
     }
 
+    /// Turns the Advanced mode on or off; when it can't be saved, nothing
+    /// changes.
+    pub fn set_advanced_mode(&self, on: bool) -> io::Result<()> {
+        self.change(|saved| saved.advanced_mode = Some(on))
+    }
+
     /// Saves the settings as `change` leaves them and sends them to the UI;
     /// when they can't be saved, nothing changes.
     fn change(&self, change: impl FnOnce(&mut Saved)) -> io::Result<()> {
@@ -224,6 +236,7 @@ impl Settings {
                 .unwrap_or_else(|| DEFAULT_TEMPLATE.into()),
             default_video_preset: saved.default_video_preset.unwrap_or(DEFAULT_VIDEO_PRESET),
             default_audio_preset: saved.default_audio_preset.unwrap_or(DEFAULT_AUDIO_PRESET),
+            advanced_mode: saved.advanced_mode.unwrap_or(false),
         }
     }
 

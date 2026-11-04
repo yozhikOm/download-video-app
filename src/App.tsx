@@ -21,6 +21,7 @@ function App() {
     fileNameTemplate: "{title}",
     defaultVideoPreset: "1080p",
     defaultAudioPreset: "m4a",
+    advancedMode: false,
   });
   const [queue, setQueue] = useState<Download[]>([]);
   const [closeRequested, setCloseRequested] = useState(false);

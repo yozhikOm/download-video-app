@@ -11,6 +11,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   AudioPreset,
+  Format,
   Preset,
   TranscriptLanguage,
   VideoCard,
@@ -20,18 +21,22 @@ import { formatDuration, formatLanguage } from "@/lib/format";
 import { strings } from "@/strings";
 
 /**
- * What the user chose on the Video's card: the tab, the Preset on each, and
- * the Transcript. A Video without sound has no Audio tab, so its `audio` is
- * never shown.
+ * What the user chose on the Video's card: the tab, the Preset on each, the
+ * Format in the Advanced mode, and the Transcript. A Video without sound
+ * has no Audio tab, so its `audio` is never shown.
  */
 export type CardChoice = {
-  group: "video" | "audio" | "transcript";
+  group: "video" | "audio" | "transcript" | "formats";
   video: VideoPreset;
   audio: AudioPreset;
-  /** The Transcript is saved with the media on the Video and Audio tabs. */
+  /** The Format's id; `null` until one is chosen. */
+  format: string | null;
+  /** The Transcript is saved with the media on the media's tabs. */
   withTranscript: boolean;
   /** `null` for a Video without a Transcript. */
   transcriptLanguage: string | null;
+  /** The Transcript is saved as `.srt` too, in the Advanced mode. */
+  srt: boolean;
 };
 
 /** The Presets of one group the Video has, to choose one from, in a grid. */
@@ -68,6 +73,121 @@ function PresetPicker<P extends Preset>({
         ))}
       </RadioGroup>
     </div>
+  );
+}
+
+const decimal = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
+
+/** A codec as the list shows it: a dash for none or one the site doesn't tell. */
+function codecText(codec: string | null) {
+  return codec === null || codec === "none" ? strings.formats.unknown : codec;
+}
+
+/** What the list tells of a Format, column by column. */
+function formatCells(format: Format) {
+  const { formats } = strings;
+  let resolution = formats.unknown;
+  if (format.videoCodec === "none") {
+    resolution = formats.audioOnly;
+  } else if (format.width !== null || format.height !== null) {
+    resolution = formats.resolution(
+      String(format.width ?? "?"),
+      String(format.height ?? "?"),
+    );
+    if (format.fps) {
+      resolution = formats.fps(resolution, String(format.fps));
+    }
+  }
+  return {
+    id: format.id,
+    ext: format.ext,
+    resolution,
+    videoCodec: codecText(format.videoCodec),
+    audioCodec: codecText(format.audioCodec),
+    bitrate:
+      format.bitrate === null
+        ? formats.unknown
+        : formats.bitrate(String(Math.round(format.bitrate))),
+    size:
+      format.size === null
+        ? formats.unknown
+        : formats.size(decimal.format(format.size / (1024 * 1024))),
+    note:
+      [format.note, format.language].filter(Boolean).join(", ") ||
+      formats.unknown,
+  } satisfies Record<keyof typeof strings.formats.columns, string>;
+}
+
+const formatColumns = Object.keys(
+  strings.formats.columns,
+) as (keyof typeof strings.formats.columns)[];
+
+/**
+ * Every Format of the Video in a table, one to choose in each row, for the
+ * Advanced mode.
+ */
+function FormatPicker({
+  formats,
+  chosen,
+  onChoose,
+}: {
+  formats: Format[];
+  chosen: string | null;
+  onChoose: (id: string) => void;
+}) {
+  return (
+    <RadioGroup
+      aria-label={strings.formats.list}
+      value={chosen ?? ""}
+      onValueChange={onChoose}
+      className="block max-h-72 overflow-auto rounded-md border"
+    >
+      <table className="w-full text-xs whitespace-nowrap">
+        <thead className="sticky top-0 bg-card text-muted-foreground">
+          <tr>
+            <th className="w-8" />
+            {formatColumns.map((column) => (
+              <th key={column} className="px-1.5 py-1.5 text-left font-normal">
+                {strings.formats.columns[column]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {formats.map((format) => {
+            const cells = formatCells(format);
+            return (
+              <tr
+                key={format.id}
+                className="cursor-pointer border-t hover:bg-muted/50"
+                onClick={() => onChoose(format.id)}
+              >
+                <td className="px-2 py-1.5">
+                  <RadioGroupItem
+                    value={format.id}
+                    aria-label={formatColumns
+                      .map((column) => cells[column])
+                      .join(" ")}
+                  />
+                </td>
+                {formatColumns.map((column) => (
+                  <td
+                    key={column}
+                    className={
+                      column === "id"
+                        ? "px-1.5 py-1.5 font-mono"
+                        : "px-1.5 py-1.5 tabular-nums"
+                    }
+                  >
+                    {cells[column]}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </RadioGroup>
   );
 }
 
@@ -127,6 +247,8 @@ export function VideoPreview({
   audioPresets,
   m4aKeepsSound,
   transcriptLanguages,
+  formats,
+  advanced,
   choice,
   onChoose,
   onDownload,
@@ -136,6 +258,9 @@ export function VideoPreview({
   audioPresets: AudioPreset[];
   m4aKeepsSound: boolean;
   transcriptLanguages: TranscriptLanguage[];
+  formats: Format[];
+  /** The Advanced mode: the Formats tab and the `.srt`. */
+  advanced: boolean;
   choice: CardChoice;
   onChoose: (choice: CardChoice) => void;
   onDownload: () => void;
@@ -149,6 +274,17 @@ export function VideoPreview({
         onChoose({ ...choice, transcriptLanguage: language })
       }
     />
+  );
+  const srtCheckbox = advanced && (
+    <label className="flex items-center gap-2">
+      <Checkbox
+        checked={choice.srt}
+        onCheckedChange={(checked) =>
+          onChoose({ ...choice, srt: checked === true })
+        }
+      />
+      {strings.transcript.srt}
+    </label>
   );
   return (
     <Card
@@ -198,6 +334,9 @@ export function VideoPreview({
             <TabsTrigger value="transcript">
               {strings.transcript.tab}
             </TabsTrigger>
+            {advanced && (
+              <TabsTrigger value="formats">{strings.formats.tab}</TabsTrigger>
+            )}
           </TabsList>
           <TabsContent value="video">
             <PresetPicker
@@ -228,11 +367,23 @@ export function VideoPreview({
           )}
           <TabsContent value="transcript">
             {hasTranscript ? (
-              languagePicker
+              <div className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-2">
+                {languagePicker}
+                {srtCheckbox}
+              </div>
             ) : (
               <p className="text-muted-foreground">{strings.transcript.none}</p>
             )}
           </TabsContent>
+          {advanced && (
+            <TabsContent value="formats">
+              <FormatPicker
+                formats={formats}
+                chosen={choice.format}
+                onChoose={(format) => onChoose({ ...choice, format })}
+              />
+            </TabsContent>
+          )}
         </Tabs>
         {choice.group !== "transcript" && (
           <div className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-2">
@@ -247,13 +398,17 @@ export function VideoPreview({
               {strings.transcript.save}
             </label>
             {choice.withTranscript && languagePicker}
+            {choice.withTranscript && srtCheckbox}
           </div>
         )}
         <div>
           <Button
             size="lg"
             className="px-4.5 font-semibold"
-            disabled={choice.group === "transcript" && !hasTranscript}
+            disabled={
+              (choice.group === "transcript" && !hasTranscript) ||
+              (choice.group === "formats" && choice.format === null)
+            }
             onClick={onDownload}
           >
             <DownloadIcon />

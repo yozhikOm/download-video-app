@@ -45,6 +45,10 @@ pub enum ProbeState {
         transcript_languages: Vec<TranscriptLanguage>,
         /// The Transcript language chosen at first.
         default_transcript_language: Option<String>,
+        /// Every Format the site reports, in yt-dlp's order, worst first, for
+        /// the Advanced mode; a Download may take one of them instead of a
+        /// Preset.
+        formats: Vec<Format>,
     },
     #[serde(rename_all = "camelCase")]
     Failed {
@@ -126,7 +130,8 @@ pub struct Video {
 }
 
 /// A raw stream variant as yt-dlp reports it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Format {
     pub id: String,
     pub ext: String,
@@ -161,6 +166,17 @@ impl Format {
     /// Whether this Format has sound or doesn't tell.
     pub fn has_sound(&self) -> bool {
         self.audio_codec.as_deref() != Some("none")
+    }
+
+    /// Whether this Format has the picture: a video codec other than
+    /// `none`, or, when the site doesn't tell the codec, the picture's size
+    /// or no codec of sound either, as a plain video file.
+    pub fn has_picture(&self) -> bool {
+        match self.video_codec.as_deref() {
+            Some("none") => false,
+            Some(_) => true,
+            None => self.width.is_some() || self.height.is_some() || self.audio_codec.is_none(),
+        }
     }
 
     /// Whether this Format's sound is AAC, which yt-dlp reports as
@@ -305,6 +321,7 @@ impl Prober {
                         m4a_keeps_sound: video.m4a_keeps_sound(),
                         default_transcript_language: video.default_transcript_language(),
                         transcript_languages,
+                        formats: video.formats.clone(),
                     };
                     self.finish(generation, state, Some(video));
                 }

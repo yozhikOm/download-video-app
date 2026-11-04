@@ -16,6 +16,7 @@ import type {
   AudioPreset,
   Browser,
   Download,
+  Format,
   Preset,
   ProbeState,
   SettingsState,
@@ -35,11 +36,55 @@ const defaultSettings: SettingsState = {
   fileNameTemplate: "{title}",
   defaultVideoPreset: "1080p",
   defaultAudioPreset: "m4a",
+  advancedMode: false,
 };
 
+/** Some Formats of a 1080p YouTube Video, as yt-dlp lists them, worst first. */
+const youtubeFormats: Format[] = [
+  {
+    id: "251",
+    ext: "webm",
+    videoCodec: "none",
+    audioCodec: "opus",
+    width: null,
+    height: null,
+    fps: null,
+    bitrate: 109.151,
+    size: 7703637,
+    note: "medium",
+    language: "en",
+  },
+  {
+    id: "18",
+    ext: "mp4",
+    videoCodec: "avc1.42001E",
+    audioCodec: "mp4a.40.2",
+    width: 640,
+    height: 360,
+    fps: 30,
+    bitrate: 250.869,
+    size: 17707023,
+    note: "360p",
+    language: "en",
+  },
+  {
+    id: "137",
+    ext: "mp4",
+    videoCodec: "avc1.640028",
+    audioCodec: "none",
+    width: 1920,
+    height: 1080,
+    fps: 25,
+    bitrate: 1126.641,
+    size: null,
+    note: null,
+    language: null,
+  },
+];
+
 /**
- * A Probe that found `video`, with the Presets of a 1080p Video with sound
- * and its Transcript in English and Russian.
+ * A Probe that found `video`, with the Presets of a 1080p Video with sound,
+ * its Transcript in English and Russian, and some of its Formats.
  */
 function probed(
   video: VideoCard,
@@ -53,6 +98,7 @@ function probed(
     { language: "en", automatic: false },
   ],
   defaultTranscriptLanguage: string | null = "en",
+  formats: Format[] = youtubeFormats,
 ): ProbeState {
   return {
     status: "probed",
@@ -64,27 +110,45 @@ function probed(
     m4aKeepsSound,
     transcriptLanguages,
     defaultTranscriptLanguage,
+    formats,
   };
 }
 
 /** A Download as the backend sends it, without what tells it apart. */
 type DownloadState = Download extends infer D
   ? D extends Download
-    ? Omit<D, "id" | "url" | "preset" | "transcriptLanguage">
+    ? Omit<
+        D,
+        | "id"
+        | "url"
+        | "preset"
+        | "format"
+        | "transcriptLanguage"
+        | "transcriptSrt"
+      >
     : never
   : never;
 
 /**
  * A Download in the Queue: of 1080p without a Transcript unless told, of
- * the Video at `youtubeUrl`.
+ * the Video at `youtubeUrl`; `saves` tells a Format or an `.srt`.
  */
 function queued(
   id: number,
   state: DownloadState,
   preset: Preset | null = "1080p",
   transcriptLanguage: string | null = null,
+  saves: { format?: string; transcriptSrt?: boolean } = {},
 ): Download {
-  return { id, url: youtubeUrl, preset, transcriptLanguage, ...state };
+  return {
+    id,
+    url: youtubeUrl,
+    preset,
+    format: saves.format ?? null,
+    transcriptLanguage,
+    transcriptSrt: saves.transcriptSrt ?? false,
+    ...state,
+  };
 }
 
 /**
@@ -112,8 +176,11 @@ function mockBackend({
   const fileNameTemplates: string[] = [];
   const defaultVideoPresets: VideoPreset[] = [];
   const defaultAudioPresets: AudioPreset[] = [];
+  const advancedModes: boolean[] = [];
   const downloadedPresets: (Preset | null)[] = [];
+  const downloadedFormats: (string | null)[] = [];
   const downloadedTranscripts: (string | null)[] = [];
+  const downloadedSrts: boolean[] = [];
   /** The ids each command about one Download was sent with. */
   const downloadIds: Record<string, number[]> = {};
   mockIPC((cmd, args) => {
@@ -158,15 +225,28 @@ function mockBackend({
         }
         defaultAudioPresets.push((args as { preset: AudioPreset }).preset);
         return null;
-      case "add_download":
+      case "set_advanced_mode":
+        if (savingFails) {
+          throw new Error("disk is full");
+        }
+        advancedModes.push((args as { on: boolean }).on);
+        return null;
+      case "add_download": {
         if (downloadFails) {
           throw new Error("no probed Video");
         }
-        downloadedPresets.push((args as { preset: Preset | null }).preset);
-        downloadedTranscripts.push(
-          (args as { transcript: string | null }).transcript,
-        );
+        const asked = args as {
+          preset: Preset | null;
+          format: string | null;
+          transcript: string | null;
+          srt: boolean;
+        };
+        downloadedPresets.push(asked.preset);
+        downloadedFormats.push(asked.format);
+        downloadedTranscripts.push(asked.transcript);
+        downloadedSrts.push(asked.srt);
         return added;
+      }
       case "retry_download":
         return added;
       case "cancel_download":
@@ -199,8 +279,11 @@ function mockBackend({
     fileNameTemplates,
     defaultVideoPresets,
     defaultAudioPresets,
+    advancedModes,
     downloadedPresets,
+    downloadedFormats,
     downloadedTranscripts,
+    downloadedSrts,
     downloadIds,
     setup: (state: SetupState) => send({ type: "setup", data: state }),
     probe: (state: ProbeState) => send({ type: "probe", data: state }),
@@ -2046,4 +2129,226 @@ test("a default Audio preset that can't be saved says so", async () => {
   expect(await screen.findByText("Не удалось сохранить формат.")).toHaveRole(
     "alert",
   );
+});
+
+test("the Advanced mode is off at first and turned on in the settings", async () => {
+  const backend = await startReady();
+  await backend.settings({});
+  await openSettings();
+  const checkbox = screen.getByRole("checkbox", { name: "Расширенный режим" });
+  expect(checkbox).not.toBeChecked();
+
+  fireEvent.click(checkbox);
+
+  await waitFor(() => expect(backend.advancedModes).toEqual([true]));
+});
+
+test("the Advanced mode shows as saved and is turned off again", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await openSettings();
+  const checkbox = screen.getByRole("checkbox", { name: "Расширенный режим" });
+  expect(checkbox).toBeChecked();
+
+  fireEvent.click(checkbox);
+
+  await waitFor(() => expect(backend.advancedModes).toEqual([false]));
+});
+
+test("an Advanced mode that can't be saved says so", async () => {
+  await startReady({ savingFails: true });
+  await openSettings();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Расширенный режим" }));
+
+  expect(
+    await screen.findByText("Не удалось сохранить расширенный режим."),
+  ).toHaveRole("alert");
+});
+
+test("without the Advanced mode the card offers neither Formats nor an .srt", async () => {
+  const backend = await startReady();
+  await backend.settings({});
+  await backend.probe(probed(zoo));
+
+  expect(
+    screen.queryByRole("tab", { name: "Форматы" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  expect(
+    screen.queryByRole("checkbox", { name: "Также .srt с таймкодами" }),
+  ).not.toBeInTheDocument();
+  openTab("Транскрипт");
+  expect(
+    screen.queryByRole("checkbox", { name: "Также .srt с таймкодами" }),
+  ).not.toBeInTheDocument();
+});
+
+test("the Advanced mode lists every Format of the Video with what it is", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await backend.probe(probed(zoo));
+
+  openTab("Форматы");
+
+  const formats = screen.getByRole("radiogroup", { name: "Форматы" });
+  const radios = within(formats).getAllByRole("radio");
+  expect(radios.map((radio) => radio.closest("tr")?.textContent)).toEqual([
+    "251webmтолько звук—opus109 кбит/с7,3 МБmedium, en",
+    "18mp4640×360, 30 fpsavc1.42001Emp4a.40.2251 кбит/с16,9 МБ360p, en",
+    "137mp41920×1080, 25 fpsavc1.640028—1127 кбит/с——",
+  ]);
+  // Nothing is chosen at first.
+  for (const radio of radios) {
+    expect(radio).not.toBeChecked();
+  }
+});
+
+test("a Format is downloaded on request instead of a Preset", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await backend.probe(probed(zoo));
+  openTab("Форматы");
+  expect(screen.getByRole("button", { name: "Скачать" })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("radio", { name: /^137/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedFormats).toEqual(["137"]));
+  expect(backend.downloadedPresets).toEqual([null]);
+  expect(backend.downloadedTranscripts).toEqual([null]);
+  expect(backend.downloadedSrts).toEqual([false]);
+});
+
+test("a Format is downloaded with its Transcript and the .srt", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await backend.probe(probed(zoo));
+  openTab("Форматы");
+  fireEvent.click(screen.getByRole("radio", { name: /^18/ }));
+
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Также .srt с таймкодами" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedFormats).toEqual(["18"]));
+  expect(backend.downloadedTranscripts).toEqual(["en"]);
+  expect(backend.downloadedSrts).toEqual([true]);
+});
+
+test("the .srt shows in the Advanced mode only once the Transcript is saved", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await backend.probe(probed(zoo));
+
+  expect(
+    screen.queryByRole("checkbox", { name: "Также .srt с таймкодами" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Также .srt с таймкодами" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["1080p"]));
+  expect(backend.downloadedFormats).toEqual([null]);
+  expect(backend.downloadedTranscripts).toEqual(["en"]);
+  expect(backend.downloadedSrts).toEqual([true]);
+});
+
+test("the Transcript tab saves the .srt too in the Advanced mode", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await backend.probe(probed(zoo));
+  openTab("Транскрипт");
+
+  const srt = screen.getByRole("checkbox", {
+    name: "Также .srt с таймкодами",
+  });
+  expect(srt).not.toBeChecked();
+  fireEvent.click(srt);
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+
+  await waitFor(() => expect(backend.downloadedTranscripts).toEqual(["en"]));
+  expect(backend.downloadedPresets).toEqual([null]);
+  expect(backend.downloadedSrts).toEqual([true]);
+});
+
+test("turning the Advanced mode off goes back to the Presets without the .srt", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  await backend.probe(probed(zoo));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Сохранить транскрипт" }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Также .srt с таймкодами" }),
+  );
+  openTab("Форматы");
+  fireEvent.click(screen.getByRole("radio", { name: /^137/ }));
+
+  await backend.settings({ advancedMode: false });
+
+  expect(screen.getByRole("tab", { name: "Видео" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Скачать" }));
+  await waitFor(() => expect(backend.downloadedPresets).toEqual(["1080p"]));
+  expect(backend.downloadedFormats).toEqual([null]);
+  expect(backend.downloadedSrts).toEqual([false]);
+});
+
+test("the Queue tells a Download of a Format and one with an .srt", async () => {
+  const backend = await startReady();
+
+  await backend.queue(
+    queued(1, { video: zoo, status: "queued" }, null, null, { format: "137" }),
+    queued(2, { video: habit, status: "queued" }, "1080p", "en", {
+      transcriptSrt: true,
+    }),
+    queued(3, { video: lecture, status: "queued" }, null, "en", {
+      format: "18",
+      transcriptSrt: true,
+    }),
+    queued(4, { video: lecture, status: "queued" }, null, "ru", {
+      transcriptSrt: true,
+    }),
+  );
+
+  const items = within(
+    screen.getByRole("list", { name: "Очередь" }),
+  ).getAllByRole("listitem");
+  expect(items[0]).toHaveTextContent("Формат 137");
+  expect(items[1]).toHaveTextContent("1080p + транскрипт и .srt");
+  expect(items[2]).toHaveTextContent("Формат 18 + транскрипт и .srt");
+  expect(items[3]).toHaveTextContent("Транскрипт и .srt");
+});
+
+test("the details of a Failed Format name it and the .srt", async () => {
+  const clipboard = mockClipboard();
+  const backend = await startReady();
+  await backend.queue(
+    queued(1, { video: zoo, status: "failed", ...readTimedOut }, null, "en", {
+      format: "137",
+      transcriptSrt: true,
+    }),
+  );
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Скопировать подробности" }),
+  );
+
+  await waitFor(() => expect(clipboard).toHaveLength(1));
+  expect(clipboard[0]).not.toContain("Preset");
+  expect(clipboard[0]).toContain("Format: 137");
+  expect(clipboard[0]).toContain("Транскрипт: en + .srt");
 });

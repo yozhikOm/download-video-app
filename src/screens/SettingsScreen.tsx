@@ -3,6 +3,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { ErrorBar } from "@/components/ErrorBar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
@@ -11,6 +12,7 @@ import {
 import {
   appInfo as fetchAppInfo,
   chooseSaveDir,
+  setAdvancedMode,
   setDefaultAudioPreset,
   setDefaultVideoPreset,
   setFileNameTemplate,
@@ -158,8 +160,9 @@ function FileNameTemplate({ saved }: { saved: string }) {
 }
 
 /**
- * The app's settings: where files are saved, how they are named, and the
- * Video and Audio presets chosen at first; the app's version below them.
+ * The app's settings: where files are saved, how they are named, the Video
+ * and Audio presets chosen at first, and the Advanced mode; the app's
+ * version below them.
  */
 export function SettingsScreen({
   settings,
@@ -171,6 +174,7 @@ export function SettingsScreen({
   const [saveDirFailed, setSaveDirFailed] = useState(false);
   const [presetFailed, setPresetFailed] = useState(false);
   const [audioPresetFailed, setAudioPresetFailed] = useState(false);
+  const [advancedModeFailed, setAdvancedModeFailed] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [appInfoFailed, setAppInfoFailed] = useState(false);
 
@@ -193,6 +197,11 @@ export function SettingsScreen({
   function chooseAudioPreset(preset: AudioPreset) {
     setAudioPresetFailed(false);
     setDefaultAudioPreset(preset).catch(() => setAudioPresetFailed(true));
+  }
+
+  function chooseAdvancedMode(on: boolean) {
+    setAdvancedModeFailed(false);
+    setAdvancedMode(on).catch(() => setAdvancedModeFailed(true));
   }
 
   return (
@@ -261,6 +270,19 @@ export function SettingsScreen({
             </NativeSelectOption>
           ))}
         </NativeSelect>
+      </SettingRow>
+      <SettingRow
+        label={strings.settings.advancedMode}
+        labelFor="advanced-mode"
+        hint={<p>{strings.settings.advancedModeHint}</p>}
+        failed={advancedModeFailed ? strings.settings.advancedModeFailed : null}
+      >
+        <Checkbox
+          id="advanced-mode"
+          className="shrink-0"
+          checked={settings.advancedMode}
+          onCheckedChange={(checked) => chooseAdvancedMode(checked === true)}
+        />
       </SettingRow>
       {appInfo && (
         <p className="text-xs text-muted-foreground">

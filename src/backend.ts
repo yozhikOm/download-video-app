@@ -62,6 +62,30 @@ export type AudioPreset = "m4a" | "mp3";
 /** A Preset of either group, as the backend knows it by its name. */
 export type Preset = VideoPreset | AudioPreset;
 
+/**
+ * A raw stream variant as the site reports it, shown in the Advanced mode; a
+ * Download may take one instead of a Preset. Each field but `id` and `ext`
+ * is `null` when the site doesn't tell.
+ */
+export type Format = {
+  id: string;
+  /** The container, such as `mp4` or `webm`. */
+  ext: string;
+  /** `none` for a Format without the picture. */
+  videoCodec: string | null;
+  /** `none` for a Format without the sound. */
+  audioCodec: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  /** Kbit/s. */
+  bitrate: number | null;
+  /** Bytes, exact or estimated. */
+  size: number | null;
+  note: string | null;
+  language: string | null;
+};
+
 /** A language a Transcript can be saved in, and its source. */
 export type TranscriptLanguage = {
   /** The site's code of the language, such as `en` or `pt-BR`. */
@@ -98,6 +122,11 @@ export type SettingsState = {
   defaultVideoPreset: VideoPreset;
   /** The Audio preset chosen at first after a Probe. */
   defaultAudioPreset: AudioPreset;
+  /**
+   * The Advanced mode is on: the Video's Formats to download one of
+   * them, and a Transcript's `.srt`. Off at first.
+   */
+  advancedMode: boolean;
 };
 
 /** Why yt-dlp couldn't read the sign-in browser's cookies. */
@@ -143,6 +172,8 @@ export type ProbeState =
       transcriptLanguages: TranscriptLanguage[];
       /** The Transcript language chosen at first. */
       defaultTranscriptLanguage: string | null;
+      /** Every Format the site reports, worst first, for the Advanced mode. */
+      formats: Format[];
     }
   | {
       status: "failed";
@@ -185,10 +216,14 @@ export type Download = {
   /** The Video's own page. */
   url: string;
   video: VideoCard;
-  /** `null` for the Transcript alone. */
+  /** `null` for a Format or the Transcript alone. */
   preset: Preset | null;
+  /** The id of the Format saved as it is instead of a Preset. */
+  format: string | null;
   /** The language of the Transcript, when it is saved. */
   transcriptLanguage: string | null;
+  /** The Transcript is saved as `.srt` too, with its timing. */
+  transcriptSrt: boolean;
 } &
   /** Waits for the Downloads ahead of it in the Queue. */
   (
@@ -284,17 +319,27 @@ export function probe(url: string): Promise<void> {
 }
 
 /**
- * Adds a Download of the probed Video to the Queue: its media with a Video
- * or Audio preset, its Transcript in a language next to it under the same
- * name, or the Transcript alone without a Preset; the Queue arrives as
- * queue events. Rejects when no Probe found a Video, when neither is asked
- * for, or when the Video lacks the Preset or the language.
+ * What a Download saves of the probed Video: its media with a Video or
+ * Audio preset or as one of its Formats (by its id), or neither for the
+ * Transcript alone; and its Transcript in a language, as `.srt` too when
+ * `srt`.
  */
-export function addDownload(
-  preset: Preset | null,
-  transcript: string | null,
-): Promise<Added> {
-  return invoke<Added>("add_download", { preset, transcript });
+export type DownloadRequest = {
+  preset: Preset | null;
+  format: string | null;
+  transcript: string | null;
+  srt: boolean;
+};
+
+/**
+ * Adds a Download of the probed Video to the Queue: its media, its
+ * Transcript next to it under the same name, or the Transcript alone; the
+ * Queue arrives as queue events. Rejects when no Probe found a Video, when
+ * neither is asked for, or when the Video lacks the Preset, the Format or
+ * the language.
+ */
+export function addDownload(request: DownloadRequest): Promise<Added> {
+  return invoke<Added>("add_download", request);
 }
 
 /**
@@ -372,6 +417,11 @@ export function setDefaultVideoPreset(preset: VideoPreset): Promise<void> {
 /** Saves the Audio preset chosen at first; the change arrives as a settings event. */
 export function setDefaultAudioPreset(preset: AudioPreset): Promise<void> {
   return invoke("set_default_audio_preset", { preset });
+}
+
+/** Turns the Advanced mode on or off; the change arrives as a settings event. */
+export function setAdvancedMode(on: boolean): Promise<void> {
+  return invoke("set_advanced_mode", { on });
 }
 
 export function appInfo(): Promise<AppInfo> {

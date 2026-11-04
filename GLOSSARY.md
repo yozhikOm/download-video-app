@@ -17,7 +17,7 @@ _Avoid_: Fetch info, analyze, scan
 ### What the user asks for
 
 **Download**:
-One request in the Queue to save a Video to disk: its media with a chosen Preset, its Transcript, or both.
+One request in the Queue to save a Video to disk: its media with a chosen Preset (or, in the Advanced mode, as one of its Formats), its Transcript, or both.
 _Avoid_: Job, task
 
 **Queue**:
@@ -33,15 +33,19 @@ The Preset chosen at first after a Probe, one per group, set by the user: a Vide
 _Avoid_: Default quality, default format, качество по умолчанию
 
 **Format**:
-One raw stream variant that the site reports for a Video (codec, resolution, bitrate). Users only see Formats in the advanced view; Presets are built on top of them.
+One raw stream variant that the site reports for a Video (codec, resolution, bitrate). Users only see Formats in the Advanced mode, where a Download may take one exactly as it is instead of a Preset; Presets are built on top of them.
 _Avoid_: Stream, itag, quality
 
 **Partial**:
-The already-received data of an unfinished Download, kept so that a later Download of the same Video with the same Preset resumes instead of starting over. Partials untouched for 7 days are discarded.
+The already-received data of an unfinished Download, kept so that a later Download of the same Video with the same Preset or Format resumes instead of starting over. Partials untouched for 7 days are discarded.
 _Avoid_: .part file, temp file, cache, недокачанное
 
+**Advanced mode**:
+The part of the app for experienced users, hidden until they turn it on in the settings: a Video's Formats to download one of them instead of a Preset, and saving a Transcript as `.srt` with its timing next to its text.
+_Avoid_: Expert mode, pro mode, advanced view
+
 **Transcript**:
-The text of what is spoken in a Video, saved as a file alongside the media or on its own. Each Transcript has a source; today the only source is the subtitles or auto-generated captions the site provides.
+The text of what is spoken in a Video, saved as a file alongside the media or on its own, and in the Advanced mode as `.srt` with its timing too. Each Transcript has a source; today the only source is the subtitles or auto-generated captions the site provides.
 _Avoid_: Subtitles, captions, расшифровка
 
 ### Where files go

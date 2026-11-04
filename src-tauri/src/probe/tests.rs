@@ -123,6 +123,8 @@ fn a_video_url_shows_the_video_card() {
         // Which ones, the Transcript tests tell.
         transcript_languages: offered_transcripts(&app).0,
         default_transcript_language: Some("en".into()),
+        // Which ones, the Advanced mode's test tells.
+        formats: app.prober.video().unwrap().formats,
     };
     assert_eq!(app.probe_states(), [ProbeState::Probing, probed.clone()]);
     assert_eq!(app.prober.state(), probed);
@@ -834,6 +836,7 @@ fn a_finished_stream_is_an_ordinary_video() {
             m4a_keeps_sound: true,
             transcript_languages: vec![automatic("en")],
             default_transcript_language: Some("en".into()),
+            formats: app.prober.video().unwrap().formats,
         }
     );
 }
@@ -1109,6 +1112,62 @@ fn the_probed_video_keeps_what_downloads_need() {
         }
     );
     assert!(!video.was_live);
+}
+
+#[test]
+fn a_probed_video_offers_all_its_formats_for_the_advanced_mode() {
+    let app = App::start();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    let ProbeState::Probed { formats, .. } = app.prober.state() else {
+        panic!("not probed: {:?}", app.prober.state());
+    };
+    // Storyboards are pictures, not streams.
+    let ids: Vec<&str> = formats.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "249-drc", "250-drc", "249", "250", "140-drc", "251-drc", "140", "251", "160", "278",
+            "394", "133", "242", "395", "134", "18", "243", "396", "135", "244", "397", "136",
+            "247", "398", "248-sr", "399-sr"
+        ]
+    );
+    // As the UI gets them.
+    assert_eq!(
+        serde_json::to_value(&formats[15]).unwrap(),
+        serde_json::json!({
+            "id": "18",
+            "ext": "mp4",
+            "videoCodec": "avc1.42001E",
+            "audioCodec": "mp4a.40.2",
+            "width": 640,
+            "height": 360,
+            "fps": 30.0,
+            "bitrate": 250.869,
+            "size": 17707023,
+            "note": "360p",
+            "language": "en",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&formats[0]).unwrap(),
+        serde_json::json!({
+            "id": "249-drc",
+            "ext": "webm",
+            "videoCodec": "none",
+            "audioCodec": "opus",
+            "width": null,
+            "height": null,
+            "fps": null,
+            "bitrate": 50.898,
+            "size": 3592323,
+            "note": "low, DRC",
+            "language": "en",
+        })
+    );
 }
 
 #[test]
