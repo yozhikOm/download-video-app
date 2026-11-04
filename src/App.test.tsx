@@ -116,7 +116,7 @@ function probed(
   ],
   defaultTranscriptLanguage: string | null = "en",
   formats: Format[] = youtubeFormats,
-): ProbeState {
+): Extract<ProbeState, { status: "probed" }> {
   return {
     status: "probed",
     video,
@@ -2203,17 +2203,61 @@ test("the Advanced mode lists every Format of the Video with what it is", async 
   const formats = screen.getByRole("radiogroup", { name: "Форматы" });
   const radios = within(formats).getAllByRole("radio");
   expect(radios.map((radio) => radio.closest("tr")?.textContent)).toEqual([
-    "251webmтолько звук—opus109 кбит/с7,3 МБmedium, en",
-    "18mp4640×360, 30 fpsavc1.42001Emp4a.40.2251 кбит/с16,9 МБ360p, en",
+    "251webmтолько звук—Opus109 кбит/с7,3 МБmedium, en",
+    "18mp4640×360, 30 fpsH.264AAC251 кбит/с16,9 МБ360p, en",
     // The picture alone gets the best sound.
-    "137mp41920×1080, 25 fpsavc1.640028+ лучший звук1127 кбит/с——",
+    "137mp41920×1080, 25 fpsH.264+ лучший звук1127 кбит/с——",
     // HLS, which YouTube sends slowly.
-    "95mp41280×720, 25 fpsavc1.4D401Fmp4a.40.21514 кбит/с—HLS",
+    "95mp41280×720, 25 fpsH.264AAC1514 кбит/с—HLS",
   ]);
   // Nothing is chosen at first.
   for (const radio of radios) {
     expect(radio).not.toBeChecked();
   }
+});
+
+test("the Formats list names codecs as people know them, and the rest as the site does", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  const [, both] = youtubeFormats;
+  const codecs = (videoCodec: string, audioCodec: string) => ({
+    ...both,
+    id: `${videoCodec} ${audioCodec}`,
+    videoCodec,
+    audioCodec,
+  });
+  await backend.probe({
+    ...probed(zoo),
+    formats: [
+      codecs("vp09.00.40.08", "opus"),
+      codecs("av01.0.08M.08", "vorbis"),
+      codecs("hvc1.2.4.L123.B0", "ec-3"),
+      codecs("vp8.0", "mp3"),
+      codecs("theora", "flac"),
+    ],
+  });
+
+  openTab("Форматы");
+
+  const cells = within(screen.getByRole("radiogroup", { name: "Форматы" }))
+    .getAllByRole("radio")
+    .map((radio) => {
+      const row = radio.closest("tr")!.cells;
+      // The site's own codec stays at hand, in the cell's tooltip.
+      return [
+        row[4].textContent,
+        row[4].title,
+        row[5].textContent,
+        row[5].title,
+      ];
+    });
+  expect(cells).toEqual([
+    ["VP9", "vp09.00.40.08", "Opus", "opus"],
+    ["AV1", "av01.0.08M.08", "Vorbis", "vorbis"],
+    ["H.265", "hvc1.2.4.L123.B0", "E-AC-3", "ec-3"],
+    ["VP8", "vp8.0", "MP3", "mp3"],
+    ["theora", "theora", "FLAC", "flac"],
+  ]);
 });
 
 test("a Format is downloaded on request instead of a Preset", async () => {

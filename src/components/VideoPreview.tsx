@@ -78,9 +78,52 @@ function PresetPicker<P extends Preset>({
 
 const decimal = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
 
-/** A codec as the list shows it: a dash for none or one the site doesn't tell. */
+/**
+ * Codecs by the names people know them, after the prefix of the site's
+ * own name, such as `avc1.640028` or `mp4a.40.2`.
+ */
+const codecNames: [prefix: string, name: string][] = [
+  ["avc1", "H.264"],
+  ["avc3", "H.264"],
+  ["h264", "H.264"],
+  ["hev1", "H.265"],
+  ["hvc1", "H.265"],
+  ["h265", "H.265"],
+  ["hevc", "H.265"],
+  ["vp09", "VP9"],
+  ["vp9", "VP9"],
+  ["vp8", "VP8"],
+  ["av01", "AV1"],
+  ["mp4v", "MPEG-4"],
+  ["mp4a", "AAC"],
+  ["aac", "AAC"],
+  ["opus", "Opus"],
+  ["vorbis", "Vorbis"],
+  ["mp3", "MP3"],
+  ["flac", "FLAC"],
+  ["ac-3", "AC-3"],
+  ["ac3", "AC-3"],
+  ["ec-3", "E-AC-3"],
+  ["eac3", "E-AC-3"],
+];
+
+/** The site's own name of a codec, or nothing for none or one it doesn't tell. */
+function siteCodec(codec: string | null) {
+  return codec === null || codec === "none" ? undefined : codec;
+}
+
+/**
+ * A codec as the list shows it: by the name people know it, as the site
+ * names it when it isn't one of those, and a dash for none or one the site
+ * doesn't tell.
+ */
 function codecText(codec: string | null) {
-  return codec === null || codec === "none" ? strings.formats.unknown : codec;
+  const own = siteCodec(codec);
+  if (own === undefined) {
+    return strings.formats.unknown;
+  }
+  const lower = own.toLowerCase();
+  return codecNames.find(([prefix]) => lower.startsWith(prefix))?.[1] ?? own;
 }
 
 /** What the list tells of a Format, column by column. */
@@ -182,6 +225,14 @@ function FormatPicker({
                 {formatColumns.map((column) => (
                   <td
                     key={column}
+                    // The site's own name of the codec, such as avc1.640028.
+                    title={
+                      column === "videoCodec"
+                        ? siteCodec(format.videoCodec)
+                        : column === "audioCodec"
+                          ? siteCodec(format.audioCodec)
+                          : undefined
+                    }
                     className={
                       column === "id"
                         ? "px-1.5 py-1.5 font-mono"
