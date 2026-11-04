@@ -131,23 +131,40 @@ impl App {
         formats: serde_json::Value,
         progress: &[String],
     ) {
-        self.ytdlp_acts(id, content, formats, progress, None);
+        let before_dl = serde_json::json!({ "formats": formats, "duration": null });
+        self.ytdlp_acts(id, content, before_dl, progress, None);
+    }
+
+    /// Like [`App::ytdlp_downloads_formats`], for a Video `duration`
+    /// seconds long, whose `formats` may tell only their bitrate.
+    fn ytdlp_downloads_formats_lasting(
+        &self,
+        id: &str,
+        content: &[u8],
+        formats: serde_json::Value,
+        duration: f64,
+        progress: &[String],
+    ) {
+        let before_dl = serde_json::json!({ "formats": formats, "duration": duration });
+        self.ytdlp_acts(id, content, before_dl, progress, None);
     }
 
     /// Like [`App::ytdlp_downloads`], and asked for the subtitles alone,
     /// yt-dlp writes `subtitles` where it is told.
     fn ytdlp_downloads_with_subtitles(&self, id: &str, content: &[u8], subtitles: &[u8]) {
-        self.ytdlp_acts(id, content, serde_json::Value::Null, &[], Some(subtitles));
+        let before_dl = serde_json::json!({ "formats": null, "duration": null });
+        self.ytdlp_acts(id, content, before_dl, &[], Some(subtitles));
     }
 
-    /// Makes yt-dlp act like it downloads the Video with this id; asked for
-    /// the subtitles alone, it writes `subtitles`, or nothing as when the
-    /// site has none in the language asked for.
+    /// Makes yt-dlp act like it downloads the Video with this id, printing
+    /// `before_dl` before anything is received; asked for the subtitles
+    /// alone, it writes `subtitles`, or nothing as when the site has none in
+    /// the language asked for.
     fn ytdlp_acts(
         &self,
         id: &str,
         content: &[u8],
-        formats: serde_json::Value,
+        before_dl: serde_json::Value,
         progress: &[String],
         subtitles: Option<&[u8]>,
     ) {
@@ -177,7 +194,7 @@ impl App {
                 .iter()
                 .any(|print| print.to_str().unwrap().starts_with("before_dl:"))
             {
-                stdout += &serde_json::json!({ "formats": formats }).to_string();
+                stdout += &before_dl.to_string();
                 stdout += "\n";
             }
             stdout += &(progress.join("\n") + "\n");
@@ -446,6 +463,16 @@ fn formats(sizes: &[(&str, Option<u64>)]) -> serde_json::Value {
         .collect()
 }
 
+/// The separate Formats with only the bitrates the site tells, in kbit/s.
+fn bitrate_formats(bitrates: &[(&str, f64)]) -> serde_json::Value {
+    bitrates
+        .iter()
+        .map(|(id, tbr)| {
+            serde_json::json!({ "format_id": id, "filesize": null, "filesize_approx": null, "tbr": tbr })
+        })
+        .collect()
+}
+
 /// The separate Formats with only the approximate sizes the site tells.
 fn approx_formats(sizes: &[(&str, u64)]) -> serde_json::Value {
     sizes
@@ -601,6 +628,37 @@ fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
                 speed: Some(100.0),
                 eta: Some(8)
             },
+            downloading(Receiving::Audio, 87.5, 50.0, 5),
+        ]
+    );
+}
+
+#[test]
+fn a_format_that_tells_only_its_bitrate_counts_with_the_size_it_makes() {
+    let app = App::start();
+    // As on VK: neither Format tells its size. 40 kbit/s for 100 seconds
+    // make 500 bytes of audio.
+    app.ytdlp_downloads_formats_lasting(
+        ID,
+        b"the video",
+        bitrate_formats(&[(VIDEO_ONLY, 500.0), (AUDIO_ONLY, 0.04)]),
+        100.0,
+        &[
+            progress_of(VIDEO_ONLY, 500, 1500, 100.0, 10),
+            progress_of(VIDEO_ONLY, 1500, 1500, 100.0, 0),
+            progress_of(AUDIO_ONLY, 250, 500, 50.0, 5),
+        ],
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    // The video's own size comes with its progress, so the percent shows
+    // from the start.
+    assert_eq!(
+        app.download_statuses()[2..5],
+        [
+            downloading(Receiving::Video, 25.0, 100.0, 15),
+            downloading(Receiving::Video, 75.0, 100.0, 5),
             downloading(Receiving::Audio, 87.5, 50.0, 5),
         ]
     );

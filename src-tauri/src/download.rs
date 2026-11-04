@@ -920,9 +920,10 @@ impl Downloader {
             r#"download:{"progress": %(progress)j, "format": %(info.format_id|null)j, "vcodec": %(info.vcodec|null)j}"#.into(),
             // The separate Formats and their sizes, before any is received,
             // so that the progress covers all of them; `null` for a single
-            // Format.
+            // Format. A site that tells no size may tell the bitrate, which
+            // with the Video's duration makes one.
             "--print".into(),
-            r#"before_dl:{"formats": %(requested_formats.:.{format_id,filesize,filesize_approx}|null)j}"#.into(),
+            r#"before_dl:{"formats": %(requested_formats.:.{format_id,filesize,filesize_approx,tbr}|null)j, "duration": %(duration|null)j}"#.into(),
             // Printed right before ffmpeg merges the video and audio or
             // extracts the sound.
             "--print".into(),
@@ -1557,6 +1558,21 @@ enum Line {
 #[derive(Deserialize)]
 struct FormatsLine {
     formats: Option<Vec<PlannedFormat>>,
+    /// Of the Video, in seconds.
+    duration: Option<f64>,
+}
+
+impl FormatsLine {
+    /// The Formats, those that tell no size sized by their bitrate.
+    fn sized(self) -> Vec<PlannedFormat> {
+        let mut formats = self.formats.unwrap_or_default();
+        for planned in &mut formats {
+            if planned.size().is_none() {
+                planned.filesize_approx = planned.size_by_bitrate(self.duration);
+            }
+        }
+        formats
+    }
 }
 
 #[derive(Deserialize)]
@@ -1564,6 +1580,9 @@ struct PlannedFormat {
     format_id: String,
     filesize: Option<f64>,
     filesize_approx: Option<f64>,
+    /// The bitrate, in kbit/s. VK tells it alone, and that of the sound
+    /// makes its size to the byte.
+    tbr: Option<f64>,
     /// The size yt-dlp's progress tells once the Format is being received.
     #[serde(skip)]
     received: Option<f64>,
@@ -1572,6 +1591,12 @@ struct PlannedFormat {
 impl PlannedFormat {
     fn size(&self) -> Option<f64> {
         self.filesize.or(self.filesize_approx)
+    }
+
+    /// Bytes that `duration` seconds at its bitrate make.
+    fn size_by_bitrate(&self, duration: Option<f64>) -> Option<f64> {
+        let (tbr, duration) = (self.tbr?, duration?);
+        (tbr > 0.0 && duration > 0.0).then(|| tbr * 1000.0 / 8.0 * duration)
     }
 }
 
@@ -1607,7 +1632,7 @@ fn read_line(line: &str) -> Line {
             return Line::Progress(progress);
         }
         return match serde_json::from_str::<FormatsLine>(line) {
-            Ok(formats) => Line::Formats(formats.formats.unwrap_or_default()),
+            Ok(formats) => Line::Formats(formats.sized()),
             Err(_) => Line::Other,
         };
     }
