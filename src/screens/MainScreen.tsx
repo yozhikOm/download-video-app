@@ -19,7 +19,7 @@ import {
   probe as probeUrl,
   type Browser,
   type Download,
-  type Preset,
+  type DownloadRequest,
   type ProbeError,
   type ProbeState,
   type SettingsState,
@@ -119,9 +119,10 @@ export function MainScreen({
   // warning stays while it is, until the choice, the Video or the URL
   // changes.
   const duplicate = useDuplicateWarning(queue);
-  // The tab, Presets and Transcript the user chose, for the Probe they were
-  // chosen in; each Probe starts on the Video tab with its own defaults and
-  // without the Transcript, while a card that comes back keeps the choice.
+  // The tab, Presets, Format and Transcript the user chose, for the Probe
+  // they were chosen in; each Probe starts on the Video tab with its own
+  // defaults and without the Transcript, while a card that comes back keeps
+  // the choice.
   const [cardChoice, setCardChoice] = useState<{
     probe: ProbeState;
     choice: CardChoice;
@@ -134,10 +135,17 @@ export function MainScreen({
     duplicate.clear();
   }
 
+  // The URL in the field is being probed: its Probe hasn't started yet or is
+  // still running. Another URL in the field may replace it.
+  const probingSubmitted =
+    url.trim() === submittedUrl &&
+    !probeFailed &&
+    (probe === supersededProbe || probe.status === "probing");
+
   function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = url.trim();
-    if (trimmed) {
+    if (trimmed && !probingSubmitted) {
       setSubmittedUrl(trimmed);
       setPreviewHidden(false);
       setSupersededProbe(probe);
@@ -147,36 +155,57 @@ export function MainScreen({
     }
   }
 
+  /**
+   * The choice on the Video's card; without the Advanced mode, the Formats
+   * tab gives way to the Video tab.
+   */
   function cardChoiceFor(
     probed: Extract<ProbeState, { status: "probed" }>,
   ): CardChoice {
-    return cardChoice?.probe === probed
-      ? cardChoice.choice
-      : {
-          group: "video",
-          video: probed.defaultVideoPreset,
-          audio: probed.defaultAudioPreset,
-          withTranscript: false,
-          transcriptLanguage: probed.defaultTranscriptLanguage,
-        };
+    const choice: CardChoice =
+      cardChoice?.probe === probed
+        ? cardChoice.choice
+        : {
+            group: "video",
+            video: probed.defaultVideoPreset,
+            audio: probed.defaultAudioPreset,
+            format: null,
+            withTranscript: false,
+            transcriptLanguage: probed.defaultTranscriptLanguage,
+            srt: false,
+          };
+    return choice.group === "formats" && !settings.advancedMode
+      ? { ...choice, group: "video" }
+      : choice;
   }
 
   /**
-   * The Preset on the chosen tab, `null` on the Transcript tab, and the
-   * Transcript language when the Transcript is saved.
+   * The Preset or Format on the chosen tab, neither on the Transcript tab,
+   * and the Transcript language when the Transcript is saved, with its
+   * `.srt` when asked for.
    */
   function chosenDownload(
     probed: Extract<ProbeState, { status: "probed" }>,
-  ): [Preset | null, string | null] {
+  ): DownloadRequest {
     const choice = cardChoiceFor(probed);
-    const transcript = choice.withTranscript ? choice.transcriptLanguage : null;
+    const withTranscript =
+      choice.group === "transcript" || choice.withTranscript;
+    const transcript = withTranscript ? choice.transcriptLanguage : null;
+    const transcriptAlone: DownloadRequest = {
+      preset: null,
+      format: null,
+      transcript,
+      srt: choice.srt && transcript !== null,
+    };
     switch (choice.group) {
       case "video":
-        return [choice.video, transcript];
+        return { ...transcriptAlone, preset: choice.video };
       case "audio":
-        return [choice.audio, transcript];
+        return { ...transcriptAlone, preset: choice.audio };
+      case "formats":
+        return { ...transcriptAlone, format: choice.format };
       case "transcript":
-        return [null, choice.transcriptLanguage];
+        return transcriptAlone;
     }
   }
 
@@ -243,7 +272,12 @@ export function MainScreen({
             </Button>
           )}
         </div>
-        <Button type="submit" size="lg" className="px-4.5 font-semibold">
+        <Button
+          type="submit"
+          size="lg"
+          className="px-4.5 font-semibold"
+          disabled={probingSubmitted}
+        >
           {strings.probe.submit}
         </Button>
       </form>
@@ -260,6 +294,8 @@ export function MainScreen({
           audioPresets={probe.audioPresets}
           m4aKeepsSound={probe.m4aKeepsSound}
           transcriptLanguages={probe.transcriptLanguages}
+          formats={probe.formats}
+          advanced={settings.advancedMode}
           choice={cardChoiceFor(probe)}
           onChoose={(choice) => {
             setCardChoice({ probe, choice });
@@ -270,7 +306,7 @@ export function MainScreen({
             setPreviewHidden(true);
             duplicate.clear();
             // With nothing added, the card comes back.
-            addDownload(...chosenDownload(probe))
+            addDownload(chosenDownload(probe))
               .then((added) => {
                 if (added.status === "duplicate") {
                   setPreviewHidden(false);

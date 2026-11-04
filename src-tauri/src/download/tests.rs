@@ -11,7 +11,7 @@ use super::*;
 use crate::clock::{Clock, FixedClock};
 use crate::events::{AppEvent, RecordingSink};
 use crate::preset::{AudioPreset, VideoPreset};
-use crate::probe::{TranscriptLanguages, Video};
+use crate::probe::{Format, TranscriptLanguages, Video};
 use crate::processes::fake::{FakeProcesses, exit_status};
 use crate::releases::fake::{FakeReleases, NEWER_YTDLP_BYTES, YTDLP_BYTES};
 use crate::settings::{Browser, Settings};
@@ -131,23 +131,40 @@ impl App {
         formats: serde_json::Value,
         progress: &[String],
     ) {
-        self.ytdlp_acts(id, content, formats, progress, None);
+        let before_dl = serde_json::json!({ "formats": formats, "duration": null });
+        self.ytdlp_acts(id, content, before_dl, progress, None);
+    }
+
+    /// Like [`App::ytdlp_downloads_formats`], for a Video `duration`
+    /// seconds long, whose `formats` may tell only their bitrate.
+    fn ytdlp_downloads_formats_lasting(
+        &self,
+        id: &str,
+        content: &[u8],
+        formats: serde_json::Value,
+        duration: f64,
+        progress: &[String],
+    ) {
+        let before_dl = serde_json::json!({ "formats": formats, "duration": duration });
+        self.ytdlp_acts(id, content, before_dl, progress, None);
     }
 
     /// Like [`App::ytdlp_downloads`], and asked for the subtitles alone,
     /// yt-dlp writes `subtitles` where it is told.
     fn ytdlp_downloads_with_subtitles(&self, id: &str, content: &[u8], subtitles: &[u8]) {
-        self.ytdlp_acts(id, content, serde_json::Value::Null, &[], Some(subtitles));
+        let before_dl = serde_json::json!({ "formats": null, "duration": null });
+        self.ytdlp_acts(id, content, before_dl, &[], Some(subtitles));
     }
 
-    /// Makes yt-dlp act like it downloads the Video with this id; asked for
-    /// the subtitles alone, it writes `subtitles`, or nothing as when the
-    /// site has none in the language asked for.
+    /// Makes yt-dlp act like it downloads the Video with this id, printing
+    /// `before_dl` before anything is received; asked for the subtitles
+    /// alone, it writes `subtitles`, or nothing as when the site has none in
+    /// the language asked for.
     fn ytdlp_acts(
         &self,
         id: &str,
         content: &[u8],
-        formats: serde_json::Value,
+        before_dl: serde_json::Value,
         progress: &[String],
         subtitles: Option<&[u8]>,
     ) {
@@ -177,7 +194,7 @@ impl App {
                 .iter()
                 .any(|print| print.to_str().unwrap().starts_with("before_dl:"))
             {
-                stdout += &serde_json::json!({ "formats": formats }).to_string();
+                stdout += &before_dl.to_string();
                 stdout += "\n";
             }
             stdout += &(progress.join("\n") + "\n");
@@ -446,6 +463,16 @@ fn formats(sizes: &[(&str, Option<u64>)]) -> serde_json::Value {
         .collect()
 }
 
+/// The separate Formats with only the bitrates the site tells, in kbit/s.
+fn bitrate_formats(bitrates: &[(&str, f64)]) -> serde_json::Value {
+    bitrates
+        .iter()
+        .map(|(id, tbr)| {
+            serde_json::json!({ "format_id": id, "filesize": null, "filesize_approx": null, "tbr": tbr })
+        })
+        .collect()
+}
+
 /// The separate Formats with only the approximate sizes the site tells.
 fn approx_formats(sizes: &[(&str, u64)]) -> serde_json::Value {
     sizes
@@ -601,6 +628,37 @@ fn a_download_shows_no_percent_until_the_sizes_of_its_formats_are_known() {
                 speed: Some(100.0),
                 eta: Some(8)
             },
+            downloading(Receiving::Audio, 87.5, 50.0, 5),
+        ]
+    );
+}
+
+#[test]
+fn a_format_that_tells_only_its_bitrate_counts_with_the_size_it_makes() {
+    let app = App::start();
+    // As on VK: neither Format tells its size. 40 kbit/s for 100 seconds
+    // make 500 bytes of audio.
+    app.ytdlp_downloads_formats_lasting(
+        ID,
+        b"the video",
+        bitrate_formats(&[(VIDEO_ONLY, 500.0), (AUDIO_ONLY, 0.04)]),
+        100.0,
+        &[
+            progress_of(VIDEO_ONLY, 500, 1500, 100.0, 10),
+            progress_of(VIDEO_ONLY, 1500, 1500, 100.0, 0),
+            progress_of(AUDIO_ONLY, 250, 500, 50.0, 5),
+        ],
+    );
+
+    app.download(&video(URL, "Me at the zoo"), VideoPreset::P1080.into());
+
+    // The video's own size comes with its progress, so the percent shows
+    // from the start.
+    assert_eq!(
+        app.download_statuses()[2..5],
+        [
+            downloading(Receiving::Video, 25.0, 100.0, 15),
+            downloading(Receiving::Video, 75.0, 100.0, 5),
             downloading(Receiving::Audio, 87.5, 50.0, 5),
         ]
     );
@@ -847,7 +905,7 @@ fn the_media_and_its_transcript_are_named_by_the_file_name_template() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
 
     assert_eq!(
@@ -1305,7 +1363,7 @@ fn a_transcript_yt_dlp_cant_resume_leaves_the_medias_partial() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
 
     assert!(matches!(app.status(), Some(DownloadStatus::Failed { .. })));
@@ -1623,17 +1681,20 @@ fn the_same_video_is_added_with_another_preset_or_once_done() {
         app.downloader.add(&zoo, AudioPreset::Mp3.into()),
         app.downloader.add(
             &zoo,
-            Content::MediaWithTranscript(AudioPreset::M4a.into(), manual("en")),
+            Content::MediaWithTranscript(AudioPreset::M4a.into(), manual("en").into()),
         ),
-        app.downloader.add(&zoo, Content::Transcript(manual("en"))),
-        app.downloader.add(&zoo, Content::Transcript(manual("ru"))),
+        app.downloader
+            .add(&zoo, Content::Transcript(manual("en").into())),
+        app.downloader
+            .add(&zoo, Content::Transcript(manual("ru").into())),
         // The media with another Transcript, or with none, is still the
         // same Preset.
         app.downloader.add(
             &zoo,
-            Content::MediaWithTranscript(VideoPreset::P720.into(), manual("en")),
+            Content::MediaWithTranscript(VideoPreset::P720.into(), manual("en").into()),
         ),
-        app.downloader.add(&zoo, Content::Transcript(manual("en"))),
+        app.downloader
+            .add(&zoo, Content::Transcript(manual("en").into())),
     ];
 
     let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
@@ -1649,6 +1710,286 @@ fn the_same_video_is_added_with_another_preset_or_once_done() {
             // The 720p, and the English Transcript alone.
             Added::Duplicate { of: ids[2] },
             Added::Duplicate { of: ids[5] },
+        ]
+    );
+}
+
+/// A Format as YouTube reports it, with the codecs told.
+fn format(id: &str, ext: &str, video_codec: &str, audio_codec: &str) -> Format {
+    let video = video_codec != "none";
+    Format {
+        id: id.into(),
+        ext: ext.into(),
+        video_codec: Some(video_codec.into()),
+        audio_codec: Some(audio_codec.into()),
+        width: video.then_some(1920),
+        height: video.then_some(1080),
+        fps: video.then_some(30.0),
+        bitrate: Some(1000.0),
+        size: Some(1_000_000),
+        note: None,
+        language: None,
+        protocol: Some("https".into()),
+    }
+}
+
+/// "Me at the zoo" with a 1080p Format of the picture alone in H.264, one
+/// of the sound alone in Opus, and one of both in H.264 and AAC.
+fn zoo_with_formats() -> (Video, [Format; 3]) {
+    let formats = [
+        format("137", "mp4", "avc1.640028", "none"),
+        format("251", "webm", "none", "opus"),
+        format("18", "mp4", "avc1.42001E", "mp4a.40.2"),
+    ];
+    let video = Video {
+        formats: formats.to_vec(),
+        ..video(URL, "Me at the zoo")
+    };
+    (video, formats)
+}
+
+#[test]
+fn a_format_with_the_picture_and_the_sound_is_downloaded_exactly_as_it_is_into_an_mp4() {
+    let (zoo, [_, _, both]) = zoo_with_formats();
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(both))));
+
+    let saved = app.save_dir().join("Me at the zoo.mp4");
+    assert_eq!(
+        app.download_statuses(),
+        [
+            DownloadStatus::Queued,
+            DownloadStatus::starting(Receiving::Video),
+            DownloadStatus::Processing,
+            DownloadStatus::Done {
+                file: saved.clone()
+            },
+        ]
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the video");
+    let runs = ytdlp_runs(&app);
+    let args = &runs[0];
+    // That Format alone, not the best by a Preset's order.
+    assert_eq!(values_of(args, "-f"), [&OsString::from("18")]);
+    assert!(!args.contains(&"-S".into()), "{args:?}");
+    assert!(!args.contains(&"-x".into()), "{args:?}");
+    assert_eq!(after(args, "--remux-video"), "mp4");
+    assert_eq!(app.downloader.state()[0].format.as_deref(), Some("18"));
+    assert_eq!(app.downloader.state()[0].preset, None);
+    assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+}
+
+#[test]
+fn a_format_of_the_picture_alone_gets_the_best_sound_preferring_aac() {
+    let (zoo, [video_only, _, _]) = zoo_with_formats();
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(video_only))));
+
+    let saved = app.save_dir().join("Me at the zoo.mp4");
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: saved.clone()
+        })
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the video");
+    let args = &ytdlp_runs(&app)[0];
+    // That picture with the best sound, or the picture alone on a site
+    // without a Format of the sound alone.
+    assert_eq!(values_of(args, "-f"), [&OsString::from("137+ba/137")]);
+    assert_eq!(after(args, "-S"), "acodec:aac");
+    assert_eq!(after(args, "--remux-video"), "mp4");
+    assert!(!args.contains(&"-x".into()), "{args:?}");
+    // Still a Download of that Format, not of a Preset.
+    assert_eq!(app.downloader.state()[0].format.as_deref(), Some("137"));
+}
+
+#[test]
+fn a_format_in_codecs_an_mp4_cant_hold_is_converted_into_an_mp4() {
+    let webm = format("43", "webm", "vp8.0", "vorbis");
+    let zoo = Video {
+        formats: vec![webm.clone()],
+        ..video(URL, "Me at the zoo")
+    };
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(webm))));
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("Me at the zoo.mp4")
+        })
+    );
+    let args = &ytdlp_runs(&app)[0];
+    assert_eq!(values_of(args, "-f"), [&OsString::from("43")]);
+    assert_eq!(after(args, "--recode-video"), "mp4");
+    assert!(!args.contains(&"--remux-video".into()), "{args:?}");
+}
+
+#[test]
+fn a_format_of_unknown_video_codec_with_sound_and_no_picture_size_is_sound() {
+    let mp3 = Format {
+        video_codec: None,
+        width: None,
+        height: None,
+        fps: None,
+        ..format("http-mp3", "mp3", "none", "mp3")
+    };
+    let zoo = Video {
+        formats: vec![mp3.clone()],
+        ..video(URL, "Me at the zoo")
+    };
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the sound", &[]);
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(mp3))));
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("Me at the zoo.m4a")
+        })
+    );
+    assert_eq!(after(&ytdlp_runs(&app)[0], "--audio-format"), "m4a");
+}
+
+#[test]
+fn a_format_of_the_sound_alone_is_downloaded_into_an_m4a() {
+    let (zoo, [_, audio_only, _]) = zoo_with_formats();
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the sound", &[]);
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(audio_only))));
+
+    let saved = app.save_dir().join("Me at the zoo.m4a");
+    assert_eq!(
+        app.download_statuses(),
+        [
+            DownloadStatus::Queued,
+            DownloadStatus::starting(Receiving::Audio),
+            DownloadStatus::Processing,
+            DownloadStatus::Done {
+                file: saved.clone()
+            },
+        ]
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the sound");
+    let args = &ytdlp_runs(&app)[0];
+    assert_eq!(values_of(args, "-f"), [&OsString::from("251")]);
+    // Encoded as M4A's AAC unless it is AAC already.
+    assert!(args.contains(&"-x".into()), "{args:?}");
+    assert_eq!(after(args, "--audio-format"), "m4a");
+    assert_eq!(after(args, "--audio-quality"), "192K");
+}
+
+#[test]
+fn a_format_downloads_under_a_partial_name_of_its_own() {
+    let (zoo, [video_only, ..]) = zoo_with_formats();
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(video_only))));
+
+    assert_eq!(
+        after(&ytdlp_runs(&app)[0], "-o"),
+        &OsString::from("%(id)s.format-137.%(ext)s")
+    );
+}
+
+#[test]
+fn format_ids_that_differ_only_in_odd_characters_get_partial_names_of_their_own() {
+    let app = App::start();
+    app.processes.fail_with(
+        "yt-dlp.exe",
+        b"ERROR: Read timed out.
+",
+    );
+
+    for id in ["a.b", "a_b"] {
+        let odd = format(id, "mp4", "avc1", "mp4a.40.2");
+        let zoo = Video {
+            formats: vec![odd.clone()],
+            ..video(URL, "Me at the zoo")
+        };
+        app.download(&zoo, Content::Media(Media::Format(Box::new(odd))));
+    }
+
+    let runs = ytdlp_runs(&app);
+    assert_ne!(after(&runs[0], "-o"), after(&runs[1], "-o"));
+}
+
+#[test]
+fn a_format_id_becomes_a_safe_partial_name() {
+    let odd = format("hls-1080p/dash:1 %(id)s", "mp4", "avc1", "mp4a.40.2");
+    let zoo = Video {
+        formats: vec![odd.clone()],
+        ..video(URL, "Me at the zoo")
+    };
+    let app = App::start();
+    app.processes
+        .fail_with("yt-dlp.exe", b"ERROR: Read timed out.\n");
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(odd))));
+
+    assert_eq!(
+        after(&ytdlp_runs(&app)[0], "-o"),
+        &OsString::from("%(id)s.format-hls-1080p_2f_dash_3a_1_20__25__28_id_29_s.%(ext)s")
+    );
+}
+
+#[test]
+fn the_same_video_with_the_same_format_is_not_added_while_queued() {
+    let (zoo, [video_only, audio_only, _]) = zoo_with_formats();
+    let app = App::start();
+
+    let added = [
+        app.downloader.add(
+            &zoo,
+            Content::Media(Media::Format(Box::new(video_only.clone()))),
+        ),
+        app.downloader.add(
+            &zoo,
+            Content::Media(Media::Format(Box::new(video_only.clone()))),
+        ),
+        app.downloader.add(
+            &zoo,
+            Content::MediaWithTranscript(
+                Media::Format(Box::new(video_only.clone())),
+                manual("en").into(),
+            ),
+        ),
+        // A later Probe may estimate another size of the same Format.
+        app.downloader.add(
+            &zoo,
+            Content::Media(Media::Format(Box::new(Format {
+                size: Some(2_000_000),
+                bitrate: Some(2000.0),
+                ..video_only.clone()
+            }))),
+        ),
+        app.downloader
+            .add(&zoo, Content::Media(Media::Format(Box::new(audio_only)))),
+        // A Preset is not a Format, even when it would pick that one.
+        app.downloader.add(&zoo, VideoPreset::P1080.into()),
+    ];
+
+    let first = app.downloader.state()[0].id;
+    assert_eq!(
+        added,
+        [
+            Added::Queued,
+            Added::Duplicate { of: first },
+            Added::Duplicate { of: first },
+            Added::Duplicate { of: first },
+            Added::Queued,
+            Added::Queued,
         ]
     );
 }
@@ -1864,9 +2205,10 @@ fn a_queued_download_cancelled_leaves_the_transcript_the_running_one_receives() 
     let zoo = video(URL, "Me at the zoo");
     app.downloader.add(
         &zoo,
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
-    app.downloader.add(&zoo, Content::Transcript(manual("en")));
+    app.downloader
+        .add(&zoo, Content::Transcript(manual("en").into()));
     let downloader = Arc::downgrade(&app.downloader);
     app.processes.script("yt-dlp.exe", move |args| {
         let downloader = downloader.upgrade().unwrap();
@@ -2046,7 +2388,7 @@ fn a_download_cancelled_while_its_transcript_downloads_doesnt_receive_the_media(
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
 
     assert_eq!(app.status(), Some(DownloadStatus::Cancelled));
@@ -2606,7 +2948,7 @@ fn a_transcript_alone_is_saved_as_text_under_the_title_without_the_media() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::Transcript(manual("en")),
+        Content::Transcript(manual("en").into()),
     );
 
     let saved = app.save_dir().join("Me at the zoo.txt");
@@ -2643,7 +2985,7 @@ fn a_transcript_asks_for_the_subtitles_or_for_the_captions_of_what_is_spoken() {
     };
 
     for language in [manual("en"), automatic("en")] {
-        app.download(&video, Content::Transcript(language));
+        app.download(&video, Content::Transcript(language.into()));
     }
 
     let runs = ytdlp_runs(&app);
@@ -2675,7 +3017,7 @@ fn a_transcript_of_captions_has_neither_their_timing_nor_the_lines_they_repeat()
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::Transcript(automatic("en")),
+        Content::Transcript(automatic("en").into()),
     );
 
     // YouTube writes a word it bleeps out as `[&nbsp;__&nbsp;]`.
@@ -2695,6 +3037,214 @@ repeat thank you
     );
 }
 
+/// A Transcript in `language` saved as `.srt` too.
+fn with_srt(language: TranscriptLanguage) -> Transcript {
+    Transcript {
+        language,
+        srt: true,
+    }
+}
+
+/// [`TED_SUBTITLES`] as SubRip: the cues with their timing, without the
+/// empty one and the one that comes twice.
+const TED_SRT: &str = "\
+1
+00:00:00,760 --> 00:00:02,616
+When I was first learning to meditate,
+
+2
+00:00:02,640 --> 00:00:05,696
+the instruction was to simply
+pay attention to my breath,
+
+3
+00:00:05,720 --> 00:00:07,800
+and when my mind wandered,
+to bring it back.
+
+4
+00:00:08,640 --> 00:00:10,000
+Sounded simple enough.
+
+5
+00:00:10,680 --> 00:00:13,896
+Yet I'd sit on these silent retreats,
+
+6
+00:00:13,920 --> 00:00:17,256
+sweating through T-shirts
+in the middle of winter.
+
+7
+00:00:17,280 --> 00:00:20,616
+I'd take naps every chance I got
+because it was really hard work.
+
+8
+00:00:20,640 --> 00:00:22,640
+Actually, it was exhausting.
+
+9
+00:00:23,400 --> 00:00:25,136
+The instruction was simple enough
+
+10
+00:00:25,160 --> 00:00:27,280
+but I was missing something
+really important.
+
+11
+00:00:28,320 --> 00:00:30,560
+So why is it so hard to pay attention?
+
+12
+00:09:03,680 --> 00:09:04,880
+and repeat.
+
+13
+00:09:05,440 --> 00:09:06,656
+Thank you.
+
+14
+00:09:06,680 --> 00:09:09,040
+(Applause)
+
+";
+
+#[test]
+fn a_transcript_saved_as_srt_too_has_its_timing_next_to_the_text() {
+    let app = App::start();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::Transcript(with_srt(manual("en"))),
+    );
+
+    let text = app.save_dir().join("Me at the zoo.txt");
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done { file: text.clone() })
+    );
+    assert_eq!(
+        file_names(&app.save_dir()),
+        ["Me at the zoo.srt", "Me at the zoo.txt"]
+    );
+    assert_eq!(fs::read_to_string(&text).unwrap(), TED_TEXT);
+    assert_eq!(
+        fs::read_to_string(app.save_dir().join("Me at the zoo.srt")).unwrap(),
+        TED_SRT
+    );
+    assert!(app.downloader.state()[0].transcript_srt);
+    assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+}
+
+#[test]
+fn an_srt_of_captions_shows_each_line_once_from_the_cue_that_brings_it() {
+    let app = App::start();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", YOUTUBE_CAPTIONS);
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::Transcript(with_srt(automatic("en"))),
+    );
+
+    // A cue that only shows the line before it again, or nothing, is left
+    // out.
+    assert_eq!(
+        fs::read_to_string(app.save_dir().join("Me at the zoo.srt")).unwrap(),
+        "\
+1
+00:00:12,759 --> 00:00:14,589
+when I was first learning to meditate
+
+2
+00:00:14,599 --> 00:00:16,390
+the instruction was to Simply pay
+
+3
+00:00:16,400 --> 00:00:18,269
+attention to my breath and when my mind
+
+4
+00:04:19,239 --> 00:04:25,430
+just by being curiously aware when she
+smoked was that smoking tastes like
+
+5
+00:04:25,440 --> 00:04:29,870
+[ __ ] now she moved from knowledge to to
+
+6
+00:04:29,880 --> 00:04:31,790
+wisdom she moved from knowing in her
+
+7
+00:09:16,550 --> 00:09:16,560
+curious feel the joy of Letting Go and
+
+8
+00:09:16,560 --> 00:09:20,760
+repeat thank you
+
+"
+    );
+}
+
+#[test]
+fn the_media_its_transcript_and_srt_take_the_first_number_free_for_all() {
+    let app = App::start();
+    fs::create_dir_all(app.save_dir()).unwrap();
+    fs::write(app.save_dir().join("Me at the zoo.srt"), b"the user's").unwrap();
+    app.ytdlp_downloads_with_subtitles(ID, b"the video", TED_SUBTITLES);
+
+    app.download(
+        &video(URL, "Me at the zoo"),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), with_srt(manual("en"))),
+    );
+
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: app.save_dir().join("Me at the zoo (1).mp4")
+        })
+    );
+    assert_eq!(
+        file_names(&app.save_dir()),
+        [
+            "Me at the zoo (1).mp4",
+            "Me at the zoo (1).srt",
+            "Me at the zoo (1).txt",
+            "Me at the zoo.srt"
+        ]
+    );
+}
+
+#[test]
+fn the_transcript_alone_with_srt_is_not_a_duplicate_of_it_without() {
+    let app = App::start();
+    let zoo = video(URL, "Me at the zoo");
+
+    let added = [
+        app.downloader
+            .add(&zoo, Content::Transcript(manual("en").into())),
+        app.downloader
+            .add(&zoo, Content::Transcript(with_srt(manual("en")))),
+        app.downloader
+            .add(&zoo, Content::Transcript(with_srt(manual("en")))),
+    ];
+
+    let ids: Vec<u64> = app.downloader.state().iter().map(|it| it.id).collect();
+    assert_eq!(
+        added,
+        [
+            Added::Queued,
+            Added::Queued,
+            Added::Duplicate { of: ids[1] }
+        ]
+    );
+}
+
 #[test]
 fn a_transcript_with_the_media_is_saved_next_to_it_under_the_same_name() {
     let app = App::start();
@@ -2702,7 +3252,7 @@ fn a_transcript_with_the_media_is_saved_next_to_it_under_the_same_name() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
 
     let saved = app.save_dir().join("Me at the zoo.mp4");
@@ -2745,7 +3295,7 @@ fn the_media_and_its_transcript_take_the_first_number_free_for_both() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(AudioPreset::Mp3.into(), manual("en")),
+        Content::MediaWithTranscript(AudioPreset::Mp3.into(), manual("en").into()),
     );
 
     assert_eq!(
@@ -2769,7 +3319,7 @@ fn a_transcript_yt_dlp_doesnt_save_fails_the_download_before_the_media() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
 
     assert!(
@@ -2788,7 +3338,7 @@ fn a_failed_transcript_is_retried_with_the_media_and_the_transcript() {
         .fail_with("yt-dlp.exe", b"ERROR: Unable to download video subtitles\n");
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
     assert_eq!(
         app.status(),
@@ -2816,7 +3366,7 @@ fn a_broken_yt_dlp_is_restored_and_the_transcript_is_dropped() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::Transcript(manual("en")),
+        Content::Transcript(manual("en").into()),
     );
 
     assert_eq!(app.downloader.state(), []);
@@ -3028,7 +3578,11 @@ fn transcripts_save_text_alone_with_the_real_yt_dlp() {
     // The captions aren't offered beside the subtitles in English, but
     // they are what repeats its lines.
     for language in [manual("en"), automatic("en")] {
-        download(&downloader, &video, Content::Transcript(language.clone()));
+        download(
+            &downloader,
+            &video,
+            Content::Transcript(language.clone().into()),
+        );
 
         let Some(DownloadStatus::Done { file }) = last_status(&downloader) else {
             panic!("{language:?}: {:?}", downloader.state());
@@ -3047,6 +3601,52 @@ fn transcripts_save_text_alone_with_the_real_yt_dlp() {
         );
         fs::remove_file(&file).unwrap();
     }
+    assert_eq!(file_names(&dir.path().join("partials")), [] as [String; 0]);
+}
+
+/// Downloads Formats of a TED talk exactly as they are, the picture alone
+/// in VP9 from a WebM and the sound alone in Opus, and its Transcript with
+/// the `.srt`: `cargo test --lib -- --ignored formats_and_srt_save`. See
+/// [`probe_with_real_tools`] for `SMOKE_SIGN_IN_BROWSER`.
+#[test]
+#[ignore = "downloads the real tools and a real Video"]
+fn formats_and_srt_save_with_the_real_yt_dlp() {
+    let dir = TempDir::new().unwrap();
+    let events = Arc::new(RecordingSink::default());
+    let (video, toolbox, downloader) = probe_with_real_tools(dir.path(), TRANSCRIPT_URL, events);
+    let format = |id: &str| {
+        let format = video.formats.iter().find(|format| format.id == id);
+        Media::Format(Box::new(format.unwrap().clone()))
+    };
+
+    for (id, extension, kinds, codec) in [
+        ("243", "mp4", ["video"], "vp9"),
+        ("251", "m4a", ["audio"], "aac"),
+    ] {
+        download(&downloader, &video, Content::Media(format(id)));
+
+        let Some(DownloadStatus::Done { file }) = last_status(&downloader) else {
+            panic!("{id}: {:?}", downloader.state());
+        };
+        assert_eq!(file.extension().unwrap(), extension, "{id}");
+        let tracks = track_entries(&toolbox, &file);
+        let types: Vec<&serde_json::Value> =
+            tracks.iter().map(|track| &track["codec_type"]).collect();
+        assert_eq!(types, kinds, "{id}");
+        assert_eq!(tracks[0]["codec_name"], codec, "{id}");
+    }
+
+    download(
+        &downloader,
+        &video,
+        Content::Transcript(with_srt(manual("en"))),
+    );
+    let Some(DownloadStatus::Done { file }) = last_status(&downloader) else {
+        panic!("{:?}", downloader.state());
+    };
+    let srt = fs::read_to_string(file.with_extension("srt")).unwrap();
+    assert!(srt.starts_with("1\n00:00:"), "{srt}");
+    assert!(srt.contains(" --> ") && !srt.contains('<'), "{srt}");
     assert_eq!(file_names(&dir.path().join("partials")), [] as [String; 0]);
 }
 
@@ -3211,7 +3811,7 @@ fn an_update_asked_for_during_a_download_waits_for_the_whole_download_to_end() {
 
     app.download(
         &video(URL, "Me at the zoo"),
-        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en")),
+        Content::MediaWithTranscript(VideoPreset::P1080.into(), manual("en").into()),
     );
     wait_until(|| {
         matches!(

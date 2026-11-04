@@ -49,6 +49,7 @@ impl App {
             file_name_template: DEFAULT_TEMPLATE.into(),
             default_video_preset: VideoPreset::P1080,
             default_audio_preset: AudioPreset::M4a,
+            advanced_mode: false,
         }
     }
 }
@@ -255,6 +256,8 @@ fn each_setting_is_kept_when_another_changes() {
         .set_default_video_preset(VideoPreset::P480)
         .unwrap();
 
+    app.settings.set_advanced_mode(true).unwrap();
+
     app.settings
         .set_default_audio_preset(AudioPreset::Mp3)
         .unwrap();
@@ -268,8 +271,29 @@ fn each_setting_is_kept_when_another_changes() {
             file_name_template: "{channel} - {title}".into(),
             default_video_preset: VideoPreset::P480,
             default_audio_preset: AudioPreset::Mp3,
+            advanced_mode: true,
         }
     );
+}
+
+#[test]
+fn the_advanced_mode_is_hidden_at_first() {
+    let app = App::start();
+
+    assert!(!app.settings.state().advanced_mode);
+}
+
+#[test]
+fn the_advanced_mode_survives_a_relaunch_and_can_be_hidden_again() {
+    let app = App::start();
+
+    app.settings.set_advanced_mode(true).unwrap();
+    let app = app.restart();
+    assert!(app.settings.state().advanced_mode);
+
+    app.settings.set_advanced_mode(false).unwrap();
+    let app = app.restart();
+    assert!(!app.settings.state().advanced_mode);
 }
 
 #[test]
