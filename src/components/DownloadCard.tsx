@@ -61,15 +61,32 @@ const presetNames: Record<Preset, string> = {
   m4a: strings.presets.m4aEncoded,
 };
 
-/** What the Download saves: `1080p`, `MP3 + транскрипт` or `Транскрипт`. */
-function savesText({ preset, transcriptLanguage }: Download) {
-  if (preset === null) {
-    return strings.queue.transcriptAlone;
+/**
+ * What the Download saves: `1080p`, `Формат 137`, `MP3 + транскрипт`,
+ * `Транскрипт` or `Транскрипт и .srt`.
+ */
+function savesText({
+  preset,
+  format,
+  transcriptLanguage,
+  transcriptSrt,
+}: Download) {
+  const { queue } = strings;
+  let media = null;
+  if (preset !== null) {
+    media = presetNames[preset];
+  } else if (format !== null) {
+    media = queue.format(format);
   }
-  const name = presetNames[preset];
-  return transcriptLanguage === null
-    ? name
-    : strings.queue.withTranscript(name);
+  if (media === null) {
+    return transcriptSrt ? queue.transcriptAloneSrt : queue.transcriptAlone;
+  }
+  if (transcriptLanguage === null) {
+    return media;
+  }
+  return transcriptSrt
+    ? queue.withTranscriptSrt(media)
+    : queue.withTranscript(media);
 }
 
 /**
@@ -89,9 +106,14 @@ function detailsText(download: Extract<Download, { status: "failed" }>) {
   return [
     details.url(download.url),
     ...(download.preset === null ? [] : [details.preset(download.preset)]),
+    ...(download.format === null ? [] : [details.format(download.format)]),
     ...(download.transcriptLanguage === null
       ? []
-      : [details.transcript(download.transcriptLanguage)]),
+      : [
+          download.transcriptSrt
+            ? details.transcriptSrt(download.transcriptLanguage)
+            : details.transcript(download.transcriptLanguage),
+        ]),
     details.message(download.message),
     "",
     details.output,

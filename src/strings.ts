@@ -72,6 +72,10 @@ export const strings = {
       mp3: "MP3",
     } satisfies Record<AudioPreset, string>,
     defaultAudioPresetFailed: "Не удалось сохранить формат.",
+    advancedMode: "Расширенный режим",
+    advancedModeHint:
+      "Для опытных пользователей: вкладка «Форматы» со всеми форматами, которые отдаёт сайт, чтобы скачать любой из них как есть.",
+    advancedModeFailed: "Не удалось сохранить расширенный режим.",
     version: (version: string) => `Версия ${version}`,
     versionFailed: "Не удалось получить версию приложения",
   },
@@ -137,6 +141,35 @@ export const strings = {
     /** M4A for a Video whose sound it encodes again. */
     m4aEncoded: "M4A",
   },
+  /** The Video's Formats in the Advanced mode. */
+  formats: {
+    tab: "Форматы",
+    list: "Форматы",
+    columns: {
+      id: "ID",
+      ext: "Контейнер",
+      resolution: "Разрешение",
+      videoCodec: "Видео",
+      audioCodec: "Аудио",
+      bitrate: "Битрейт",
+      size: "Размер",
+      note: "Примечание",
+    },
+    /** A Format without the picture, in place of its resolution. */
+    audioOnly: "только звук",
+    /** The sound of a picture alone, which the Download adds. */
+    bestAudio: "+ лучший звук",
+    /** A Format sent in HLS fragments, which may come slowly. */
+    hls: "HLS",
+    resolution: (width: string, height: string) => `${width}×${height}`,
+    /** The resolution of a Format whose site tells the height alone. */
+    height: (height: string) => `${height}p`,
+    fps: (resolution: string, fps: string) => `${resolution}, ${fps} fps`,
+    bitrate: (kbps: string) => `${kbps} кбит/с`,
+    size: (mb: string) => `${mb} МБ`,
+    /** What the site doesn't tell, or a stream the Format lacks. */
+    unknown: "—",
+  },
   transcript: {
     tab: "Транскрипт",
     save: "Сохранить транскрипт",
@@ -144,6 +177,8 @@ export const strings = {
     /** A language whose text comes from the site's captions. */
     automatic: (language: string) => `${language} (автосубтитры)`,
     none: "У этого видео нет транскрипта.",
+    /** The option to save the Transcript as `.srt` too, with its timing. */
+    srt: "Также .srt с таймкодами",
   },
   download: {
     start: "Скачать",
@@ -190,7 +225,9 @@ export const strings = {
     details: {
       url: (url: string) => `Ссылка: ${url}`,
       preset: (preset: string) => `Preset: ${preset}`,
+      format: (id: string) => `Format: ${id}`,
       transcript: (language: string) => `Транскрипт: ${language}`,
+      transcriptSrt: (language: string) => `Транскрипт: ${language} + .srt`,
       message: (message: string) => `Ошибка: ${message}`,
       output: "Последние строки вывода yt-dlp:",
     },
@@ -206,9 +243,15 @@ export const strings = {
   queue: {
     title: "Очередь",
     clearDone: "Очистить завершённые",
-    /** What a Download saves: its Preset, with or without the Transcript. */
-    withTranscript: (preset: string) => `${preset} + транскрипт`,
+    /**
+     * What a Download saves: its Preset or Format, with or without the
+     * Transcript and its `.srt`.
+     */
+    format: (id: string) => `Формат ${id}`,
+    withTranscript: (media: string) => `${media} + транскрипт`,
+    withTranscriptSrt: (media: string) => `${media} + транскрипт и .srt`,
     transcriptAlone: "Транскрипт",
+    transcriptAloneSrt: "Транскрипт и .srt",
   },
   close: {
     title: "Есть незавершённые загрузки. Закрыть?",

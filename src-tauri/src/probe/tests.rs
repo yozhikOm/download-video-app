@@ -123,6 +123,8 @@ fn a_video_url_shows_the_video_card() {
         // Which ones, the Transcript tests tell.
         transcript_languages: offered_transcripts(&app).0,
         default_transcript_language: Some("en".into()),
+        // Which ones, the Advanced mode's test tells.
+        formats: app.prober.video().unwrap().formats,
     };
     assert_eq!(app.probe_states(), [ProbeState::Probing, probed.clone()]);
     assert_eq!(app.prober.state(), probed);
@@ -834,6 +836,7 @@ fn a_finished_stream_is_an_ordinary_video() {
             m4a_keeps_sound: true,
             transcript_languages: vec![automatic("en")],
             default_transcript_language: Some("en".into()),
+            formats: app.prober.video().unwrap().formats,
         }
     );
 }
@@ -1092,6 +1095,7 @@ fn the_probed_video_keeps_what_downloads_need() {
             size: Some(17707023),
             note: Some("360p".into()),
             language: Some("en".into()),
+            protocol: Some("https".into()),
         }
     );
     assert_eq!(video.transcripts.manual.len(), 43);
@@ -1109,6 +1113,64 @@ fn the_probed_video_keeps_what_downloads_need() {
         }
     );
     assert!(!video.was_live);
+}
+
+#[test]
+fn a_probed_video_offers_all_its_formats_for_the_advanced_mode() {
+    let app = App::start();
+    app.ytdlp_prints(VIDEO);
+
+    app.prober
+        .probe("https://www.youtube.com/watch?v=-moW9jvvMr4");
+
+    let ProbeState::Probed { formats, .. } = app.prober.state() else {
+        panic!("not probed: {:?}", app.prober.state());
+    };
+    // Storyboards are pictures, not streams.
+    let ids: Vec<&str> = formats.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "249-drc", "250-drc", "249", "250", "140-drc", "251-drc", "140", "251", "160", "278",
+            "394", "133", "242", "395", "134", "18", "243", "396", "135", "244", "397", "136",
+            "247", "398", "248-sr", "399-sr"
+        ]
+    );
+    // As the UI gets them.
+    assert_eq!(
+        serde_json::to_value(&formats[15]).unwrap(),
+        serde_json::json!({
+            "id": "18",
+            "ext": "mp4",
+            "videoCodec": "avc1.42001E",
+            "audioCodec": "mp4a.40.2",
+            "width": 640,
+            "height": 360,
+            "fps": 30.0,
+            "bitrate": 250.869,
+            "size": 17707023,
+            "note": "360p",
+            "language": "en",
+            "protocol": "https",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&formats[0]).unwrap(),
+        serde_json::json!({
+            "id": "249-drc",
+            "ext": "webm",
+            "videoCodec": "none",
+            "audioCodec": "opus",
+            "width": null,
+            "height": null,
+            "fps": null,
+            "bitrate": 50.898,
+            "size": 3592323,
+            "note": "low, DRC",
+            "language": "en",
+            "protocol": "https",
+        })
+    );
 }
 
 #[test]
@@ -1147,9 +1209,40 @@ fn a_video_from_another_site_may_lack_a_channel_language_and_transcripts() {
     // Without a channel, the uploader stands in.
     assert_eq!(video.card().channel.as_deref(), Some("Cyber Potato"));
     assert_eq!(video.formats.len(), 24);
+    // Rutube streams each Format over HLS.
+    assert_eq!(video.formats[0].protocol.as_deref(), Some("m3u8_native"));
     assert_eq!(video.original_language, None);
     assert!(video.transcripts.manual.is_empty() && video.transcripts.automatic.is_empty());
     assert!(video.chapters.is_empty());
+}
+
+#[test]
+fn the_advanced_mode_offers_one_of_formats_alike_but_for_their_ids() {
+    let app = App::start();
+    app.ytdlp_prints(include_bytes!("fixtures/rutube-video.json"));
+
+    app.prober
+        .probe("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/");
+
+    // Rutube sends each stream from two servers (-0 and -1), and yt-dlp
+    // lists each one twice (default- and m3u8-): four rows alike.
+    let ProbeState::Probed { formats, .. } = app.prober.state() else {
+        panic!("not probed: {:?}", app.prober.state());
+    };
+    let ids: Vec<&str> = formats.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "default-572-0",
+            "default-572-2",
+            "default-1369-0",
+            "default-1631-0",
+            "default-3126-0",
+            "default-5621-0"
+        ]
+    );
+    // A Download may still take any of them.
+    assert_eq!(app.prober.video().unwrap().formats.len(), 24);
 }
 
 #[test]

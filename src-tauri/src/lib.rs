@@ -19,7 +19,7 @@ use tauri::{AppHandle, Builder, Manager, Runtime, State, WebviewWindow, WindowEv
 use tauri_plugin_dialog::DialogExt;
 
 use crate::clock::SystemClock;
-use crate::download::{Added, Content, Downloader, OnClose};
+use crate::download::{Added, Content, Downloader, Media, OnClose, Transcript};
 use crate::events::{AppEvent, EventSink};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
 use crate::probe::Prober;
@@ -130,38 +130,54 @@ fn probe(url: String, prober: State<'_, Arc<Prober>>) {
 }
 
 /// Adds a Download of the Video the latest Probe found to the Queue: its
-/// media in a Video or Audio preset, its Transcript in a language, or both;
-/// the Queue runs in the background and the UI follows along through
-/// events. Nothing is added for a duplicate of a Queued or running
-/// Download. Fails when no Probe found a Video, when neither is asked for,
-/// or when the Video lacks the Preset or the language.
+/// media in a Video or Audio preset or as one of its Formats (by its id),
+/// its Transcript in a language, as text and, when `srt`, as `.srt` too,
+/// or both; the Queue runs in the background and the UI follows along
+/// through events. Nothing is added for a duplicate of a Queued or running
+/// Download. Fails when no Probe found a Video, when neither the media nor
+/// the Transcript is asked for, when both a Preset and a Format are, or
+/// when the Video lacks the Preset, the Format or the language.
 #[tauri::command]
 fn add_download(
     preset: Option<Preset>,
+    format: Option<String>,
     transcript: Option<String>,
+    srt: bool,
     prober: State<'_, Arc<Prober>>,
     downloader: State<'_, Arc<Downloader>>,
 ) -> Result<Added, String> {
     let video = prober.video().ok_or("no probed Video")?;
-    if let Some(preset) = preset
-        && !video.has_preset(preset)
-    {
-        return Err(format!("the Video has no {} Preset", preset.name()));
-    }
+    let media = match (preset, format) {
+        (Some(_), Some(_)) => return Err("both a Preset and a Format asked for".into()),
+        (Some(preset), None) if !video.has_preset(preset) => {
+            return Err(format!("the Video has no {} Preset", preset.name()));
+        }
+        (Some(preset), None) => Some(Media::Preset(preset)),
+        (None, Some(id)) => Some(Media::Format(Box::new(
+            video
+                .formats
+                .iter()
+                .find(|format| format.id == id)
+                .cloned()
+                .ok_or(format!("the Video has no Format {id}"))?,
+        ))),
+        (None, None) => None,
+    };
     let transcript = transcript
         .map(|language| {
             video
                 .transcript_languages()
                 .into_iter()
                 .find(|offered| offered.language == language)
+                .map(|language| Transcript { language, srt })
                 .ok_or(format!("the Video has no Transcript in {language}"))
         })
         .transpose()?;
-    let content = match (preset, transcript) {
-        (Some(preset), None) => Content::Media(preset),
-        (Some(preset), Some(language)) => Content::MediaWithTranscript(preset, language),
-        (None, Some(language)) => Content::Transcript(language),
-        (None, None) => return Err("neither a Preset nor a Transcript asked for".into()),
+    let content = match (media, transcript) {
+        (Some(media), None) => Content::Media(media),
+        (Some(media), Some(transcript)) => Content::MediaWithTranscript(media, transcript),
+        (None, Some(transcript)) => Content::Transcript(transcript),
+        (None, None) => return Err("neither the media nor a Transcript asked for".into()),
     };
     let added = downloader.add(&video, content);
     spawn_run(downloader.inner().clone());
@@ -312,6 +328,15 @@ fn set_default_audio_preset(
     })
 }
 
+/// Turns the Advanced mode on or off; the change arrives as an event.
+#[tauri::command]
+fn set_advanced_mode(on: bool, settings: State<'_, Arc<Settings>>) -> Result<(), String> {
+    settings.set_advanced_mode(on).map_err(|error| {
+        eprintln!("can't save the Advanced mode: {error}");
+        error.to_string()
+    })
+}
+
 /// Prepares the tools in the background, then, once they are ready, updates
 /// yt-dlp if it is due; the UI follows along through events.
 fn spawn_prepare(toolbox: Arc<Toolbox>) {
@@ -345,6 +370,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             set_file_name_template,
             set_default_video_preset,
             set_default_audio_preset,
+            set_advanced_mode,
             add_download,
             retry_download,
             cancel_download,

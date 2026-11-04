@@ -21,7 +21,7 @@ use crate::events::{AppEvent, EventSink};
 use crate::file_name::file_name;
 use crate::logs::{Log, Logs};
 use crate::preset::{AudioPreset, Preset, VideoPreset};
-use crate::probe::{self, ProbeError, Video, VideoCard, error_line};
+use crate::probe::{self, Format, ProbeError, Video, VideoCard, error_line};
 use crate::processes::Stopper;
 use crate::settings::{Browser, Settings};
 use crate::toolbox::{SetupState, Tool, Toolbox};
@@ -36,10 +36,14 @@ pub struct Download {
     /// The Video's own page.
     pub url: String,
     pub video: VideoCard,
-    /// `None` for the Transcript alone.
+    /// `None` for a Format or the Transcript alone.
     pub preset: Option<Preset>,
+    /// The id of the Format saved as it is instead of a Preset.
+    pub format: Option<String>,
     /// The language of the Transcript, when it is saved.
     pub transcript_language: Option<String>,
+    /// The Transcript is saved as `.srt` too, with its timing.
+    pub transcript_srt: bool,
     #[serde(flatten)]
     pub status: DownloadStatus,
 }
@@ -150,11 +154,101 @@ pub enum Receiving {
 }
 
 impl Receiving {
-    /// What a Format of `preset` is when yt-dlp doesn't tell.
-    fn of(preset: Preset) -> Self {
-        match preset {
-            Preset::Video(_) => Self::Video,
-            Preset::Audio(_) => Self::Audio,
+    /// What a Format of `media` is when yt-dlp doesn't tell.
+    fn of(media: &Media) -> Self {
+        match media {
+            Media::Preset(Preset::Video(_)) => Self::Video,
+            Media::Preset(Preset::Audio(_)) => Self::Audio,
+            Media::Format(format) if format.has_picture() => Self::Video,
+            Media::Format(_) => Self::Audio,
+        }
+    }
+}
+
+/// How a Download saves the Video's media.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Media {
+    /// As a Video or Audio preset makes it.
+    Preset(Preset),
+    /// One Format exactly as the site reports it, chosen in the Advanced
+    /// mode: in an MP4 when it has the picture, or else in an M4A.
+    Format(Box<Format>),
+}
+
+/// What tells the media of two Downloads of a Video apart: the Preset, or
+/// the Format's id, whatever a Probe estimated of its size.
+#[derive(PartialEq)]
+enum MediaKey<'a> {
+    Preset(Preset),
+    Format(&'a str),
+}
+
+impl Media {
+    fn key(&self) -> MediaKey<'_> {
+        match self {
+            Self::Preset(preset) => MediaKey::Preset(*preset),
+            Self::Format(format) => MediaKey::Format(&format.id),
+        }
+    }
+
+    /// What a Partial's name tells the media apart by: the Preset's name,
+    /// or `format-` and the Format's id, so that it stays a file name and
+    /// yt-dlp's template takes it as it is: letters, digits and `-` stay,
+    /// and any other character becomes its code in hex between `_`, so
+    /// that two ids never share a name.
+    fn partial_name(&self) -> String {
+        match self {
+            Self::Preset(preset) => preset.name().into(),
+            Self::Format(format) => {
+                let id: String = format
+                    .id
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '-' {
+                            c.to_string()
+                        } else {
+                            format!("_{:x}_", u32::from(c))
+                        }
+                    })
+                    .collect();
+                format!("format-{id}")
+            }
+        }
+    }
+}
+
+impl From<Preset> for Media {
+    fn from(preset: Preset) -> Self {
+        Self::Preset(preset)
+    }
+}
+
+impl From<VideoPreset> for Media {
+    fn from(preset: VideoPreset) -> Self {
+        Self::Preset(preset.into())
+    }
+}
+
+impl From<AudioPreset> for Media {
+    fn from(preset: AudioPreset) -> Self {
+        Self::Preset(preset.into())
+    }
+}
+
+/// How a Download saves the Video's Transcript: as text, and as SubRip
+/// (`.srt`) with its timing too when asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Transcript {
+    pub language: TranscriptLanguage,
+    pub srt: bool,
+}
+
+/// The Transcript in `language` as text alone.
+impl From<TranscriptLanguage> for Transcript {
+    fn from(language: TranscriptLanguage) -> Self {
+        Self {
+            language,
+            srt: false,
         }
     }
 }
@@ -162,36 +256,37 @@ impl Receiving {
 /// What a Download saves of its Video.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Content {
-    /// The media in a Video or Audio preset.
-    Media(Preset),
-    /// The media in a Preset, and its Transcript next to it under the same
-    /// name.
-    MediaWithTranscript(Preset, TranscriptLanguage),
+    /// The media alone.
+    Media(Media),
+    /// The media, and its Transcript next to it under the same name.
+    MediaWithTranscript(Media, Transcript),
     /// The Transcript alone, without the media.
-    Transcript(TranscriptLanguage),
+    Transcript(Transcript),
 }
 
 impl Content {
-    fn preset(&self) -> Option<Preset> {
+    fn media(&self) -> Option<&Media> {
         match self {
-            Self::Media(preset) | Self::MediaWithTranscript(preset, _) => Some(*preset),
+            Self::Media(media) | Self::MediaWithTranscript(media, _) => Some(media),
             Self::Transcript(_) => None,
         }
     }
 
-    fn transcript(&self) -> Option<&TranscriptLanguage> {
+    fn transcript(&self) -> Option<&Transcript> {
         match self {
             Self::Media(_) => None,
-            Self::MediaWithTranscript(_, language) | Self::Transcript(language) => Some(language),
+            Self::MediaWithTranscript(_, transcript) | Self::Transcript(transcript) => {
+                Some(transcript)
+            }
         }
     }
 
     /// What a duplicate Download of the same Video shares with it: the
-    /// Preset, or the language of the Transcript alone.
-    fn duplicate_key(&self) -> (Option<Preset>, Option<&str>) {
+    /// Preset or Format, or the Transcript alone.
+    fn duplicate_key(&self) -> (Option<MediaKey<'_>>, Option<&Transcript>) {
         match self {
-            Self::Transcript(language) => (None, Some(&language.language)),
-            _ => (self.preset(), None),
+            Self::Transcript(transcript) => (None, Some(transcript)),
+            _ => (self.media().map(Media::key), None),
         }
     }
 
@@ -199,7 +294,7 @@ impl Content {
     /// media.
     fn first(&self) -> Receiving {
         match self {
-            Self::Media(preset) => Receiving::of(*preset),
+            Self::Media(media) => Receiving::of(media),
             Self::MediaWithTranscript(..) | Self::Transcript(_) => Receiving::Transcript,
         }
     }
@@ -207,7 +302,7 @@ impl Content {
 
 impl From<Preset> for Content {
     fn from(preset: Preset) -> Self {
-        Self::Media(preset)
+        Self::Media(preset.into())
     }
 }
 
@@ -452,6 +547,11 @@ impl Downloader {
     /// Nothing is added while the same Video with the same Preset, or its
     /// Transcript alone in the same language, is Queued or running.
     pub fn add(&self, video: &Video, content: Content) -> Added {
+        let (preset, format) = match content.media() {
+            Some(Media::Preset(preset)) => (Some(*preset), None),
+            Some(Media::Format(format)) => (None, Some(format.id.clone())),
+            None => (None, None),
+        };
         self.update(|queue| {
             if let Some(of) = queue.duplicate_of(video, &content) {
                 return Added::Duplicate { of };
@@ -463,8 +563,12 @@ impl Downloader {
                     id,
                     url: video.url.clone(),
                     video: video.card(),
-                    preset: content.preset(),
-                    transcript_language: content.transcript().map(|it| it.language.clone()),
+                    preset,
+                    format,
+                    transcript_language: content
+                        .transcript()
+                        .map(|it| it.language.language.clone()),
+                    transcript_srt: content.transcript().is_some_and(|it| it.srt),
                     status: DownloadStatus::Queued,
                 },
                 video: video.clone(),
@@ -628,11 +732,17 @@ impl Downloader {
         let sign_in_browser = self.settings.sign_in_browser_for(&video.url);
         let mut log = self.logs.start(self.clock.now(), &video.id);
         log.note(&format!("URL: {}", video.url));
-        if let Some(preset) = content.preset() {
-            log.note(&format!("Preset: {}", preset.name()));
+        match content.media() {
+            Some(Media::Preset(preset)) => log.note(&format!("Preset: {}", preset.name())),
+            Some(Media::Format(format)) => log.note(&format!("Format: {}", format.id)),
+            None => {}
         }
-        if let Some(language) = content.transcript() {
-            log.note(&format!("Transcript: {}", language.language));
+        if let Some(transcript) = content.transcript() {
+            let srt = if transcript.srt { " with .srt" } else { "" };
+            log.note(&format!(
+                "Transcript: {}{srt}",
+                transcript.language.language
+            ));
         }
         let received = self.receive(video, content, sign_in_browser, &mut log, stopper);
         // Once yt-dlp has ended, the Download can no longer be cancelled.
@@ -747,9 +857,10 @@ impl Downloader {
     }
 
     /// Receives `content` of `video` into the Partials folder and returns
-    /// its files, the media first. The Transcript comes first, as yt-dlp
-    /// takes subtitles before the media, so that a Download whose
-    /// Transcript fails doesn't receive the media for nothing.
+    /// its files, the media first, then the text of the Transcript and its
+    /// `.srt`. The Transcript comes first, as yt-dlp takes subtitles before
+    /// the media, so that a Download whose Transcript fails doesn't receive
+    /// the media for nothing.
     fn receive(
         &self,
         video: &Video,
@@ -760,27 +871,32 @@ impl Downloader {
     ) -> Result<Vec<PathBuf>, Stopped> {
         let transcript = content
             .transcript()
-            .map(|language| self.receive_transcript(video, language, sign_in_browser, log, stopper))
+            .map(|transcript| {
+                self.receive_transcript(video, transcript, sign_in_browser, log, stopper)
+            })
             .transpose()?;
         let media = content
-            .preset()
-            .map(|preset| {
+            .media()
+            .map(|media| {
                 // The UI turns from the Transcript to the media at once,
                 // while yt-dlp asks the site about the Video again.
                 if transcript.is_some() {
-                    self.set_status(DownloadStatus::starting(Receiving::of(preset)));
+                    self.set_status(DownloadStatus::starting(Receiving::of(media)));
                 }
-                self.receive_media(video, preset, sign_in_browser, log, stopper)
+                self.receive_media(video, media, sign_in_browser, log, stopper)
             })
             .transpose()?;
-        Ok(media.into_iter().chain(transcript).collect())
+        Ok(media
+            .into_iter()
+            .chain(transcript.into_iter().flatten())
+            .collect())
     }
 
     /// Has yt-dlp download the media and returns its final file.
     fn receive_media(
         &self,
         video: &Video,
-        preset: Preset,
+        media: &Media,
         sign_in_browser: Option<Browser>,
         log: &mut Log,
         stopper: &Stopper,
@@ -788,12 +904,12 @@ impl Downloader {
         // Dated when received, not as the site last changed the Video, so
         // that a fresh Partial isn't discarded as old.
         let mut args: Vec<OsString> = vec!["--no-playlist".into(), "--no-mtime".into()];
-        args.extend(preset_args(preset));
+        args.extend(media_args(media));
         args.extend::<[OsString; _]>([
             "-P".into(),
             self.partials_dir.clone().into_os_string(),
             "-o".into(),
-            format!("%(id)s.{}.%(ext)s", preset.name()).into(),
+            format!("%(id)s.{}.%(ext)s", media.partial_name()).into(),
             // `--print` makes yt-dlp quiet, and quiet hides the progress.
             "--progress".into(),
             "--newline".into(),
@@ -827,7 +943,7 @@ impl Downloader {
                 Line::Formats(planned) => formats = planned,
                 Line::Progress(line) => {
                     line.note(&mut formats);
-                    self.report_progress(line.status(&formats, Receiving::of(preset)));
+                    self.report_progress(line.status(&formats, Receiving::of(media)));
                 }
                 Line::Processing => self.set_status(DownloadStatus::Processing),
                 Line::FinalFile(path) => final_file = Some(path),
@@ -835,7 +951,7 @@ impl Downloader {
             },
             stopper,
         )?;
-        self.failure_resuming(&output, &media_prefix(video, preset))?;
+        self.failure_resuming(&output, &media_prefix(video, media))?;
         final_file.ok_or_else(|| {
             Stopped::Failed(
                 Failure::Unknown,
@@ -844,16 +960,18 @@ impl Downloader {
         })
     }
 
-    /// Has yt-dlp download the subtitles or captions of `language` alone,
-    /// and returns their text in a file of its own.
+    /// Has yt-dlp download the subtitles or captions of the Transcript's
+    /// language alone, and returns their text in a file of its own, and
+    /// the `.srt` made of them when asked for.
     fn receive_transcript(
         &self,
         video: &Video,
-        language: &TranscriptLanguage,
+        transcript: &Transcript,
         sign_in_browser: Option<Browser>,
         log: &mut Log,
         stopper: &Stopper,
-    ) -> Result<PathBuf, Stopped> {
+    ) -> Result<Vec<PathBuf>, Stopped> {
+        let language = &transcript.language;
         let name = transcript::ytdlp_name(language, &video.transcripts);
         let write = if language.automatic {
             "--write-auto-subs"
@@ -893,25 +1011,30 @@ impl Downloader {
         let subtitles = self
             .partials_dir
             .join(format!("{}.transcript.{name}.vtt", video.id));
-        let text = fs::read(&subtitles)
-            .map(|bytes| transcript::text(&String::from_utf8_lossy(&bytes)))
+        let vtt = fs::read(&subtitles)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
             .map_err(|error| {
                 Stopped::Failed(
                     Failure::Unknown,
                     format!("no subtitles at {}: {error}", subtitles.display()),
                 )
             })?;
-        let file = subtitles.with_extension("txt");
-        fs::write(&file, text).map_err(|error| {
-            Stopped::Failed(
-                Failure::Disk,
-                format!("can't write {}: {error}", file.display()),
-            )
-        })?;
+        let mut files = vec![(subtitles.with_extension("txt"), transcript::text(&vtt))];
+        if transcript.srt {
+            files.push((subtitles.with_extension("srt"), transcript::srt(&vtt)));
+        }
+        for (file, content) in &files {
+            fs::write(file, content).map_err(|error| {
+                Stopped::Failed(
+                    Failure::Disk,
+                    format!("can't write {}: {error}", file.display()),
+                )
+            })?;
+        }
         if let Err(error) = fs::remove_file(&subtitles) {
             eprintln!("can't remove {}: {error}", subtitles.display());
         }
-        Ok(file)
+        Ok(files.into_iter().map(|(file, _)| file).collect())
     }
 
     /// Runs yt-dlp with `args`, so that `stopper` can stop it, and hands
@@ -1189,6 +1312,73 @@ fn read_failure(message: &str) -> Failure {
     }
 }
 
+/// What yt-dlp receives for `media` and how it makes the final file of it.
+fn media_args(media: &Media) -> Vec<OsString> {
+    match media {
+        Media::Preset(preset) => preset_args(*preset),
+        // That Format, remuxed into an MP4 without encoding it again, or
+        // converted into one when an MP4 can't hold its codecs as they are.
+        // A picture without sound gets the best sound, preferring AAC as the
+        // Video presets do, or stays alone on a site without a Format of the
+        // sound alone.
+        Media::Format(format) if format.has_picture() => {
+            let into_mp4 = if fits_mp4(format) {
+                "--remux-video"
+            } else {
+                "--recode-video"
+            };
+            let id = &format.id;
+            let mut args: Vec<OsString> = if format.has_sound() {
+                vec!["-f".into(), id.into()]
+            } else {
+                vec![
+                    "-f".into(),
+                    format!("{id}+ba/{id}").into(),
+                    "-S".into(),
+                    "acodec:aac".into(),
+                ]
+            };
+            args.extend([into_mp4.into(), "mp4".into()]);
+            args
+        }
+        // The sound alone, extracted into an M4A as the M4A preset does.
+        Media::Format(format) => ["-f", &format.id]
+            .into_iter()
+            .map(OsString::from)
+            .chain(m4a_args())
+            .collect(),
+    }
+}
+
+/// Whether an MP4 holds the streams of `format` as they are: H.264, H.265,
+/// VP9, AV1 or MPEG-4 picture, and AAC, Opus, MP3, FLAC or AC-3 sound. A
+/// codec the site doesn't tell is taken to fit.
+fn fits_mp4(format: &Format) -> bool {
+    const PICTURE: [&str; 11] = [
+        "avc1", "avc3", "h264", "hev1", "hvc1", "h265", "hevc", "vp09", "vp9", "av01", "mp4v",
+    ];
+    const SOUND: [&str; 9] = [
+        "none", "mp4a", "aac", "opus", "mp3", "flac", "ac-3", "ac3", "ec-3",
+    ];
+    let fits = |codec: &Option<String>, known: &[&str]| {
+        codec.as_deref().is_none_or(|codec| {
+            let codec = codec.to_ascii_lowercase();
+            known.iter().any(|known| codec.starts_with(known))
+        })
+    };
+    fits(&format.video_codec, &PICTURE) && fits(&format.audio_codec, &SOUND)
+}
+
+/// How ffmpeg extracts the sound into an M4A: AAC sound is copied as it is,
+/// and only other sound is encoded, as AAC at 192 kbit/s (yt-dlp ignores
+/// the quality when it copies).
+fn m4a_args() -> Vec<OsString> {
+    ["-x", "--audio-format", "m4a", "--audio-quality", "192K"]
+        .into_iter()
+        .map(OsString::from)
+        .collect()
+}
+
 /// What yt-dlp receives for `preset` and how it makes the final file of it.
 fn preset_args(preset: Preset) -> Vec<OsString> {
     let args = match preset {
@@ -1205,28 +1395,26 @@ fn preset_args(preset: Preset) -> Vec<OsString> {
         ],
         // The best sound alone, or a Format with both on a site without
         // one, extracted by ffmpeg into a file of the Preset's format.
-        Preset::Audio(preset) => {
-            let mut args = vec![
-                "-f".into(),
-                "ba/b".into(),
-                "-x".into(),
-                "--audio-format".into(),
-                preset.name().into(),
-            ];
-            args.extend(match preset {
-                // ffmpeg copies AAC sound into an M4A as it is; only a site
-                // without AAC gets its sound encoded, as AAC at 192 kbit/s.
-                AudioPreset::M4a => vec![
-                    "-S".into(),
-                    "acodec:aac".into(),
-                    "--audio-quality".into(),
-                    "192K".into(),
-                ],
-                // LAME's VBR quality 1: about 190–250 kbit/s.
-                AudioPreset::Mp3 => vec!["--audio-quality".into(), "1".into()],
-            });
-            args
+        // M4A prefers AAC, which ffmpeg copies as it is.
+        Preset::Audio(AudioPreset::M4a) => {
+            return ["-f", "ba/b", "-S", "acodec:aac"]
+                .into_iter()
+                .map(OsString::from)
+                .chain(m4a_args())
+                .collect();
         }
+        // LAME's VBR quality 1: about 190–250 kbit/s.
+        Preset::Audio(AudioPreset::Mp3) => [
+            "-f",
+            "ba/b",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "1",
+        ]
+        .map(String::from)
+        .to_vec(),
     };
     args.into_iter().map(OsString::from).collect()
 }
@@ -1246,15 +1434,15 @@ fn format_sort(preset: VideoPreset) -> String {
 /// `video` leaves in the Partials folder: `<id>.<preset>.` for the media and
 /// `<id>.transcript.<language>.` for the Transcript.
 fn partial_prefixes(video: &Video, content: &Content) -> Vec<String> {
-    let media = content.preset().map(|preset| media_prefix(video, preset));
+    let media = content.media().map(|media| media_prefix(video, media));
     let transcript = content
         .transcript()
-        .map(|language| transcript_prefix(video, language));
+        .map(|transcript| transcript_prefix(video, &transcript.language));
     media.into_iter().chain(transcript).collect()
 }
 
-fn media_prefix(video: &Video, preset: Preset) -> String {
-    format!("{}.{}.", video.id, preset.name())
+fn media_prefix(video: &Video, media: &Media) -> String {
+    format!("{}.{}.", video.id, media.partial_name())
 }
 
 fn transcript_prefix(video: &Video, language: &TranscriptLanguage) -> String {

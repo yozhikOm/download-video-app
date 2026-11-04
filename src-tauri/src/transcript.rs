@@ -95,24 +95,83 @@ pub fn ytdlp_name(language: &TranscriptLanguage, available: &TranscriptLanguages
 /// timing, tags and cue ids, one per line. A line that repeats the one before
 /// it is dropped: YouTube's captions show each line again in the next cue.
 pub fn text(subtitles: &str) -> String {
-    let mut lines: Vec<String> = Vec::new();
+    cues(subtitles)
+        .into_iter()
+        .flat_map(|cue| cue.lines)
+        .map(|line| line + "\n")
+        .collect()
+}
+
+/// WebVTT subtitles as SubRip (`.srt`): the cues numbered from 1, each with
+/// its timing and the lines of [`text`] it brings, so that a cue that only
+/// shows the line before it again, as YouTube's captions do, or nothing is
+/// left out.
+pub fn srt(subtitles: &str) -> String {
+    cues(subtitles)
+        .into_iter()
+        .enumerate()
+        .map(|(at, cue)| {
+            format!(
+                "{}\n{} --> {}\n{}\n\n",
+                at + 1,
+                srt_time(cue.start),
+                srt_time(cue.end),
+                cue.lines.join("\n")
+            )
+        })
+        .collect()
+}
+
+/// A cue of WebVTT subtitles with the lines it brings.
+struct Cue<'a> {
+    start: &'a str,
+    end: &'a str,
+    /// Without tags, and without a line that repeats the one before it,
+    /// in this cue or the cue before; never empty.
+    lines: Vec<String>,
+}
+
+/// The cues of WebVTT subtitles that bring a line, in order.
+fn cues(subtitles: &str) -> Vec<Cue<'_>> {
+    let mut cues: Vec<Cue> = Vec::new();
+    let mut last: Option<String> = None;
     // The header, comments, styles and cue ids lie outside any cue.
     let mut in_cue = false;
     for line in subtitles.trim_start_matches('\u{feff}').lines() {
-        if line.contains("-->") {
+        if let Some((start, end)) = line.split_once("-->") {
             in_cue = true;
+            // The end is followed by the cue's settings, such as
+            // `align:start`.
+            cues.push(Cue {
+                start: start.trim(),
+                end: end.split_whitespace().next().unwrap_or_default(),
+                lines: Vec::new(),
+            });
         } else if line.is_empty() {
             // Only an empty line ends a cue; one of spaces is its text.
             in_cue = false;
-        } else if in_cue {
+        } else if in_cue && let Some(cue) = cues.last_mut() {
             let line = decode_entities(&strip_tags(line));
             let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
-            if !line.is_empty() && lines.last() != Some(&line) {
-                lines.push(line);
+            if !line.is_empty() && last.as_ref() != Some(&line) {
+                last = Some(line.clone());
+                cue.lines.push(line);
             }
         }
     }
-    lines.into_iter().map(|line| line + "\n").collect()
+    cues.retain(|cue| !cue.lines.is_empty());
+    cues
+}
+
+/// A WebVTT timestamp, `mm:ss.ttt` or `hh:mm:ss.ttt`, as SubRip writes it:
+/// `hh:mm:ss,ttt`.
+fn srt_time(time: &str) -> String {
+    let time = time.replace('.', ",");
+    if time.matches(':').count() < 2 {
+        format!("00:{time}")
+    } else {
+        time
+    }
 }
 
 /// `line` without its `<c>`, `<i>`, `<v Speaker>` and timestamp tags.
