@@ -2260,6 +2260,29 @@ test("the Formats list names codecs as people know them, and the rest as the sit
   ]);
 });
 
+test("a Format of the picture's height alone shows its resolution as the height", async () => {
+  const backend = await startReady();
+  await backend.settings({ advancedMode: true });
+  const [, both] = youtubeFormats;
+  // As VK reports its plain MP4 files.
+  await backend.probe({
+    ...probed(zoo),
+    formats: [
+      { ...both, id: "url1080", width: null, height: 1080, fps: null },
+      { ...both, id: "url720", width: null, height: 720, fps: 25 },
+    ],
+  });
+
+  openTab("Форматы");
+
+  const resolutions = within(
+    screen.getByRole("radiogroup", { name: "Форматы" }),
+  )
+    .getAllByRole("radio")
+    .map((radio) => radio.closest("tr")!.cells[3].textContent);
+  expect(resolutions).toEqual(["1080p", "720p, 25 fps"]);
+});
+
 test("a Format is downloaded on request instead of a Preset", async () => {
   const backend = await startReady();
   await backend.settings({ advancedMode: true });

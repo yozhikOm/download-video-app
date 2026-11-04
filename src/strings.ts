@@ -162,6 +162,8 @@ export const strings = {
     /** A Format sent in HLS fragments, which may come slowly. */
     hls: "HLS",
     resolution: (width: string, height: string) => `${width}×${height}`,
+    /** The resolution of a Format whose site tells the height alone. */
+    height: (height: string) => `${height}p`,
     fps: (resolution: string, fps: string) => `${resolution}, ${fps} fps`,
     bitrate: (kbps: string) => `${kbps} кбит/с`,
     size: (mb: string) => `${mb} МБ`,

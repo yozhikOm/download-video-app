@@ -133,10 +133,14 @@ function formatCells(format: Format) {
   if (format.videoCodec === "none") {
     resolution = formats.audioOnly;
   } else if (format.width !== null || format.height !== null) {
-    resolution = formats.resolution(
-      String(format.width ?? "?"),
-      String(format.height ?? "?"),
-    );
+    // A site may tell the height alone, as VK does of its plain MP4 files.
+    resolution =
+      format.width === null
+        ? formats.height(String(format.height))
+        : formats.resolution(
+            String(format.width),
+            String(format.height ?? "?"),
+          );
     if (format.fps) {
       resolution = formats.fps(resolution, String(format.fps));
     }
