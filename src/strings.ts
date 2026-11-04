@@ -157,6 +157,10 @@ export const strings = {
     },
     /** A Format without the picture, in place of its resolution. */
     audioOnly: "только звук",
+    /** The sound of a picture alone, which the Download adds. */
+    bestAudio: "+ лучший звук",
+    /** A Format sent in HLS fragments, which may come slowly. */
+    hls: "HLS",
     resolution: (width: string, height: string) => `${width}×${height}`,
     fps: (resolution: string, fps: string) => `${resolution}, ${fps} fps`,
     bitrate: (kbps: string) => `${kbps} кбит/с`,

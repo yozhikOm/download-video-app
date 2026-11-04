@@ -148,6 +148,9 @@ pub struct Format {
     pub size: Option<u64>,
     pub note: Option<String>,
     pub language: Option<String>,
+    /// How the site sends it, as yt-dlp tells: `https` for one file,
+    /// `m3u8_native` or `m3u8` for HLS fragments, which YouTube sends slowly.
+    pub protocol: Option<String>,
 }
 
 impl Format {
@@ -412,6 +415,7 @@ struct InfoFormat {
     filesize_approx: Option<f64>,
     format_note: Option<String>,
     language: Option<String>,
+    protocol: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -484,6 +488,7 @@ impl InfoFormat {
                 .map(|size| size as u64),
             note: self.format_note,
             language: self.language,
+            protocol: self.protocol,
         }
     }
 }

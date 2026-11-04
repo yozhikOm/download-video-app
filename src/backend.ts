@@ -84,6 +84,11 @@ export type Format = {
   size: number | null;
   note: string | null;
   language: string | null;
+  /**
+   * How the site sends it: `https` for one file, `m3u8_native` or `m3u8`
+   * for HLS fragments, which YouTube sends slowly.
+   */
+  protocol: string | null;
 };
 
 /** A language a Transcript can be saved in, and its source. */

@@ -33,7 +33,7 @@ The Preset chosen at first after a Probe, one per group, set by the user: a Vide
 _Avoid_: Default quality, default format, качество по умолчанию
 
 **Format**:
-One raw stream variant that the site reports for a Video (codec, resolution, bitrate). Users only see Formats in the Advanced mode, where a Download may take one exactly as it is instead of a Preset; Presets are built on top of them.
+One raw stream variant that the site reports for a Video (codec, resolution, bitrate). Users only see Formats in the Advanced mode, where a Download may take one exactly as it is instead of a Preset (a Format of the picture alone gets the best sound added); Presets are built on top of them.
 _Avoid_: Stream, itag, quality
 
 **Partial**:

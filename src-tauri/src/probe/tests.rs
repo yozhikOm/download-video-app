@@ -1095,6 +1095,7 @@ fn the_probed_video_keeps_what_downloads_need() {
             size: Some(17707023),
             note: Some("360p".into()),
             language: Some("en".into()),
+            protocol: Some("https".into()),
         }
     );
     assert_eq!(video.transcripts.manual.len(), 43);
@@ -1150,6 +1151,7 @@ fn a_probed_video_offers_all_its_formats_for_the_advanced_mode() {
             "size": 17707023,
             "note": "360p",
             "language": "en",
+            "protocol": "https",
         })
     );
     assert_eq!(
@@ -1166,6 +1168,7 @@ fn a_probed_video_offers_all_its_formats_for_the_advanced_mode() {
             "size": 3592323,
             "note": "low, DRC",
             "language": "en",
+            "protocol": "https",
         })
     );
 }
@@ -1206,6 +1209,8 @@ fn a_video_from_another_site_may_lack_a_channel_language_and_transcripts() {
     // Without a channel, the uploader stands in.
     assert_eq!(video.card().channel.as_deref(), Some("Cyber Potato"));
     assert_eq!(video.formats.len(), 24);
+    // Rutube streams each Format over HLS.
+    assert_eq!(video.formats[0].protocol.as_deref(), Some("m3u8_native"));
     assert_eq!(video.original_language, None);
     assert!(video.transcripts.manual.is_empty() && video.transcripts.automatic.is_empty());
     assert!(video.chapters.is_empty());

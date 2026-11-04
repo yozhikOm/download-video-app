@@ -1671,6 +1671,7 @@ fn format(id: &str, ext: &str, video_codec: &str, audio_codec: &str) -> Format {
         size: Some(1_000_000),
         note: None,
         language: None,
+        protocol: Some("https".into()),
     }
 }
 
@@ -1690,46 +1691,63 @@ fn zoo_with_formats() -> (Video, [Format; 3]) {
 }
 
 #[test]
-fn a_format_with_the_picture_is_downloaded_exactly_as_it_is_into_an_mp4() {
-    let (zoo, [video_only, _, both]) = zoo_with_formats();
-    for format in [video_only, both] {
-        let app = App::start();
-        app.ytdlp_downloads(ID, b"the video", &[]);
+fn a_format_with_the_picture_and_the_sound_is_downloaded_exactly_as_it_is_into_an_mp4() {
+    let (zoo, [_, _, both]) = zoo_with_formats();
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
 
-        app.download(
-            &zoo,
-            Content::Media(Media::Format(Box::new(format.clone()))),
-        );
+    app.download(&zoo, Content::Media(Media::Format(Box::new(both))));
 
-        let saved = app.save_dir().join("Me at the zoo.mp4");
-        assert_eq!(
-            app.download_statuses(),
-            [
-                DownloadStatus::Queued,
-                DownloadStatus::starting(Receiving::Video),
-                DownloadStatus::Processing,
-                DownloadStatus::Done {
-                    file: saved.clone()
-                },
-            ],
-            "{}",
-            format.id
-        );
-        assert_eq!(fs::read(&saved).unwrap(), b"the video");
-        let runs = ytdlp_runs(&app);
-        let args = &runs[0];
-        // That Format alone, not the best by a Preset's order.
-        assert_eq!(values_of(args, "-f"), [&OsString::from(&format.id)]);
-        assert!(!args.contains(&"-S".into()), "{args:?}");
-        assert!(!args.contains(&"-x".into()), "{args:?}");
-        assert_eq!(after(args, "--remux-video"), "mp4");
-        assert_eq!(
-            app.downloader.state()[0].format.as_deref(),
-            Some(&*format.id)
-        );
-        assert_eq!(app.downloader.state()[0].preset, None);
-        assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
-    }
+    let saved = app.save_dir().join("Me at the zoo.mp4");
+    assert_eq!(
+        app.download_statuses(),
+        [
+            DownloadStatus::Queued,
+            DownloadStatus::starting(Receiving::Video),
+            DownloadStatus::Processing,
+            DownloadStatus::Done {
+                file: saved.clone()
+            },
+        ]
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the video");
+    let runs = ytdlp_runs(&app);
+    let args = &runs[0];
+    // That Format alone, not the best by a Preset's order.
+    assert_eq!(values_of(args, "-f"), [&OsString::from("18")]);
+    assert!(!args.contains(&"-S".into()), "{args:?}");
+    assert!(!args.contains(&"-x".into()), "{args:?}");
+    assert_eq!(after(args, "--remux-video"), "mp4");
+    assert_eq!(app.downloader.state()[0].format.as_deref(), Some("18"));
+    assert_eq!(app.downloader.state()[0].preset, None);
+    assert_eq!(file_names(&app.partials_dir()), [] as [String; 0]);
+}
+
+#[test]
+fn a_format_of_the_picture_alone_gets_the_best_sound_preferring_aac() {
+    let (zoo, [video_only, _, _]) = zoo_with_formats();
+    let app = App::start();
+    app.ytdlp_downloads(ID, b"the video", &[]);
+
+    app.download(&zoo, Content::Media(Media::Format(Box::new(video_only))));
+
+    let saved = app.save_dir().join("Me at the zoo.mp4");
+    assert_eq!(
+        app.status(),
+        Some(DownloadStatus::Done {
+            file: saved.clone()
+        })
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"the video");
+    let args = &ytdlp_runs(&app)[0];
+    // That picture with the best sound, or the picture alone on a site
+    // without a Format of the sound alone.
+    assert_eq!(values_of(args, "-f"), [&OsString::from("137+ba/137")]);
+    assert_eq!(after(args, "-S"), "acodec:aac");
+    assert_eq!(after(args, "--remux-video"), "mp4");
+    assert!(!args.contains(&"-x".into()), "{args:?}");
+    // Still a Download of that Format, not of a Preset.
+    assert_eq!(app.downloader.state()[0].format.as_deref(), Some("137"));
 }
 
 #[test]

@@ -103,7 +103,11 @@ function formatCells(format: Format) {
     ext: format.ext,
     resolution,
     videoCodec: codecText(format.videoCodec),
-    audioCodec: codecText(format.audioCodec),
+    // A picture without the sound downloads with the best sound added.
+    audioCodec:
+      format.audioCodec === "none" && format.videoCodec !== "none"
+        ? formats.bestAudio
+        : codecText(format.audioCodec),
     bitrate:
       format.bitrate === null
         ? formats.unknown
@@ -113,8 +117,13 @@ function formatCells(format: Format) {
         ? formats.unknown
         : formats.size(decimal.format(format.size / (1024 * 1024))),
     note:
-      [format.note, format.language].filter(Boolean).join(", ") ||
-      formats.unknown,
+      [
+        format.note,
+        format.language,
+        format.protocol?.startsWith("m3u8") && formats.hls,
+      ]
+        .filter(Boolean)
+        .join(", ") || formats.unknown,
   } satisfies Record<keyof typeof strings.formats.columns, string>;
 }
 

@@ -1316,19 +1316,30 @@ fn read_failure(message: &str) -> Failure {
 fn media_args(media: &Media) -> Vec<OsString> {
     match media {
         Media::Preset(preset) => preset_args(*preset),
-        // That Format alone, remuxed into an MP4 without encoding it again,
-        // or converted into one when an MP4 can't hold its codecs as they
-        // are.
+        // That Format, remuxed into an MP4 without encoding it again, or
+        // converted into one when an MP4 can't hold its codecs as they are.
+        // A picture without sound gets the best sound, preferring AAC as the
+        // Video presets do, or stays alone on a site without a Format of the
+        // sound alone.
         Media::Format(format) if format.has_picture() => {
             let into_mp4 = if fits_mp4(format) {
                 "--remux-video"
             } else {
                 "--recode-video"
             };
-            ["-f", &format.id, into_mp4, "mp4"]
-                .into_iter()
-                .map(OsString::from)
-                .collect()
+            let id = &format.id;
+            let mut args: Vec<OsString> = if format.has_sound() {
+                vec!["-f".into(), id.into()]
+            } else {
+                vec![
+                    "-f".into(),
+                    format!("{id}+ba/{id}").into(),
+                    "-S".into(),
+                    "acodec:aac".into(),
+                ]
+            };
+            args.extend([into_mp4.into(), "mp4".into()]);
+            args
         }
         // The sound alone, extracted into an M4A as the M4A preset does.
         Media::Format(format) => ["-f", &format.id]

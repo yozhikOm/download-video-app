@@ -53,6 +53,7 @@ const youtubeFormats: Format[] = [
     size: 7703637,
     note: "medium",
     language: "en",
+    protocol: "https",
   },
   {
     id: "18",
@@ -66,6 +67,7 @@ const youtubeFormats: Format[] = [
     size: 17707023,
     note: "360p",
     language: "en",
+    protocol: "https",
   },
   {
     id: "137",
@@ -79,6 +81,21 @@ const youtubeFormats: Format[] = [
     size: null,
     note: null,
     language: null,
+    protocol: "https",
+  },
+  {
+    id: "95",
+    ext: "mp4",
+    videoCodec: "avc1.4D401F",
+    audioCodec: "mp4a.40.2",
+    width: 1280,
+    height: 720,
+    fps: 25,
+    bitrate: 1513.8,
+    size: null,
+    note: null,
+    language: null,
+    protocol: "m3u8_native",
   },
 ];
 
@@ -2188,7 +2205,10 @@ test("the Advanced mode lists every Format of the Video with what it is", async 
   expect(radios.map((radio) => radio.closest("tr")?.textContent)).toEqual([
     "251webmтолько звук—opus109 кбит/с7,3 МБmedium, en",
     "18mp4640×360, 30 fpsavc1.42001Emp4a.40.2251 кбит/с16,9 МБ360p, en",
-    "137mp41920×1080, 25 fpsavc1.640028—1127 кбит/с——",
+    // The picture alone gets the best sound.
+    "137mp41920×1080, 25 fpsavc1.640028+ лучший звук1127 кбит/с——",
+    // HLS, which YouTube sends slowly.
+    "95mp41280×720, 25 fpsavc1.4D401Fmp4a.40.21514 кбит/с—HLS",
   ]);
   // Nothing is chosen at first.
   for (const radio of radios) {
