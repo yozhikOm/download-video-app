@@ -135,10 +135,17 @@ export function MainScreen({
     duplicate.clear();
   }
 
+  // The URL in the field is being probed: its Probe hasn't started yet or is
+  // still running. Another URL in the field may replace it.
+  const probingSubmitted =
+    url.trim() === submittedUrl &&
+    !probeFailed &&
+    (probe === supersededProbe || probe.status === "probing");
+
   function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = url.trim();
-    if (trimmed) {
+    if (trimmed && !probingSubmitted) {
       setSubmittedUrl(trimmed);
       setPreviewHidden(false);
       setSupersededProbe(probe);
@@ -265,7 +272,12 @@ export function MainScreen({
             </Button>
           )}
         </div>
-        <Button type="submit" size="lg" className="px-4.5 font-semibold">
+        <Button
+          type="submit"
+          size="lg"
+          className="px-4.5 font-semibold"
+          disabled={probingSubmitted}
+        >
           {strings.probe.submit}
         </Button>
       </form>
